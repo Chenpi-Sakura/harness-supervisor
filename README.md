@@ -98,7 +98,7 @@ node dist/src/cli.js events <workerId> --since 0 --limit 100
 # 有超时边界的等待：直到终态
 node dist/src/cli.js wait <workerId> --since 0 --timeout-ms 60000
 
-# 取消（会终止该 Worker 的进程树，不影响其他 Worker）
+# 取消受控 Worker（先清空 Pi 队列，再 abort；必要时终止进程树）
 node dist/src/cli.js cancel <workerId>
 
 # 在 Pi 持久化 session 存在且旧进程已退出时，继续该会话
@@ -196,7 +196,7 @@ MCP server 会自动启动本地 daemon；主客户端退出后 daemon 和 Worke
 
 - `worker.starting` / `worker.started` / `worker.session`
 - `run.accepted` / `run.started`
-- `run.progress`（tool start/end、turn complete、assistant message、retry、compaction、notification）
+- `run.progress`（tool start/end、turn complete、assistant message、retry、compaction、notification、`queue_cleared`）
 - `run.needs_input` / `run.input_answered`
 - `run.message_sent`
 - `run.error`
@@ -235,20 +235,36 @@ Pi 的 `extension_ui_request`（select / confirm / input / editor）会映射为
 5. Supervisor 启动新的 Pi 进程并**校验 session ID 与 session 文件路径**；
 6. 调用方提供新的 prompt。
 
-任何一步不满足都会返回 `UNSUPPORTED` / `INVALID_STATE`，不会静默创建新 session 并声称恢复成功。`resume` 不会自动重放旧任务，也不会自动重试可能有副作用的工作。
+任何一步不满足都会返回 `UNSUPPORTED` / `INVALID_STATE`，不会静默创建新 session 并声称恢复成功。
+
+`resume` 的语义是：**启动一个新的 Pi 进程，加载指定 session 文件，然后提交一个新的 prompt**。它不会续接原进程内存中的运行，不会补跑中断的 assistant turn，也不会重放旧工具调用或自动重试可能产生副作用的工作。`resumeCount` 和新 prompt 被接受后的 `worker.resumed` 事件都只在 session 校验通过、run 真正开始后记录；若加载失败，会恢复之前的终态并写 `worker.resume_failed`。
+
+### 并发与控制语义
+
+- **并发上限是原子占位**：`maxWorkers` 同时计入活动 Worker 和正在启动的请求，检查与创建之间的 await 窗口不能突破上限。
+- **同一 Worker 的 resume 串行化**：第一次 resume 进行中时，第二次返回 `INVALID_STATE`，不会出现两个进程加载同一 session。
+- **取消开始后拒绝新控制指令**：`send` / `answer` 会返回 `INVALID_STATE`；同一对话框的第二个 answer 也会被拒绝。已经发出但仍在 Pi 队列中的 steer/follow-up 会在 abort 前通过 `clear_queue` 清除。
+- **取消顺序**：`clear_queue` → `abort` → 有界等待 `agent_settled` → 必要时强制终止进程树。Pi 文档说明 abort 会继续队列中的消息，所以必须先清队列；非空队列清空会记录 `run.progress`（`kind: "queue_cleared"`，只记录数量，不保存消息正文）。
+- **关停屏障**：`shutdown` 先拒绝新的 spawn/resume/send/answer，等待进行中的准入最多 5 秒，再取消/强杀所有活动 runtime；不会出现关停快照漏掉刚启动 Worker 的情况。
+- **线性化**：完成与取消同时发生时，以先完成的一方为准，可能返回 `completed`。终态只有在 Harness 进程停止后才可见。
+- **不是事务型 API**：spawn/resume 没有幂等键。客户端超时后不要盲目重试，应先查 `status` / `list`；in-flight 的重复 resume 会被拒绝，但已完成的 resume 再调用是一次新的显式运行。
 
 ### Supervisor 重启
 
-- **优雅关闭**（`down` / SIGINT / SIGTERM）：取消所有活动 Worker，状态记录为 `cancelled` + reason `supervisor_shutdown`，然后退出。
+- **优雅关闭**（`down` / SIGINT / SIGTERM）：先进入关停屏障，取消所有活动 Worker，状态记录为 `cancelled` + reason `supervisor_shutdown`，然后退出。
 - **强制杀死 / 崩溃**：未完成 Worker 在下次启动时被对账为：
   - `orphaned`：记录中的 PID 仍存活，但 daemon 已失去 stdin/stdout 控制通道；
   - `interrupted`：PID 已不存在，结果未知。
-- 不会自动恢复、自动重跑或猜测成功。
-- 需要显式 `resume`，且只接受已持久化 session；旧进程仍存活时拒绝并发 resume。
+- **重启后没有任何 Worker 保留实时控制通道**。`status` / `events` / `wait` 仍可只读使用；不能对旧运行继续 steer 或 answer。若 daemon 在终态落盘前被杀，即使任务实际已完成，也会保守地报 `interrupted`（结果未知），不会自动改判为 `completed`；需要时只能显式 resume 读取 session。
+- **客户端断开不是 Supervisor 重启**：daemon 仍在时，任何客户端重连后都可以继续 status/send/cancel；只有 daemon 进程本身退出/被杀，才进入上述对账路径。
+- **`orphaned` 进程不能通过 Supervisor 取消**。Supervisor 会明确返回 `UNSUPPORTED`，而不是假装取消成功；需要在确认 PID 身份后由人工/平台工具终止。拒绝按记录 PID 自动 kill 是因为 PID 复用可能误杀无关进程。待旧进程真正退出后，才可以显式 resume。
+- **`resumeAvailable` 只是前置条件**：它表示 session 文件存在、旧 PID 不在运行、adapter 支持 resume，并不保证 Pi 一定能加载该文件；真正的加载会校验 session ID/路径，失败则恢复原终态并报错，不伪造成功。
+- 需要显式 `resume`，且只接受已持久化 session；旧 PID 仍存活时一律拒绝。`resume` 加载的是持久化会话，不会续接原运行。
+- 平台差异：Windows 上非 detached 的 Pi 子进程在 daemon 被强杀后通常随之退出，记录会变为 `interrupted`；POSIX 或子进程自行存活时可能出现 `orphaned`。两种状态都不代表任务成功。
 
 ### 已知的 PID 复用注意事项
 
-对账使用 `pid + 存活检查`，没有跨平台的进程启动时间指纹。极端情况下 PID 复用可能把新进程误判为旧 Worker；这只会导致更保守的 `orphaned`（拒绝自动处理），不会导致自动重跑。生产环境可在平台层增加进程启动时间校验。
+对账使用 `pid + 存活检查`，没有跨平台的进程启动时间指纹。极端情况下 PID 复用可能把新进程误判为旧 Worker；后果是更保守的 `orphaned`（拒绝自动处理、拒绝 resume），不会导致自动重跑。生产环境可在平台层增加进程启动时间校验。
 
 ### Pause
 
@@ -261,7 +277,7 @@ Pi 没有可用的 pause/resume 原语，Supervisor 不实现假暂停。capabil
 使用 Pi v1.3+ 官方文档化的 **RPC mode**（`pi --mode rpc`）：
 
 - 严格 JSONL framing：只按 LF 分帧、剥离可选 CR、支持跨 chunk UTF-8；不使用 `readline`（它会错误拆开 U+2028/U+2029）。
-- 命令：`prompt`、`steer`、`follow_up`、`abort`、`get_state`、`get_last_assistant_text`、`extension_ui_response`。
+- 命令：`prompt`、`steer`、`follow_up`、`clear_queue`、`abort`、`get_state`、`get_last_assistant_text`、`extension_ui_response`。
 - 事件：`agent_start/end/settled`、`tool_execution_*`、`message_*`、`auto_retry_*`、`compaction_*`、`extension_ui_request`、`extension_error`。
 - **完成判定使用 `agent_settled`，不是 prompt response。** Prompt response 只代表 accepted/queued/handled。
 - 每个 Worker 使用独立 `--session-dir`，捕获 `sessionId/sessionFile`；resume 通过 `--session <file>` 并校验 ID。
@@ -282,14 +298,19 @@ Pi 没有可用的 pause/resume 原语，Supervisor 不实现假暂停。capabil
 
 ## 8. 安全与资源边界
 
-- **本地 IPC 认证**：daemon 在状态目录生成随机 token（`ipc.token`），客户端必须通过 timing-safe 比较的 hello 握手。token 不写日志、不回显。
-- **凭据**：不记录 API Key / token。日志、事件、stderr、结果、错误均做静态模式与敏感环境变量值脱敏；Pi 凭据仍由 Pi 自己的配置管理。`--api-key` 和 `--no-session` 被禁止放在 `extraArgs` 中。
-- **工作目录与工具**：每个 Worker 有独立 cwd；可选 `tools` allowlist 传给 Pi；`maxDurationMs` 可强制取消。
-- **取消范围**：只针对该 Worker 的 PID / 进程组，不用命令字符串过滤作为安全边界。
-- **不是沙箱**：Worker 继承 daemon 的环境变量，Pi 工具可以访问文件系统和网络。对不可信任务，应在容器 / 虚拟机 / 受限用户中运行，并收紧 Pi 工具 allowlist。
-- **无自动重试**：进程断开、daemon 重启、任务失败都不会自动重跑可能产生副作用的任务。
+**v0.1 不是沙箱，也不提供文件系统隔离。**
+
+- **cwd 只是默认工作目录**：Supervisor 只校验它存在且是目录，并把它作为 Pi 进程的初始 cwd。它不限制 Pi 的 bash/read/write/edit 等工具访问该目录之外的路径；不要把 cwd 当作文件隔离机制。
+- **同一 OS 用户 = 同一个信任域**：Worker 继承 daemon 的环境变量，拥有与 daemon 相同的文件、网络和进程权限。它可以读取其他 Worker 的 session/事件、Supervisor 状态目录以及 `ipc.token`。因此不要在同一用户下运行不可信 Worker 与 Supervisor。
+- **本地 IPC 认证**：daemon 在状态目录生成随机 token（`ipc.token`；POSIX 创建时 0600，Windows 继承目录 ACL），客户端必须通过 timing-safe hello 握手。token 不写日志、不回显；但同用户进程仍可读取该文件，所以 token 不能防御同用户恶意 Worker。
+- **凭据**：Supervisor 自身的日志、事件、stderr、结果和错误会做静态模式与敏感环境变量值脱敏，但这是**捕获后的尽力而为**，不是访问控制。Worker 仍能读取继承的环境变量，也可能把凭据写入自己的输出或被 Pi 记录。`--api-key` / `--no-session` 被禁止放进 `extraArgs`，但这只约束显式参数，不改变环境继承。
+- **工具 allowlist 不是沙箱**：`tools` 只限制传给 Pi 的工具集合；Pi 扩展、shell 和网络能力仍可能扩大边界。
+- **生命周期控制 ≠ 资源配额**：`maxDurationMs`、取消和 `maxWorkers` 只控制进程生命周期，不限制 CPU、内存、磁盘、网络或子进程产生的资源消耗。
+- **取消范围**：只针对该 Worker 的 PID / 进程组，不用命令字符串过滤作为安全边界。daemon 重启后的 `orphaned` 进程不再受控，Supervisor 不会假装取消。
+- **Supervisor 不自动重试**：进程断开、daemon 重启、任务失败都不会由 Supervisor 自动重跑可能产生副作用的任务。Pi 自身的 provider 级 auto-retry 仍由其配置控制，Supervisor 只透传 `auto_retry_*` 事件；需要严格禁止时应在 Pi 侧关闭。
 - **限制**：默认最多 8 个并发 Worker；wait 最大 120s；prompt 最大 256K 字符；保存结果最大 64K；stderr 环形截断；IPC 请求行有大小上限。
 - **不删除用户数据**：Supervisor 只管理自己的状态目录与 Worker 进程；没有删除 Worker/会话的命令。
+- **建议**：不可信任务使用容器 / VM / 独立低权限用户运行；限制其对 Supervisor 状态目录和其他 Worker 数据的访问；使用专用只读或临时工作目录；限制网络与工具；把 Pi 凭据放在隔离配置中。
 
 环境变量：
 
@@ -318,10 +339,10 @@ npm test
 结果（最终运行）：
 
 - 22 个单元测试：JSONL framing、脱敏、持久化/游标、IPC 协议校验、Pi 启动参数
-- 14 个集成测试：CLI、daemon、并发取消隔离、增量事件、steer、extension 授权、失败/崩溃/取消区分、max duration、强制终止、daemon 崩溃/重启对账/resume、优雅关闭、MCP 全流程与客户端断连
+- 23 个集成测试：CLI、daemon、并发取消隔离、增量事件、steer、extension 授权、失败/崩溃/取消区分、max duration、强制终止、daemon 崩溃/重启对账/resume、优雅关闭、MCP 全流程与客户端断连，以及并发/竞态回归
 - 2 个依赖真实 Pi 的测试默认跳过（`RUN_REAL_PI=1`）；其中 native session resume 测试不调用模型，real worker 测试会调用一次低成本模型
 
-最终运行：38 tests，36 pass，0 fail，2 skipped。完整输出见 [`evidence/test-suite.txt`](evidence/test-suite.txt)。
+最终运行：47 tests，45 pass，0 fail，2 skipped。完整输出见 [`evidence/test-suite-races.txt`](evidence/test-suite-races.txt)。
 
 覆盖的关键断言包括：
 
@@ -333,9 +354,17 @@ npm test
 - 取消一个 Worker 时另一个正常完成；
 - completed / failed / cancelled / crashed 是不同终态；
 - daemon 被 SIGKILL 后不会自动重跑，重启后标记为 interrupted/orphaned；
-- resume 在 session 文件缺失时明确拒绝，不伪造成功；
+- resume 在 session 文件缺失时明确拒绝，不伪造成功；resumeCount 只在加载和新 prompt 都成功后增加；
 - 不响应 abort 的 Harness 会被强制终止并确认进程死亡；
-- MCP 客户端断开后 daemon 和 Worker 继续，重连可读到完成结果。
+- MCP 客户端断开后 daemon 和 Worker 继续，重连可读到完成结果；
+- 并发 spawn 不能突破 `maxWorkers`；
+- 取消开始后 send/answer 被拒绝，重复 answer 只有一个成功；
+- 取消会先清空 Pi 队列，非空清空记录 `queue_cleared`；
+- 启动过程中取消会在 prompt 被接受前生效；
+- 并发重复 cancel 幂等，且只记录一次 `run.cancelled`；
+- shutdown 会等待 in-flight spawn 结束，不遗留活动 Worker；
+- 并发 resume 只产生一个 runtime；
+- 对仍存活的 `orphaned` PID，cancel 明确返回 `UNSUPPORTED`，不伪造成功。
 
 ### 真实 Pi Worker
 
@@ -372,16 +401,19 @@ npm run e2e:parent
 2. **Pull-only 事件**：MCP 没有后台唤醒主 Agent；需要宿主侧 notification 支持时再扩展。
 3. **无 pause**：Pi 无原语；resume 是新进程 + 持久化 session。
 4. **自然语言“提问”不自动变成交互**：只有原生 extension dialog 会进入 `awaiting_input`。
-5. **daemon 崩溃后无法接管原管道**：只做状态对账，不假装重连；旧进程需人工处理/等待退出。
+5. **daemon 崩溃后无法接管原管道**：只做状态对账，不假装重连；仍存活的 `orphaned` 进程不能通过 Supervisor 取消，需人工确认 PID 后终止。
 6. **PID 复用风险**：对账只做 PID 存活检查；后果是更保守的拒绝，不会自动重跑。
-7. **非沙箱**：继承环境变量与文件系统权限；不可信任务需容器化。
+7. **非沙箱，cwd 不是隔离**：Worker 与 daemon 同用户、继承环境变量，并可按该用户的权限访问文件系统和网络，包括 Supervisor 状态目录与 `ipc.token`；不可信任务必须容器化/独立用户运行。
 8. **事件日志无自动保留策略**：v0.1 按 Worker 无限增长（文本 delta 不入库），后续需要 retention/compaction。
 9. **单用户本地 daemon**：没有用户/团队/权限后台，也没有远程 MCP 认证。
-10. **Windows 原生**已验证；WSL 需要自行在 WSL 内安装 Node + Pi，本项目未在该环境实测。不要用 `.cmd` shim 作为 `HARNESS_SUPERVISOR_PI_BIN`。
+10. **Windows 原生**已验证；非 detached 的 Pi 子进程通常在 daemon 被强杀后随之退出（对账为 `interrupted`），POSIX 或自行存活的进程才可能成为 `orphaned`。WSL 需要自行在 WSL 内安装 Node + Pi，本项目未在该环境实测。不要用 `.cmd` shim 作为 `HARNESS_SUPERVISOR_PI_BIN`。
 11. **结果文本可能很大**：存储与事件展示有上限；完整 Pi session 文件保留原始记录。
 12. **MCP 工具超时**：宿主必须把 tool timeout 配到比 wait 更长。
 13. **极端强杀下的持久化窗口**：daemon 被强制杀死时，事件/状态快照的最后一个异步写可能尚未落盘；重启会按已有记录保守对账，不猜测成功。
 14. **示例中的 model/provider 仅是验证环境配置**：请替换为你自己的 Pi provider/model。
+15. **没有幂等键**：spawn、resume、send 都不是事务型操作。客户端/宿主超时后不要盲目重试，先通过 `status`/`list` 确认是否已生效；否则可能启动第二个 Worker 或追加一次新运行。
+16. **关停有等待上限**：shutdown 最多等待 in-flight 准入 5 秒，之后进入取消/强杀；若 Harness 连强杀都不响应，或 daemon 本身被更底层机制杀死，仍可能需要人工清理残留进程。
+17. **工具子进程的清理上限**：取消/强杀覆盖 Harness 的进程树/进程组；若 Harness 先退出，且它启动的工具子进程被 OS 重新挂接，Supervisor 无法再追踪这些孙进程。需要更强保证时应结合 OS 级 Job Object / cgroup 管理。
 
 ---
 

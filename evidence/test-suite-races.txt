@@ -1,0 +1,63 @@
+
+> harness-supervisor@0.1.0 test
+> npm run build && node test/run.mjs
+
+
+> harness-supervisor@0.1.0 build
+> tsc -p tsconfig.json
+
+﹣ REAL Pi loads a persisted session through the adapter and retains its session id (0.5052ms) # Set RUN_REAL_PI=1 to run this native-Pi session-loading test (it makes no model call).
+﹣ REAL Pi worker executes a task in its own working directory (0.5078ms) # Set RUN_REAL_PI=1 to run this paid, real-model integration test.
+✔ CLI starts the supervisor, spawns a worker, steers it, and reads terminal state (7039.2502ms)
+✔ CLI spawn --wait returns one final JSON document (1148.3159ms)
+✔ completed, failed, crashed, and cancelled are distinct terminal outcomes (1142.8423ms)
+✔ cancellation force-kills a harness that ignores abort (7372.3425ms)
+✔ spawn returns while running, and the worker survives main-client disconnect (3127.6086ms)
+✔ event cursors are incremental and bounded waits do not replay history (2449.079ms)
+✔ a steering message reaches a running worker (2461.4461ms)
+✔ extension dialogs surface as awaiting_input and can be answered (685.7885ms)
+✔ cancelling one worker does not disturb another (4759.3635ms)
+✔ max duration cancels the run and reports why (1643.6651ms)
+✔ resume refuses to fake a session that no longer exists (669.1085ms)
+✔ MCP client can spawn, observe, steer, cancel, and outlive its own disconnect (6697.4971ms)
+✔ concurrent spawn requests cannot exceed maxWorkers (650.0912ms)
+✔ send and duplicate answer are rejected once cancellation starts (653.7026ms)
+✔ duplicate concurrent answers to one dialog are rejected (685.1302ms)
+✔ cancel clears queued steering before aborting (653.792ms)
+✔ cancel during startup cancels before the prompt is accepted (5780.0869ms)
+✔ concurrent cancels are idempotent and record one cancellation (638.644ms)
+✔ shutdown waits out an in-flight spawn and leaves no live worker (861.4318ms)
+✔ concurrent resumes produce one live runtime only (841.3294ms)
+✔ daemon crash leaves an explicitly detached worker; resume is manual and verified (1387.4001ms)
+✔ an orphaned live PID is reported honestly and cannot be cancelled (1219.9722ms)
+✔ graceful daemon shutdown cancels active workers and records why (1131.8002ms)
+✔ IPC endpoint is deterministic and platform-appropriate (1.1622ms)
+✔ token digests are comparable fixed-length buffers (0.1596ms)
+✔ parses a valid hello and rejects malformed ones (1.2485ms)
+✔ validates request envelopes and method params (1.699ms)
+✔ decodes multiple records across arbitrary byte boundaries (1.1283ms)
+✔ does not split on U+2028 / U+2029 and strips CRLF (0.1269ms)
+✔ reports invalid JSON but continues with later records (0.7204ms)
+✔ parses a final line without a newline on end (0.1462ms)
+✔ ignores empty lines and non-object records (0.1259ms)
+✔ JS entry launches as node <entry> <pi args>, not node <pi args> <entry> (1.9164ms)
+✔ explicit executable gets Pi args after it (0.1476ms)
+✔ malformed Pi args env is rejected (1.0984ms)
+✔ extraArgs cannot override supervisor-managed Pi options (0.3051ms)
+✔ redacts common API key and bearer formats (1.807ms)
+✔ redacts sensitive environment values (0.1168ms)
+✔ redacts private key blocks (0.1132ms)
+✔ safeText truncates and redacts (0.1236ms)
+✔ truncateText reports whether it truncated (0.5078ms)
+✔ persists records and events and reloads them with a valid cursor (25.075ms)
+✔ ignores a corrupt trailing event line on reload (11.3023ms)
+✔ event writes preserve ordering even when enqueued together (30.4186ms)
+✔ stderr tail keeps the newest content (9.0431ms)
+ℹ tests 47
+ℹ suites 0
+ℹ pass 45
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 2
+ℹ todo 0
+ℹ duration_ms 88194.5464

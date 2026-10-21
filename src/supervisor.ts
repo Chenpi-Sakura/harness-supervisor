@@ -29,7 +29,7 @@ import {
   type WorkerSummary,
 } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
-import { clampInt, Deferred, isPidAlive, newWorkerId, withTimeout } from "./util/async.js";
+import { clampInt, Deferred, isPidAlive, newWorkerId, sleep, withTimeout } from "./util/async.js";
 import type { Logger } from "./util/logger.js";
 import { redactText, safeText, truncateText } from "./util/redact.js";
 import { VERSION, TOOL_NAME } from "./version.js";
@@ -64,6 +64,7 @@ interface Runtime {
   runAccepted: boolean;
   maxDurationTimer?: NodeJS.Timeout;
   pendingUiTimer?: NodeJS.Timeout;
+  answeringRequestId?: string;
   lastAssistantText?: string;
   lastError?: string;
 }
@@ -101,7 +102,10 @@ export class Supervisor {
   private readonly adapters: Map<string, HarnessAdapter>;
   private readonly logger: Logger;
   private readonly runtimes = new Map<string, Runtime>();
+  private readonly resuming = new Set<string>();
+  private pendingSpawns = 0;
   private initialized = false;
+  private shuttingDown = false;
 
   constructor(options: SupervisorOptions) {
     this.store = options.store;
@@ -173,7 +177,16 @@ export class Supervisor {
 
   async spawn(input: SpawnInput): Promise<WorkerSummary> {
     this.assertInitialized();
-    this.assertCapacity();
+    this.assertAcceptingWork();
+    this.reserveSpawnSlot();
+    try {
+      return await this.spawnInternal(input);
+    } finally {
+      this.pendingSpawns -= 1;
+    }
+  }
+
+  private async spawnInternal(input: SpawnInput): Promise<WorkerSummary> {
     const runtimeName = input.runtime ?? "pi";
     const adapter = this.adapters.get(runtimeName);
     if (!adapter) {
@@ -200,6 +213,7 @@ export class Supervisor {
     const config = validateConfig(input);
     const now = new Date().toISOString();
     const id = newWorkerId();
+    this.assertAcceptingWork();
     const record: WorkerRecord = {
       schemaVersion: SCHEMA_VERSION,
       id,
@@ -229,7 +243,9 @@ export class Supervisor {
 
     try {
       await this.store.flush(id);
+      this.assertAcceptingWork();
       await this.initializeSession(runtime);
+      this.assertAcceptingWork();
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -276,7 +292,27 @@ export class Supervisor {
 
   async resume(workerId: string, input: ResumeInput): Promise<WorkerSummary> {
     this.assertInitialized();
+    this.assertAcceptingWork();
     const record = this.requireWorker(workerId);
+    if (this.resuming.has(workerId)) {
+      throw new SupervisorError("INVALID_STATE", "Resume is already in progress for this worker", {
+        workerId,
+        status: record.status,
+      });
+    }
+    this.resuming.add(workerId);
+    try {
+      return await this.resumeInternal(workerId, input, record);
+    } finally {
+      this.resuming.delete(workerId);
+    }
+  }
+
+  private async resumeInternal(
+    workerId: string,
+    input: ResumeInput,
+    record: WorkerRecord,
+  ): Promise<WorkerSummary> {
     let activeRuntime = this.runtimes.get(workerId);
     if (activeRuntime?.finalizing) {
       await this.waitForRuntimeTerminal(activeRuntime, 10_000);
@@ -373,17 +409,13 @@ export class Supervisor {
 
     try {
       await this.store.saveWorker(record);
+      this.assertAcceptingWork();
       await this.initializeSession(runtime, {
         sessionFile: record.sessionFile,
         expectedSessionId,
         resume: true,
       });
-      record.resumeCount += 1;
-      this.store.appendEvent(workerId, "worker.resumed", {
-        sessionId: record.sessionId,
-        sessionFile: record.sessionFile,
-        resumeCount: record.resumeCount,
-      });
+      this.assertAcceptingWork();
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -408,6 +440,12 @@ export class Supervisor {
       this.store.appendEvent(workerId, "run.accepted", {
         disposition: disposition.disposition,
         resumed: true,
+      });
+      record.resumeCount += 1;
+      this.store.appendEvent(workerId, "worker.resumed", {
+        sessionId: record.sessionId,
+        sessionFile: record.sessionFile,
+        resumeCount: record.resumeCount,
       });
       this.ensureDurationTimer(runtime);
       await this.store.saveWorker(record);
@@ -554,6 +592,12 @@ export class Supervisor {
         status: record.status,
       });
     }
+    this.assertAcceptingWork();
+    if (runtime.cancelRequested || runtime.finalizing) {
+      throw new SupervisorError("INVALID_STATE", "Worker is being cancelled", {
+        status: record.status,
+      });
+    }
     if (typeof message !== "string" || message.trim().length === 0) {
       throw new SupervisorError("BAD_REQUEST", "message must be a non-empty string");
     }
@@ -571,6 +615,13 @@ export class Supervisor {
         workerId,
         mode,
       });
+    }
+    if (runtime.cancelRequested || runtime.finalizing || isTerminal(record.status)) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        "Worker finished or cancellation started while the message was being delivered; the queued message will not be executed",
+        { status: record.status, mode },
+      );
     }
     this.store.appendEvent(workerId, "run.message_sent", {
       mode,
@@ -600,13 +651,34 @@ export class Supervisor {
         pendingRequestId: pending.requestId,
       });
     }
+    this.assertAcceptingWork();
+    if (runtime.cancelRequested || runtime.finalizing) {
+      throw new SupervisorError("INVALID_STATE", "Worker is being cancelled", {
+        status: record.status,
+      });
+    }
+    if (runtime.answeringRequestId) {
+      throw new SupervisorError("INVALID_STATE", "Another answer is already being delivered", {
+        requestId: runtime.answeringRequestId,
+      });
+    }
     validateUiResponse(pending, response);
+    runtime.answeringRequestId = requestId;
     try {
       await runtime.session.answer(requestId, response);
     } catch (error) {
       throw new SupervisorError("HARNESS_ERROR", safeText(errorMessage(error), 2000), {
         workerId,
       });
+    } finally {
+      runtime.answeringRequestId = undefined;
+    }
+    if (runtime.cancelRequested || runtime.finalizing || isTerminal(record.status)) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        "Worker finished or cancellation started while the answer was being delivered",
+        { status: record.status },
+      );
     }
     if (runtime.pendingUiTimer) {
       clearTimeout(runtime.pendingUiTimer);
@@ -630,8 +702,22 @@ export class Supervisor {
   async cancel(workerId: string, options: CancelOptions = {}): Promise<WorkerSummary> {
     this.assertInitialized();
     const record = this.requireWorker(workerId);
+    if (this.resuming.has(workerId) && !this.runtimes.has(workerId)) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        "Resume is in progress for this worker; retry cancel after the worker starts",
+        { status: record.status },
+      );
+    }
     const existingRuntime = this.runtimes.get(workerId);
     if (isTerminal(record.status)) {
+      if (record.status === "orphaned" && isPidAlive(record.pid)) {
+        throw new SupervisorError(
+          "UNSUPPORTED",
+          "The supervisor no longer owns this live process after a restart. It cannot be cancelled through the supervisor; verify and terminate the recorded PID out-of-band.",
+          { pid: record.pid, workerId },
+        );
+      }
       if (existingRuntime) {
         await this.waitForRuntimeTerminal(
           existingRuntime,
@@ -678,6 +764,14 @@ export class Supervisor {
   }
 
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    const drainDeadline = Date.now() + 5000;
+    while (
+      (this.pendingSpawns > 0 || this.resuming.size > 0) &&
+      Date.now() < drainDeadline
+    ) {
+      await sleep(25);
+    }
     const active = this.store.listWorkers().filter((record) => !isTerminal(record.status));
     await Promise.allSettled(
       active.map((record) =>
@@ -721,6 +815,29 @@ export class Supervisor {
     }
     const session = runtime.session;
     if (session?.isAlive()) {
+      const clearBudget = Math.max(250, Math.min(2000, deadline - Date.now()));
+      try {
+        const cleared = await withTimeout(
+          session.clearQueue(),
+          clearBudget,
+          "clear_queue timed out",
+        );
+        const steering = cleared.steering.length;
+        const followUp = cleared.followUp.length;
+        if (steering + followUp > 0) {
+          this.store.appendEvent(record.id, "run.progress", {
+            kind: "queue_cleared",
+            steering,
+            followUp,
+          });
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Failed to clear queued messages for ${record.id}; aborting anyway`,
+          { error: errorMessage(error) },
+        );
+      }
+      if (isTerminal(record.status) || runtime.finalizing) return;
       const remaining = Math.max(500, Math.min(this.limits.abortTimeoutMs, deadline - Date.now()));
       try {
         await withTimeout(session.abort(), remaining, "abort timed out");
@@ -1346,17 +1463,24 @@ export class Supervisor {
     if (!this.initialized) throw new SupervisorError("INTERNAL", "Supervisor is not initialized");
   }
 
-  private assertCapacity(): void {
+  private assertAcceptingWork(): void {
+    if (this.shuttingDown) {
+      throw new SupervisorError("INVALID_STATE", "Supervisor is shutting down");
+    }
+  }
+
+  private reserveSpawnSlot(): void {
     const active = this.store
       .listWorkers()
       .filter((record) => ACTIVE_STATUSES.has(record.status)).length;
-    if (active >= this.limits.maxWorkers) {
+    if (active + this.pendingSpawns >= this.limits.maxWorkers) {
       throw new SupervisorError(
         "LIMIT_EXCEEDED",
         `Maximum concurrent workers reached (${this.limits.maxWorkers})`,
-        { active },
+        { active, pendingSpawns: this.pendingSpawns },
       );
     }
+    this.pendingSpawns += 1;
   }
 }
 
@@ -1480,10 +1604,13 @@ function validateUiResponse(pending: PendingInput, response: ExtensionUiResponse
   }
 }
 
-function classifyErrorCode(error: unknown): "BAD_REQUEST" | "UNSUPPORTED" | "HARNESS_ERROR" | "HARNESS_TIMEOUT" | "INTERNAL" {
+function classifyErrorCode(
+  error: unknown,
+): "BAD_REQUEST" | "UNSUPPORTED" | "INVALID_STATE" | "HARNESS_ERROR" | "HARNESS_TIMEOUT" | "INTERNAL" {
   if (error instanceof SupervisorError) {
     return error.code === "BAD_REQUEST" ||
       error.code === "UNSUPPORTED" ||
+      error.code === "INVALID_STATE" ||
       error.code === "HARNESS_ERROR" ||
       error.code === "HARNESS_TIMEOUT"
       ? error.code

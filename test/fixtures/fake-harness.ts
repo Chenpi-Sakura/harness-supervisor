@@ -22,7 +22,7 @@ function takeValue(name) {
 
 const stepMs = Number(process.env.FAKE_PI_STEP_MS || 40);
 const slowStepMs = Number(process.env.FAKE_PI_SLOW_STEP_MS || 1800);
-const surviveStdinEnd = process.env.FAKE_PI_SURVIVE_STDIN_END === "1";
+const acceptAfter = Date.now() + Number(process.env.FAKE_PI_START_DELAY_MS || 0);
 
 let sessionFile: string | undefined;
 let sessionId: string;
@@ -278,6 +278,10 @@ function handleAbort(id) {
 }
 
 function handleLine(line) {
+  if (Date.now() < acceptAfter) {
+    setTimeout(() => handleLine(line), Math.max(1, acceptAfter - Date.now()));
+    return;
+  }
   let record;
   try {
     record = JSON.parse(line);
@@ -398,13 +402,9 @@ process.stdin.on("data", (chunk) => {
   }
 });
 process.stdin.on("end", () => {
-  if (surviveStdinEnd) return;
   process.exit(0);
 });
-process.on("SIGTERM", () => {
-  if (surviveStdinEnd) return;
-  process.exit(0);
-});
+process.on("SIGTERM", () => process.exit(0));
 process.stdout.on("error", () => undefined);
 process.stderr.on("error", () => undefined);
 

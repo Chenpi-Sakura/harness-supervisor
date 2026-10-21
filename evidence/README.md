@@ -26,7 +26,20 @@ All artifacts here were produced by actual runs on 2026-10-21 (Windows, Node v24
 
 The fake harness is a scripted implementation of the documented Pi RPC subset. Every fake-harness test runs the production Pi adapter, IPC daemon, supervisor state machine, CLI, or MCP server; it does not bypass the implementation.
 
-- `npm test`: 38 tests, 36 pass, 0 fail, 2 skipped (the gated real-Pi tests).
-- Full output: [test-suite.txt](test-suite.txt).
+- Baseline run (2026-10-21, before the lifecycle/race fixes): 38 tests, 36 pass, 0 fail, 2 skipped.
+  Full output: [test-suite.txt](test-suite.txt).
+- Current run (2026-10-22, after the fixes): 47 tests, 45 pass, 0 fail, 2 skipped (the gated real-Pi tests).
+  Full output: [test-suite-races.txt](test-suite-races.txt).
+
+The added regression coverage:
+
+- concurrent spawn requests cannot exceed `maxWorkers`;
+- `send` and duplicate `answer` are rejected once cancellation starts;
+- cancellation clears queued steering before abort and records `queue_cleared`;
+- cancellation during startup wins before the prompt is accepted;
+- concurrent duplicate cancels are idempotent (one `run.cancelled`);
+- shutdown waits out an in-flight spawn and leaves no active worker;
+- concurrent resumes produce one live runtime;
+- an orphaned live PID cannot be cancelled and is not falsely reported as cancelled.
 
 > Note: the original temp state/work directories may be cleaned up; the artifacts relevant to each run are copied into these evidence folders.

@@ -6,6 +6,7 @@ import type {
   HarnessCallbacks,
   HarnessCloseResult,
   HarnessExit,
+  HarnessQueueContents,
   HarnessSession,
   HarnessStateInfo,
   PendingInput,
@@ -173,6 +174,16 @@ export class PiRpcSession implements HarnessSession {
 
   async followUp(message: string): Promise<void> {
     await this.request({ type: "follow_up", message }, this.requestTimeoutMs);
+  }
+
+  async clearQueue(): Promise<HarnessQueueContents> {
+    const data = (await this.request({ type: "clear_queue" }, this.requestTimeoutMs)) as
+      | Record<string, unknown>
+      | undefined;
+    return {
+      steering: stringArray(data?.steering),
+      followUp: stringArray(data?.followUp),
+    };
   }
 
   async abort(): Promise<void> {
@@ -555,6 +566,10 @@ export class PiRpcSession implements HarnessSession {
       // Callback failures must not break RPC parsing.
     }
   }
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function extractAssistantText(message: Record<string, unknown>): string {

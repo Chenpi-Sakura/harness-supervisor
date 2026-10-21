@@ -305,7 +305,7 @@ server.registerTool(
   {
     title: "Cancel a worker and confirm termination",
     description:
-      "Abort the native run, stop the harness process (force-killing its process tree if needed), and return the final cancelled state. Other workers are unaffected. Cancellation is not a pause and cannot be undone.",
+      "Clear queued steering/follow-up messages, abort the native run, stop the harness process (force-killing its process tree if needed), and return the final cancelled state. Other workers are unaffected. If the worker is an orphaned process left by a supervisor restart, this returns UNSUPPORTED because the supervisor no longer owns its control channel; verify and terminate that PID out-of-band. Cancellation is not a pause and cannot be undone.",
     inputSchema: {
       workerId: z.string().min(1),
       timeoutMs: z.number().int().min(500).max(60_000).optional(),
@@ -332,7 +332,7 @@ server.registerTool(
   {
     title: "Resume a persisted native session with a new instruction",
     description:
-      "Start a new harness process attached to an existing Pi session file and send a new instruction. Only works for a terminal worker with a persisted session that still exists and whose old process is not alive. The supervisor verifies the session id and refuses to fake a resume. Does not automatically retry the old task.",
+      "Start a new harness process attached to an existing Pi session file and send a new instruction. Only works for a terminal worker with a persisted session that still exists and whose old process is not alive. The supervisor verifies the session id and refuses to fake a resume. This does not continue the interrupted in-memory run, replay its tool calls, or automatically retry the old task.",
     inputSchema: {
       workerId: z.string().min(1),
       prompt: z.string().min(1),

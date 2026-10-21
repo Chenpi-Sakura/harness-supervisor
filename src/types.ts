@@ -264,12 +264,18 @@ export interface HarnessCloseResult {
   forced: boolean;
 }
 
+export interface HarnessQueueContents {
+  steering: string[];
+  followUp: string[];
+}
+
 export interface HarnessSession {
   readonly pid: number | undefined;
   getState(): Promise<HarnessStateInfo>;
   prompt(message: string): Promise<{ disposition: string }>;
   steer(message: string): Promise<void>;
   followUp(message: string): Promise<void>;
+  clearQueue(): Promise<HarnessQueueContents>;
   abort(): Promise<void>;
   answer(requestId: string, response: ExtensionUiResponse): Promise<void>;
   close(options?: { graceMs?: number }): Promise<HarnessCloseResult>;

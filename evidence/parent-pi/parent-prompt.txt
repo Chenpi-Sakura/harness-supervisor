@@ -1,0 +1,11 @@
+You are the parent agent in a Harness Supervisor end-to-end test.
+Do not analyze or modify the repository. Do not start extra workers.
+Use your bash tool to run this exact command once:
+bash "D:/Projects/Harness-Supervisor/evidence/parent-pi/run-child-worker.sh"
+
+That command asks Harness Supervisor to start a separate native Pi worker,
+wait for it to finish, and print one JSON document. It may take up to two minutes.
+After it finishes, use your read tool to read this file:
+C:/Users/Lenovo/AppData/Local/Temp/hs-parent-pi-work-tsjvrF/worker-output.txt
+
+Then reply with exactly: PARENT_E2E_OK

@@ -1,0 +1,12 @@
+{"seq":1,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:13.663Z","type":"worker.starting","data":{"runtime":"pi","cwd":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-real-work-araCwp","resumed":false}}
+{"seq":2,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:13.703Z","type":"worker.started","data":{"pid":62840,"runtime":"pi"}}
+{"seq":3,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:14.337Z","type":"worker.session","data":{"sessionId":"01a15edd-c315-73ca-9368-7e814b2f77f2","sessionFile":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-real-OINnZV\\sessions\\w-mvi7k7co-1cee0dd5\\2026-10-21T14-29-14-134Z_01a15edd-c315-73ca-9368-7e814b2f77f2.jsonl","fileExists":false}}
+{"seq":4,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:14.360Z","type":"run.accepted","data":{"disposition":"started"}}
+{"seq":5,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:14.361Z","type":"run.started","data":{"pid":62840,"resumed":false}}
+{"seq":6,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:17.822Z","type":"run.progress","data":{"kind":"tool_start","tool":"write","detail":"C:/Users/Lenovo/AppData/Local/Temp/hs-real-work-araCwp/worker-output.txt"}}
+{"seq":7,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:17.828Z","type":"run.progress","data":{"kind":"tool_end","tool":"write","isError":false,"durationMs":4}}
+{"seq":8,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:17.836Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":9,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:24.893Z","type":"run.progress","data":{"kind":"assistant_message","preview":"WORKER_DONE"}}
+{"seq":10,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:24.897Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":11,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:24.923Z","type":"run.completed","data":{"sessionFile":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-real-OINnZV\\sessions\\w-mvi7k7co-1cee0dd5\\2026-10-21T14-29-14-134Z_01a15edd-c315-73ca-9368-7e814b2f77f2.jsonl","aborted":false,"stopReason":"stop","forcedCleanup":false,"text":"WORKER_DONE","truncated":false}}
+{"seq":12,"workerId":"w-mvi7k7co-1cee0dd5","ts":"2026-10-21T14:29:24.929Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}

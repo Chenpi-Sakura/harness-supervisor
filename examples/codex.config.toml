@@ -1,0 +1,14 @@
+# Codex configuration example
+# Put this in ~/.codex/config.toml and adjust the absolute path.
+#
+# The MCP server auto-starts the local supervisor daemon. Workers are owned by
+# that daemon, so they keep running if Codex disconnects or restarts.
+#
+# tool_timeout_sec must exceed the longest worker_wait call you intend to make
+# (the tool caps waits at 120 s).
+
+[mcp_servers.harness_supervisor]
+command = "node"
+args = ["D:/Projects/Harness-Supervisor/dist/src/mcp.js"]
+startup_timeout_sec = 30
+tool_timeout_sec = 150

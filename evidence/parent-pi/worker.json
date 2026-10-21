@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mvi7lylk-0cf9afdf",
+  "runtime": "pi",
+  "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-parent-pi-work-tsjvrF",
+  "promptPreview": "Perform this one task now:\n1. In the current working directory, create a file named worker-output.txt using the write tool.\n2. Put exactly SUPERVISOR_E2E_OK (with a trailing newline) in that file.\n3. Do not read, create, edit, or run anything outside the current working directory.\n4. When done, reply with exactly: WORKER_DONE\nDo not ask for confirmation.\n",
+  "status": "completed",
+  "createdAt": "2026-10-21T14:30:35.624Z",
+  "updatedAt": "2026-10-21T14:30:41.482Z",
+  "lastSeq": 12,
+  "eventCount": 12,
+  "stats": {
+    "turns": 2,
+    "toolCalls": 1,
+    "toolErrors": 0
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {
+    "model": "deepseek-v4.1-flash-1017",
+    "provider": "new-api",
+    "thinking": "off",
+    "tools": [
+      "read",
+      "bash",
+      "write"
+    ],
+    "maxDurationMs": 150000,
+    "extraArgs": [
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files"
+    ]
+  },
+  "resumeCount": 0,
+  "supervisorId": "d6807a6f-713f-482b-a9d9-d904281ef6b1",
+  "pid": 25280,
+  "sessionId": "01a15edf-0344-76ab-aafc-c7d4f5a1f2b5",
+  "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-parent-pi-state-7OGw0N\\sessions\\w-mvi7lylk-0cf9afdf\\2026-10-21T14-30-36-101Z_01a15edf-0344-76ab-aafc-c7d4f5a1f2b5.jsonl",
+  "startedAt": "2026-10-21T14:30:36.332Z",
+  "endedAt": "2026-10-21T14:30:41.477Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-21T14:30:41.477Z"
+  },
+  "result": {
+    "text": "WORKER_DONE",
+    "truncated": false
+  }
+}

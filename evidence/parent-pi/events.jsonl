@@ -1,0 +1,12 @@
+{"seq":1,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:35.630Z","type":"worker.starting","data":{"runtime":"pi","cwd":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-parent-pi-work-tsjvrF","resumed":false}}
+{"seq":2,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:35.685Z","type":"worker.started","data":{"pid":25280,"runtime":"pi"}}
+{"seq":3,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:36.309Z","type":"worker.session","data":{"sessionId":"01a15edf-0344-76ab-aafc-c7d4f5a1f2b5","sessionFile":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-parent-pi-state-7OGw0N\\sessions\\w-mvi7lylk-0cf9afdf\\2026-10-21T14-30-36-101Z_01a15edf-0344-76ab-aafc-c7d4f5a1f2b5.jsonl","fileExists":false}}
+{"seq":4,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:36.332Z","type":"run.accepted","data":{"disposition":"started"}}
+{"seq":5,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:36.333Z","type":"run.started","data":{"pid":25280,"resumed":false}}
+{"seq":6,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:38.996Z","type":"run.progress","data":{"kind":"tool_start","tool":"write","detail":"C:/Users/Lenovo/AppData/Local/Temp/hs-parent-pi-work-tsjvrF/worker-output.txt"}}
+{"seq":7,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:39.001Z","type":"run.progress","data":{"kind":"tool_end","tool":"write","isError":false,"durationMs":3}}
+{"seq":8,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:39.007Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":9,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:41.442Z","type":"run.progress","data":{"kind":"assistant_message","preview":"WORKER_DONE"}}
+{"seq":10,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:41.449Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":11,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:41.477Z","type":"run.completed","data":{"sessionFile":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-parent-pi-state-7OGw0N\\sessions\\w-mvi7lylk-0cf9afdf\\2026-10-21T14-30-36-101Z_01a15edf-0344-76ab-aafc-c7d4f5a1f2b5.jsonl","aborted":false,"stopReason":"stop","forcedCleanup":false,"text":"WORKER_DONE","truncated":false}}
+{"seq":12,"workerId":"w-mvi7lylk-0cf9afdf","ts":"2026-10-21T14:30:41.482Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}

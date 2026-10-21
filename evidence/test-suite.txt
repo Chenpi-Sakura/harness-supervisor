@@ -1,0 +1,54 @@
+
+> harness-supervisor@0.1.0 test
+> npm run build && node test/run.mjs
+
+
+> harness-supervisor@0.1.0 build
+> tsc -p tsconfig.json
+
+﹣ REAL Pi loads a persisted session through the adapter and retains its session id (0.5048ms) # Set RUN_REAL_PI=1 to run this native-Pi session-loading test (it makes no model call).
+﹣ REAL Pi worker executes a task in its own working directory (0.5166ms) # Set RUN_REAL_PI=1 to run this paid, real-model integration test.
+✔ CLI starts the supervisor, spawns a worker, steers it, and reads terminal state (7233.4866ms)
+✔ CLI spawn --wait returns one final JSON document (1327.3424ms)
+✔ completed, failed, crashed, and cancelled are distinct terminal outcomes (1216.7361ms)
+✔ cancellation force-kills a harness that ignores abort (7558.8257ms)
+✔ spawn returns while running, and the worker survives main-client disconnect (3147.3169ms)
+✔ event cursors are incremental and bounded waits do not replay history (2461.0635ms)
+✔ a steering message reaches a running worker (2487.4895ms)
+✔ extension dialogs surface as awaiting_input and can be answered (704.0851ms)
+✔ cancelling one worker does not disturb another (4928.4567ms)
+✔ max duration cancels the run and reports why (1668.1731ms)
+✔ resume refuses to fake a session that no longer exists (705.0593ms)
+✔ MCP client can spawn, observe, steer, cancel, and outlive its own disconnect (6785.689ms)
+✔ daemon crash leaves an explicitly detached worker; resume is manual and verified (1440.3015ms)
+✔ graceful daemon shutdown cancels active workers and records why (1144.1955ms)
+✔ IPC endpoint is deterministic and platform-appropriate (0.9983ms)
+✔ token digests are comparable fixed-length buffers (0.1905ms)
+✔ parses a valid hello and rejects malformed ones (1.4016ms)
+✔ validates request envelopes and method params (1.7223ms)
+✔ decodes multiple records across arbitrary byte boundaries (1.165ms)
+✔ does not split on U+2028 / U+2029 and strips CRLF (0.1357ms)
+✔ reports invalid JSON but continues with later records (0.8089ms)
+✔ parses a final line without a newline on end (0.1822ms)
+✔ ignores empty lines and non-object records (0.1423ms)
+✔ JS entry launches as node <entry> <pi args>, not node <pi args> <entry> (2.1867ms)
+✔ explicit executable gets Pi args after it (0.1653ms)
+✔ malformed Pi args env is rejected (1.1106ms)
+✔ extraArgs cannot override supervisor-managed Pi options (0.3167ms)
+✔ redacts common API key and bearer formats (2.0119ms)
+✔ redacts sensitive environment values (0.1367ms)
+✔ redacts private key blocks (0.1224ms)
+✔ safeText truncates and redacts (0.143ms)
+✔ truncateText reports whether it truncated (0.5738ms)
+✔ persists records and events and reloads them with a valid cursor (34.267ms)
+✔ ignores a corrupt trailing event line on reload (15.273ms)
+✔ event writes preserve ordering even when enqueued together (41.6064ms)
+✔ stderr tail keeps the newest content (19.9006ms)
+ℹ tests 38
+ℹ suites 0
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 2
+ℹ todo 0
+ℹ duration_ms 69477.6492

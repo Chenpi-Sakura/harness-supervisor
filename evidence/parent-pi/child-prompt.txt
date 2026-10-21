@@ -1,0 +1,6 @@
+Perform this one task now:
+1. In the current working directory, create a file named worker-output.txt using the write tool.
+2. Put exactly SUPERVISOR_E2E_OK (with a trailing newline) in that file.
+3. Do not read, create, edit, or run anything outside the current working directory.
+4. When done, reply with exactly: WORKER_DONE
+Do not ask for confirmation.

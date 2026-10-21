@@ -1,0 +1,32 @@
+Command:
+  npm run build && node scripts/e2e-parent-pi.mjs
+
+Observed output:
+  Daemon: supervisor running  pid=44632  version=0.1.0
+  state: C:\Users\Lenovo\AppData\Local\Temp\hs-parent-pi-state-7OGw0N
+  runtime pi: resume=true pause=false
+  Starting parent Pi...
+  PARENT_E2E_OK
+
+  Parent exit: 0 | child: completed
+  Assertions: {
+    parentExitedZero: true,
+    parentReportedOk: true,
+    workerFileCorrect: true,
+    childCompleted: true
+  }
+  PARENT_PI_E2E_PASS
+
+What this demonstrates:
+  parent Pi (native harness, real model) invoked the supervisor CLI through its bash tool;
+  the supervisor daemon spawned a separate native Pi worker process in its own temp cwd;
+  the child used the Pi write tool, produced worker-output.txt=SUPERVISOR_E2E_OK, replied
+  WORKER_DONE, exited 0; the parent read the file and replied PARENT_E2E_OK.
+
+Artifacts in this directory were copied from the actual run by the script:
+  worker.json / events.jsonl / session.jsonl   child worker record, events, Pi session
+  worker-output.txt                            file written by the child worker
+  parent.stdout.txt / parent.stderr.txt        parent Pi output
+  child-prompt.txt / parent-prompt.txt         exact prompts
+  run-child-worker.sh                          exact supervisor CLI command executed by the parent
+  daemon.log / result.json                     supervisor log and structured assertions

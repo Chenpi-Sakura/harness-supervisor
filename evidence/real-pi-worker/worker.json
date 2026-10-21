@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mvi7k7co-1cee0dd5",
+  "runtime": "pi",
+  "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-real-work-araCwp",
+  "promptPreview": "Perform this one task now:\n1. In the current working directory, create a file named worker-output.txt using the write tool.\n2. Put exactly SUPERVISOR_E2E_OK (with a trailing newline) in that file.\n3. Do not read, create, edit, or run anything outside the current working directory.\n4. When done, reply with exactly: WORKER_DONE\nDo not ask for confirmation.",
+  "status": "completed",
+  "createdAt": "2026-10-21T14:29:13.656Z",
+  "updatedAt": "2026-10-21T14:29:24.929Z",
+  "lastSeq": 12,
+  "eventCount": 12,
+  "stats": {
+    "turns": 2,
+    "toolCalls": 1,
+    "toolErrors": 0
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {
+    "model": "deepseek-v4.1-flash-1017",
+    "provider": "new-api",
+    "thinking": "off",
+    "tools": [
+      "read",
+      "bash",
+      "write"
+    ],
+    "maxDurationMs": 150000,
+    "extraArgs": [
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files"
+    ]
+  },
+  "resumeCount": 0,
+  "supervisorId": "46907aa2-ae34-40f5-9af8-0c5e8fbd41ff",
+  "pid": 62840,
+  "sessionId": "01a15edd-c315-73ca-9368-7e814b2f77f2",
+  "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-real-OINnZV\\sessions\\w-mvi7k7co-1cee0dd5\\2026-10-21T14-29-14-134Z_01a15edd-c315-73ca-9368-7e814b2f77f2.jsonl",
+  "startedAt": "2026-10-21T14:29:14.360Z",
+  "endedAt": "2026-10-21T14:29:24.923Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-21T14:29:24.923Z"
+  },
+  "result": {
+    "text": "WORKER_DONE",
+    "truncated": false
+  }
+}

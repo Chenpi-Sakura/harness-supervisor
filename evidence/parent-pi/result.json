@@ -1,0 +1,24 @@
+{
+  "startedAt": "2026-10-21T14:30:29.448Z",
+  "model": "deepseek-v4.1-flash-1017",
+  "provider": "new-api",
+  "stateDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-parent-pi-state-7OGw0N",
+  "workDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-parent-pi-work-tsjvrF",
+  "parentExitCode": 0,
+  "childStatus": "completed",
+  "childResult": "WORKER_DONE",
+  "assertions": {
+    "parentExitedZero": true,
+    "parentReportedOk": true,
+    "workerFileCorrect": true,
+    "childCompleted": true
+  },
+  "error": null,
+  "daemonUpOutput": "supervisor running  pid=44632  version=0.1.0\nstate: C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-parent-pi-state-7OGw0N\nruntime pi: resume=true pause=false",
+  "parentSignal": null,
+  "childId": "w-mvi7lylk-0cf9afdf",
+  "childPid": 25280,
+  "childSessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-parent-pi-state-7OGw0N\\sessions\\w-mvi7lylk-0cf9afdf\\2026-10-21T14-30-36-101Z_01a15edf-0344-76ab-aafc-c7d4f5a1f2b5.jsonl",
+  "passed": true,
+  "finishedAt": "2026-10-21T14:30:48.310Z"
+}

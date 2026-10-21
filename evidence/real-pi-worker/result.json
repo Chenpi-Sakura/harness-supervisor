@@ -1,0 +1,15 @@
+{
+  "kind": "real-pi-worker",
+  "test": "REAL Pi worker executes a task in its own working directory",
+  "command": "RUN_REAL_PI=1 REAL_PI_MODEL=deepseek-v4.1-flash-1017 REAL_PI_PROVIDER=new-api node test/run.mjs e2e",
+  "passed": true,
+  "workerId": "w-mvi7k7co-1cee0dd5",
+  "workerStatus": "completed",
+  "workerResult": "WORKER_DONE",
+  "workerExitCode": 0,
+  "createdFile": "worker-output.txt",
+  "createdFileContent": "SUPERVISOR_E2E_OK",
+  "durationMs": 11794.7056,
+  "runAt": "2026-10-21T14:29:13.656Z",
+  "artifacts": ["worker.json", "events.jsonl", "session.jsonl", "worker-output.txt", "daemon.log", "test-run.txt"]
+}

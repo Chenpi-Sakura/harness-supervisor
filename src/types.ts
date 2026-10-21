@@ -1,0 +1,306 @@
+export const SCHEMA_VERSION = 1;
+
+export type WorkerStatus =
+  | "starting"
+  | "running"
+  | "awaiting_input"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "crashed"
+  | "orphaned"
+  | "interrupted";
+
+export const TERMINAL_STATUSES: ReadonlySet<WorkerStatus> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "crashed",
+  "orphaned",
+  "interrupted",
+]);
+
+export const ACTIVE_STATUSES: ReadonlySet<WorkerStatus> = new Set([
+  "starting",
+  "running",
+  "awaiting_input",
+]);
+
+export function isTerminal(status: WorkerStatus): boolean {
+  return TERMINAL_STATUSES.has(status);
+}
+
+export interface RuntimeCapabilities {
+  runtime: string;
+  steer: boolean;
+  followUp: boolean;
+  cancel: boolean;
+  resume: boolean;
+  pause: false;
+  interactiveInput: boolean;
+  notes: string;
+}
+
+export interface WorkerConfig {
+  model?: string;
+  provider?: string;
+  tools?: string[];
+  thinking?: string;
+  extraArgs?: string[];
+  maxDurationMs?: number;
+}
+
+export interface WorkerStats {
+  turns: number;
+  toolCalls: number;
+  toolErrors: number;
+}
+
+export interface PendingInput {
+  requestId: string;
+  method: "select" | "confirm" | "input" | "editor";
+  title?: string;
+  message?: string;
+  options?: string[];
+  placeholder?: string;
+  prefill?: string;
+  createdAt: string;
+  expiresAt?: string;
+}
+
+export interface ExitInfo {
+  code: number | null;
+  signal: string | null;
+  at: string;
+}
+
+export interface WorkerResult {
+  text: string;
+  truncated: boolean;
+}
+
+export interface WorkerRecord {
+  schemaVersion: number;
+  id: string;
+  runtime: string;
+  name?: string;
+  cwd: string;
+  promptPreview: string;
+  status: WorkerStatus;
+  statusReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  pid?: number;
+  sessionId?: string;
+  sessionFile?: string;
+  exit?: ExitInfo;
+  result?: WorkerResult;
+  error?: string;
+  pendingInput?: PendingInput;
+  lastSeq: number;
+  eventCount: number;
+  stats: WorkerStats;
+  capabilities: RuntimeCapabilities;
+  config: WorkerConfig;
+  resumeCount: number;
+  supervisorId: string;
+}
+
+export interface WorkerSummary extends WorkerRecord {
+  resumeAvailable: boolean;
+  pidAlive: boolean | null;
+}
+
+export type WorkerEventType =
+  | "worker.starting"
+  | "worker.started"
+  | "worker.session"
+  | "run.accepted"
+  | "run.started"
+  | "run.progress"
+  | "run.needs_input"
+  | "run.input_answered"
+  | "run.message_sent"
+  | "run.error"
+  | "run.completed"
+  | "run.failed"
+  | "run.cancelled"
+  | "worker.cancel_requested"
+  | "worker.exited"
+  | "worker.crashed"
+  | "worker.orphaned"
+  | "worker.interrupted"
+  | "worker.resumed"
+  | "worker.resume_failed";
+
+export interface WorkerEvent {
+  seq: number;
+  workerId: string;
+  ts: string;
+  type: WorkerEventType;
+  data?: Record<string, unknown>;
+}
+
+export interface SpawnInput {
+  runtime?: string;
+  cwd: string;
+  prompt: string;
+  name?: string;
+  model?: string;
+  provider?: string;
+  tools?: string[];
+  thinking?: string;
+  maxDurationMs?: number;
+  extraArgs?: string[];
+}
+
+export interface ResumeInput {
+  prompt: string;
+  model?: string;
+  provider?: string;
+  tools?: string[];
+  thinking?: string;
+  maxDurationMs?: number;
+  extraArgs?: string[];
+}
+
+export interface ReadEventsResult {
+  worker: WorkerSummary;
+  events: WorkerEvent[];
+  nextSeq: number;
+  hasMore: boolean;
+}
+
+export interface WorkerStatusResult {
+  worker: WorkerSummary;
+  recentEvents: WorkerEvent[];
+  stderrTail: string;
+}
+
+export interface WaitResult extends ReadEventsResult {
+  timedOut: boolean;
+  terminal: boolean;
+}
+
+export interface SupervisorLimits {
+  maxWorkers: number;
+  maxWaitMs: number;
+  defaultWaitMs: number;
+  closeGraceMs: number;
+  abortTimeoutMs: number;
+  maxResultBytes: number;
+  maxEventStringBytes: number;
+}
+
+export interface SupervisorInfo {
+  name: string;
+  version: string;
+  pid: number;
+  stateDir: string;
+  supervisorId: string;
+  startedAt: string;
+  uptimeMs: number;
+  limits: SupervisorLimits;
+  wake: {
+    proactive: false;
+    note: string;
+  };
+  runtimes: RuntimeCapabilities[];
+}
+
+export type SendMode = "steer" | "follow-up";
+
+export type ExtensionUiResponse =
+  | { value: string }
+  | { confirmed: boolean }
+  | { cancelled: true };
+
+export interface HarnessExit {
+  code: number | null;
+  signal: string | null;
+}
+
+export interface HarnessStateInfo {
+  sessionId?: string;
+  sessionFile?: string;
+}
+
+export type HarnessEvent =
+  | { type: "run_started" }
+  | {
+      type: "progress";
+      kind: string;
+      tool?: string;
+      detail?: string;
+      preview?: string;
+      isError?: boolean;
+      durationMs?: number;
+    }
+  | {
+      type: "needs_input";
+      requestId: string;
+      method: PendingInput["method"];
+      title?: string;
+      message?: string;
+      options?: string[];
+      placeholder?: string;
+      prefill?: string;
+      timeoutMs?: number;
+    }
+  | { type: "run_error"; message: string; fatal?: boolean }
+  | {
+      type: "settled";
+      aborted: boolean;
+      finalText?: string;
+      error?: string;
+      stopReason?: string;
+    }
+  | { type: "exit"; code: number | null; signal: string | null };
+
+export interface HarnessCloseResult {
+  exit: HarnessExit | null;
+  forced: boolean;
+}
+
+export interface HarnessSession {
+  readonly pid: number | undefined;
+  getState(): Promise<HarnessStateInfo>;
+  prompt(message: string): Promise<{ disposition: string }>;
+  steer(message: string): Promise<void>;
+  followUp(message: string): Promise<void>;
+  abort(): Promise<void>;
+  answer(requestId: string, response: ExtensionUiResponse): Promise<void>;
+  close(options?: { graceMs?: number }): Promise<HarnessCloseResult>;
+  forceKill(): Promise<void>;
+  isAlive(): boolean;
+  stderrTail(): string;
+}
+
+export interface HarnessCallbacks {
+  onEvent(event: HarnessEvent): void;
+  onExit(exit: HarnessExit): void;
+}
+
+export interface HarnessSpawnSpec {
+  workerId: string;
+  cwd: string;
+  sessionDir: string;
+  model?: string;
+  provider?: string;
+  tools?: string[];
+  thinking?: string;
+  extraArgs?: string[];
+}
+
+export interface HarnessAdapter {
+  readonly name: string;
+  readonly capabilities: RuntimeCapabilities;
+  spawn(spec: HarnessSpawnSpec, callbacks: HarnessCallbacks): Promise<HarnessSession>;
+  resume(
+    spec: HarnessSpawnSpec,
+    sessionFile: string,
+    callbacks: HarnessCallbacks,
+  ): Promise<HarnessSession>;
+}

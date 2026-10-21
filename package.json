@@ -1,0 +1,44 @@
+{
+  "name": "harness-supervisor",
+  "version": "0.1.0",
+  "description": "A small lifecycle and messaging layer for native AI agent harnesses (Pi first).",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "harness-supervisor": "dist/src/cli.js",
+    "harness-sup": "dist/src/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node test/run.mjs",
+    "test:unit": "npm run build && node test/run.mjs unit",
+    "test:integration": "npm run build && node test/run.mjs integration",
+    "test:e2e": "npm run build && node test/run.mjs e2e",
+    "e2e:parent": "npm run build && node scripts/e2e-parent-pi.mjs",
+    "cli": "node dist/src/cli.js",
+    "mcp": "node dist/src/mcp.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,16 @@
+Command:
+  RUN_REAL_PI=1 node test/run.mjs e2e --test-name-pattern "loads a persisted session"
+
+Observed output:
+  [OK] REAL Pi loads a persisted session through the adapter and retains its session id (716.7065ms)
+  tests 2
+  pass 2
+  fail 0
+
+Notes:
+  This test invokes the production PiAdapter.resume against the installed real Pi binary
+  using a synthetic persisted Pi session file. It makes NO model call. It verifies:
+    - Pi accepts --session <file>
+    - get_state returns the original sessionId
+    - get_state returns the same session file path
+    - the adapter closes the harness process and observes its exit

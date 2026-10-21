@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "harness-supervisor": {
+      "command": "node",
+      "args": [
+        "D:/Projects/Harness-Supervisor/dist/src/mcp.js"
+      ]
+    }
+  }
+}

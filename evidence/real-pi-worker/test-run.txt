@@ -1,0 +1,17 @@
+Command:
+  RUN_REAL_PI=1 REAL_PI_MODEL=deepseek-v4.1-flash-1017 REAL_PI_PROVIDER=new-api node test/run.mjs e2e
+
+Observed output:
+  REAL_PI worker=w-mvi7k7co-1cee0dd5 pid=62840 session=C:\Users\Lenovo\AppData\Local\Temp\hs-real-OINnZV\sessions\w-mvi7k7co-1cee0dd5\2026-10-21T14-29-14-134Z_01a15edd-c315-73ca-9368-7e814b2f77f2.jsonl
+  REAL_PI result="WORKER_DONE" file=C:\Users\Lenovo\AppData\Local\Temp\hs-real-work-araCwp\worker-output.txt
+  [OK] REAL Pi worker executes a task in its own working directory (11794.7056ms)
+  tests 1
+  pass 1
+  fail 0
+
+Artifacts copied from the actual run:
+  worker.json         supervisor record (completed, toolCalls=1, turns=2, exit code 0)
+  events.jsonl        normalized lifecycle events (run.started -> write tool -> run.completed -> worker.exited)
+  session.jsonl       Pi native session file produced by the worker
+  worker-output.txt   file created by the real Pi worker in its own cwd: SUPERVISOR_E2E_OK
+  daemon.log          supervisor daemon log

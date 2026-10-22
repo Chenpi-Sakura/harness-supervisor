@@ -1,0 +1,13 @@
+{"seq":1,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:33.705Z","type":"worker.starting","data":{"runtime":"pi","cwd":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-codex-work-CMrLu7","resumed":false}}
+{"seq":2,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:33.744Z","type":"worker.started","data":{"pid":55904,"runtime":"pi"}}
+{"seq":3,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:37.478Z","type":"worker.session","data":{"sessionId":"01a15f97-00e9-743e-9960-27ebdedd3356","sessionFile":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-codex-state-c1y1mO\\sessions\\w-mvieseo3-af60d80a\\2026-10-21T17-51-34-122Z_01a15f97-00e9-743e-9960-27ebdedd3356.jsonl","fileExists":false}}
+{"seq":4,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:37.553Z","type":"run.accepted","data":{"disposition":"started"}}
+{"seq":5,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:37.554Z","type":"run.started","data":{"pid":55904,"resumed":false}}
+{"seq":6,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:39.939Z","type":"run.progress","data":{"kind":"tool_start","tool":"bash","detail":"sleep 8"}}
+{"seq":7,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:41.283Z","type":"run.message_sent","data":{"mode":"steer","preview":"CODEX_STEER"}}
+{"seq":8,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:48.066Z","type":"run.progress","data":{"kind":"tool_end","tool":"bash","isError":false,"durationMs":8122}}
+{"seq":9,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:48.072Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":10,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:52.310Z","type":"run.progress","data":{"kind":"assistant_message","preview":"REAL_CODEX_OK"}}
+{"seq":11,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:52.316Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":12,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:52.342Z","type":"run.completed","data":{"sessionFile":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-codex-state-c1y1mO\\sessions\\w-mvieseo3-af60d80a\\2026-10-21T17-51-34-122Z_01a15f97-00e9-743e-9960-27ebdedd3356.jsonl","aborted":false,"stopReason":"stop","forcedCleanup":false,"text":"REAL_CODEX_OK","truncated":false}}
+{"seq":13,"workerId":"w-mvieseo3-af60d80a","ts":"2026-10-21T17:51:52.346Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}

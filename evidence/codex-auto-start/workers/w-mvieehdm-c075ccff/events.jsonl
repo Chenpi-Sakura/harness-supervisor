@@ -1,0 +1,12 @@
+{"seq":1,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:44.030Z","type":"worker.starting","data":{"runtime":"pi","cwd":"D:\\tmp\\hs-codex-work-I0hTGH","resumed":false}}
+{"seq":2,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:44.062Z","type":"worker.started","data":{"pid":7504,"runtime":"pi"}}
+{"seq":3,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:44.142Z","type":"worker.session","data":{"sessionId":"5f5495c8-6c04-464c-9bb7-ec87583069fa","sessionFile":"D:\\tmp\\hs-codex-state-wgtWD4\\sessions\\w-mvieehdm-c075ccff\\fake_fbda8fe3-1c0f-45e5-b276-f7fe6be1db0e.jsonl","fileExists":false}}
+{"seq":4,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:44.147Z","type":"run.accepted","data":{"disposition":"started"}}
+{"seq":5,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:44.153Z","type":"run.started","data":{"pid":7504,"resumed":false}}
+{"seq":6,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:44.158Z","type":"run.progress","data":{"kind":"tool_start","tool":"bash","detail":"echo fake-harness"}}
+{"seq":7,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:47.172Z","type":"run.message_sent","data":{"mode":"steer","preview":"CODEX_STEER"}}
+{"seq":8,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:59.160Z","type":"run.progress","data":{"kind":"tool_end","tool":"bash","isError":false,"durationMs":15000}}
+{"seq":9,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:59.165Z","type":"run.progress","data":{"kind":"assistant_message","preview":"FAKE_PI_OK STEERED:CODEX_STEER"}}
+{"seq":10,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:59.168Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":11,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:59.179Z","type":"run.completed","data":{"sessionFile":"D:\\tmp\\hs-codex-state-wgtWD4\\sessions\\w-mvieehdm-c075ccff\\fake_fbda8fe3-1c0f-45e5-b276-f7fe6be1db0e.jsonl","aborted":false,"stopReason":"stop","forcedCleanup":false,"text":"FAKE_PI_OK STEERED:CODEX_STEER","truncated":false}}
+{"seq":12,"workerId":"w-mvieehdm-c075ccff","ts":"2026-10-21T17:40:59.182Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}

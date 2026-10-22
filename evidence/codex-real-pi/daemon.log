@@ -1,0 +1,5 @@
+2026-10-21T17:51:21.049Z INFO Supervisor initialized {"workers":0,"warnings":0}
+2026-10-21T17:51:21.052Z INFO Supervisor daemon started {"name":"harness-supervisor","version":"0.1.0","pid":55464,"endpoint":"\\\\.\\pipe\\harness-supervisor-5964f5d6bfe279b3ffeb","stateDir":"C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-codex-state-c1y1mO"}
+2026-10-21T17:51:52.352Z INFO Worker w-mvieseo3-af60d80a finished {"status":"completed"}
+2026-10-21T17:52:02.078Z INFO Supervisor daemon shutting down {"reason":"ipc_request"}
+2026-10-21T17:52:02.081Z INFO Supervisor daemon stopped

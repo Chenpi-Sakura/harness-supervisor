@@ -1,0 +1,29 @@
+Codex auto-start experiment: host process-tree cleanup observed
+
+Host: codex-cli 0.161.0 on Windows (Node v24.21.0)
+Mode: codex exec --json --ephemeral, MCP server launched by Codex, daemon auto-started by the MCP server
+Worker runtime: scripted Pi RPC fixture (no model call inside Pi)
+
+Result:
+- Codex completed the MCP flow and reported:
+  CODEX_E2E_OK w-mvieehdm-c075ccff completed FAKE_PI_OK STEERED:CODEX_STEER
+- The final worker completed and its events are under workers/w-mvieehdm-c075ccff.
+- A duplicate worker w-mviedzwf-43aa498b was also spawned in this pre-fix run because
+  worker_wait without sinceSeq skipped the already-recorded run.started event, so the
+  steering message arrived after completion. This motivated the MCP wait-preflight fix.
+
+Host boundary:
+- daemon.log ends after the worker completion; there is no "Supervisor daemon shutting down" line.
+- daemon.lock still contains PID 55820 after Codex exited.
+- A SupervisorClient connect attempt after Codex exited failed with ENOENT for the named pipe.
+- Conclusion: under codex exec 0.161.0, Codex terminates the MCP server's process tree on exit,
+  including the detached supervisor daemon. A worker still running would be killed and would be
+  reconciled as interrupted on the next start. There is no graceful shutdown record.
+
+Deployment consequence:
+- If workers must outlive Codex, start the supervisor daemon outside Codex first
+  (harness-sup up / node dist/src/cli.js up in a persistent terminal or service), then let the
+  Codex MCP server connect to that existing daemon. The formal e2e-codex run uses this mode.
+
+These artifacts validate the host limitation; they are not the recommended deployment proof.
+See ../codex-real-pi/ for the external-daemon E2E run.

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mvieehdm-c075ccff",
+  "runtime": "pi",
+  "cwd": "D:\\tmp\\hs-codex-work-I0hTGH",
+  "promptPreview": "[scenario:slow] CODEX_E2E",
+  "status": "completed",
+  "createdAt": "2026-10-21T17:40:44.026Z",
+  "updatedAt": "2026-10-21T17:40:59.182Z",
+  "lastSeq": 12,
+  "eventCount": 12,
+  "stats": {
+    "turns": 1,
+    "toolCalls": 1,
+    "toolErrors": 0
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {},
+  "resumeCount": 0,
+  "supervisorId": "a0dc7250-bcf1-4495-a346-b4016950819d",
+  "pid": 7504,
+  "sessionId": "5f5495c8-6c04-464c-9bb7-ec87583069fa",
+  "sessionFile": "D:\\tmp\\hs-codex-state-wgtWD4\\sessions\\w-mvieehdm-c075ccff\\fake_fbda8fe3-1c0f-45e5-b276-f7fe6be1db0e.jsonl",
+  "startedAt": "2026-10-21T17:40:44.147Z",
+  "endedAt": "2026-10-21T17:40:59.179Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-21T17:40:59.179Z"
+  },
+  "result": {
+    "text": "FAKE_PI_OK STEERED:CODEX_STEER",
+    "truncated": false
+  }
+}

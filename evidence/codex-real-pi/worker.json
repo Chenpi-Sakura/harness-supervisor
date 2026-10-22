@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mvieseo3-af60d80a",
+  "runtime": "pi",
+  "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-codex-work-CMrLu7",
+  "promptPreview": "Use the bash tool to sleep for 8 seconds, then reply with exactly REAL_CODEX_OK. Do not modify files.",
+  "status": "completed",
+  "createdAt": "2026-10-21T17:51:33.699Z",
+  "updatedAt": "2026-10-21T17:51:52.346Z",
+  "lastSeq": 13,
+  "eventCount": 13,
+  "stats": {
+    "turns": 2,
+    "toolCalls": 1,
+    "toolErrors": 0
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {},
+  "resumeCount": 0,
+  "supervisorId": "f46892b7-a5f6-4e84-8dbd-b97a4c49dd05",
+  "pid": 55904,
+  "sessionId": "01a15f97-00e9-743e-9960-27ebdedd3356",
+  "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-codex-state-c1y1mO\\sessions\\w-mvieseo3-af60d80a\\2026-10-21T17-51-34-122Z_01a15f97-00e9-743e-9960-27ebdedd3356.jsonl",
+  "startedAt": "2026-10-21T17:51:37.553Z",
+  "endedAt": "2026-10-21T17:51:52.342Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-21T17:51:52.342Z"
+  },
+  "result": {
+    "text": "REAL_CODEX_OK",
+    "truncated": false
+  }
+}

@@ -5,7 +5,13 @@ import { z } from "zod";
 import { SupervisorError, errorMessage } from "./errors.js";
 import { SupervisorClient } from "./ipc/client.js";
 import { resolveStateDir } from "./ipc/protocol.js";
-import type { ExtensionUiResponse, SendMode, WorkerStatus } from "./types.js";
+import {
+  isTerminal,
+  type ExtensionUiResponse,
+  type SendMode,
+  type WorkerStatus,
+  type WorkerStatusResult,
+} from "./types.js";
 import { VERSION } from "./version.js";
 
 function argValue(name: string): string | undefined {
@@ -60,17 +66,23 @@ const ConfigShape = {
     .describe("Automatically cancel the worker after this duration"),
 };
 
-const server = new McpServer({
-  name: "harness-supervisor",
-  version: VERSION,
-});
+const server = new McpServer(
+  {
+    name: "harness-supervisor",
+    version: VERSION,
+  },
+  {
+    instructions:
+      "Harness Supervisor owns native Pi workers. worker_spawn returns after prompt acceptance, never completion. Use worker_wait without sinceSeq for condition waits (it checks current status and the latest events first), or pass a cursor for strict incremental reads. worker_wait returns immediately when the worker needs input; answer with worker_answer. MCP is pull-based: there is no background wake-up. Reuse the worker id until terminal; do not spawn a duplicate for the same task.",
+  },
+);
 
 server.registerTool(
   "worker_spawn",
   {
     title: "Spawn a native harness worker",
     description:
-      "Start an independent native harness process (Pi by default) in its own working directory. Returns as soon as the prompt is accepted, NOT when the task completes. Save the returned worker id and poll with worker_wait or worker_status. The worker survives this MCP client disconnecting because the supervisor daemon owns it.",
+      "Start an independent native harness process (Pi by default) in its own working directory. Returns as soon as the prompt is accepted, NOT when the task completes. Save the returned worker id and lastSeq; use worker_wait for progress/completion. Do not spawn a duplicate worker for the same task while this one is active. The worker survives this MCP client disconnecting because the supervisor daemon owns it.",
     inputSchema: {
       cwd: z.string().min(1).describe("Working directory for the harness process"),
       prompt: z.string().min(1).describe("Task/instruction sent to the native harness"),
@@ -108,7 +120,8 @@ server.registerTool(
   {
     title: "Get worker status and recent events",
     description:
-      "Return the current lifecycle status, recent incremental events, pending input request, result/error, and the last harness stderr tail. Status 'running' means the prompt is being processed; only terminal statuses (completed, failed, cancelled, crashed, orphaned, interrupted) end the task.",
+      "Return the current lifecycle status, lastSeq cursor, recent incremental events, pending input request, result/error, and the last harness stderr tail. Status 'running' means the prompt is being processed; only terminal statuses (completed, failed, cancelled, crashed, orphaned, interrupted) end the task.",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       workerId: z.string().min(1),
       recentEvents: z.number().int().min(0).max(100).optional(),
@@ -132,6 +145,7 @@ server.registerTool(
   {
     title: "List workers",
     description: "List workers managed by the supervisor, newest first. State persists across daemon restarts.",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       statuses: z
         .array(
@@ -170,7 +184,8 @@ server.registerTool(
   {
     title: "Read incremental worker events",
     description:
-      "Read normalized events after a sequence cursor. Use the returned nextSeq as the next sinceSeq. This is a fast, non-blocking read; use worker_wait when you want to block for progress or completion.",
+      "Read normalized events after a sequence cursor. Use the returned nextSeq as the next sinceSeq. Pass sinceSeq=0 for full stored history. This is a fast, non-blocking read; use worker_wait when you want to block for progress or completion.",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       workerId: z.string().min(1),
       sinceSeq: z.number().int().min(0).optional().describe("Return events with seq > sinceSeq"),
@@ -197,10 +212,11 @@ server.registerTool(
   {
     title: "Wait for worker progress or completion",
     description:
-      "Bounded long-poll for new events or a terminal state. MCP tools are pull-based: this returns when the host calls it, and the supervisor cannot wake the main agent in the background. Default 20s, maximum 120s. By default waits until the worker reaches a terminal state OR needs input (status awaiting_input), since it cannot progress without the client; use until='event' to return on the first new event. Pass sinceSeq to avoid re-reading events.",
+      "Bounded long-poll. MCP tools are pull-based: this returns when the host calls it, and the supervisor cannot wake the main agent in the background. Default 20s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
+    annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: false },
     inputSchema: {
       workerId: z.string().min(1),
-      sinceSeq: z.number().int().min(0).optional(),
+      sinceSeq: z.number().int().min(0).optional().describe("Strict cursor: return only events with seq > sinceSeq"),
       timeoutMs: z.number().int().min(0).max(120_000).optional(),
       until: z.enum(["terminal", "event"]).optional(),
       types: z.array(z.string()).max(30).optional().describe("Wake early on any of these event types"),
@@ -208,15 +224,46 @@ server.registerTool(
   },
   async (args) => {
     const timeoutMs = args.timeoutMs ?? 20_000;
+    const until = args.until ?? "terminal";
     try {
+      let sinceSeq = args.sinceSeq;
+      if (sinceSeq === undefined) {
+        const snapshot = await client.request<WorkerStatusResult>("status", {
+          workerId: args.workerId,
+          recentEvents: 20,
+        });
+        const current = snapshot.worker;
+        const recent = snapshot.recentEvents;
+        const terminal = isTerminal(current.status);
+        const needsInput = current.status === "awaiting_input";
+        const typeFilter = args.types?.length ? new Set(args.types) : null;
+        const matched = typeFilter
+          ? recent.filter((event) => typeFilter.has(event.type))
+          : [];
+        if (
+          terminal ||
+          needsInput ||
+          (until === "event" && typeFilter !== null && matched.length > 0)
+        ) {
+          return ok({
+            worker: current,
+            events: terminal || needsInput ? recent : matched,
+            nextSeq: current.lastSeq,
+            hasMore: false,
+            timedOut: false,
+            terminal,
+          });
+        }
+        sinceSeq = current.lastSeq;
+      }
       return ok(
         await client.request(
           "wait",
           {
             workerId: args.workerId,
-            sinceSeq: args.sinceSeq,
+            sinceSeq,
             timeoutMs,
-            until: args.until ?? "terminal",
+            until,
             types: args.types,
           },
           { timeoutMs: timeoutMs + 10_000 },
@@ -233,7 +280,7 @@ server.registerTool(
   {
     title: "Send a supplementary instruction to a running worker",
     description:
-      "Queue a steering message (delivered before the next model turn) or a follow-up (delivered after the current run) through the native harness. Only valid while the worker is running. This does not answer extension dialogs; use worker_answer for run.needs_input events.",
+      "Queue a steering message (delivered before the next model turn) or a follow-up (delivered after the current run) through the native harness. Only valid while the worker is running; if it already reached a terminal state this returns INVALID_STATE, and you should not spawn a replacement automatically. This does not answer extension dialogs; use worker_answer for run.needs_input events.",
     inputSchema: {
       workerId: z.string().min(1),
       message: z.string().min(1),
@@ -368,6 +415,7 @@ server.registerTool(
     title: "Supervisor capabilities and wake semantics",
     description:
       "Show daemon information, limits, runtimes, and the explicit event-delivery boundary: events are persisted and pull-based; the supervisor does not claim background wake-up of the main agent.",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   },
   async () => {
     try {

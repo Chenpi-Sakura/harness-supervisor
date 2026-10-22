@@ -1,14 +1,31 @@
-# Codex configuration example
+# Codex MCP configuration example (tested with codex-cli 0.161.0 on Windows)
 # Put this in ~/.codex/config.toml and adjust the absolute path.
 #
-# The MCP server auto-starts the local supervisor daemon. Workers are owned by
-# that daemon, so they keep running if Codex disconnects or restarts.
+# Start the daemon OUTSIDE Codex first:
+#   node D:/Projects/Harness-Supervisor/dist/src/cli.js up
+# codex exec terminates the MCP server's process tree on exit. If the MCP server
+# auto-starts the daemon, the daemon is terminated with Codex and a running worker
+# does not survive. An externally started daemon keeps serving after Codex exits.
 #
-# tool_timeout_sec must exceed the longest worker_wait call you intend to make
-# (the tool caps waits at 120 s).
+# Use forward slashes on Windows to avoid TOML backslash escaping.
+# tool_timeout_sec must exceed the longest worker_wait call (capped at 120 s).
 
 [mcp_servers.harness_supervisor]
 command = "node"
+# Alternatively use an absolute path, e.g. "C:/Program Files/nodejs/node.exe".
 args = ["D:/Projects/Harness-Supervisor/dist/src/mcp.js"]
 startup_timeout_sec = 30
 tool_timeout_sec = 150
+
+# codex exec defaults to approval_policy=never; without this, MCP calls are
+# cancelled with "MCP tool call requires approval, but approval policy is never".
+# "approve" auto-approves process-spawning tools; only use it in trusted workspaces.
+# For interactive Codex, prefer "prompt" or "writes" and approve each call.
+default_tools_approval_mode = "approve"
+
+# For codex exec, also pass:
+#   -c approval_policy="on-request"
+# or set a top-level approval_policy in a trusted profile.
+#
+# Optional tool whitelist:
+# enabled_tools = ["worker_spawn", "worker_status", "worker_events", "worker_wait", "worker_send", "worker_answer", "worker_cancel", "worker_resume", "worker_list", "supervisor_info"]

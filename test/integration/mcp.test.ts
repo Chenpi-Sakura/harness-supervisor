@@ -25,6 +25,126 @@ function parseTool(result: ToolResult): any {
   return JSON.parse(text);
 }
 
+test("MCP wait without a cursor observes current state and returns incremental results", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-mcp-wait-"));
+  const cwd = await makeWorkspace();
+  let stderr = "";
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [MCP_ENTRY, "--state-dir", stateDir],
+    env: {
+      ...process.env,
+      HARNESS_SUPERVISOR_PI_ENTRY: FAKE_ENTRY,
+      FAKE_PI_STEP_MS: "20",
+      FAKE_PI_SLOW_STEP_MS: "3500",
+    },
+    stderr: "pipe",
+  });
+  transport.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString("utf8");
+  });
+  const mcp = new Client({ name: "harness-supervisor-wait-test", version: "1.0.0" });
+  await mcp.connect(transport);
+  t.after(async () => {
+    try {
+      await mcp.close();
+    } catch {
+      // Already closed.
+    }
+    try {
+      const daemonClient = await connectExisting(stateDir, 5000);
+      await daemonClient.shutdown();
+      daemonClient.close();
+    } catch {
+      // Daemon may already be stopped.
+    }
+  });
+
+  const worker = parseTool(
+    (await mcp.callTool({
+      name: "worker_spawn",
+      arguments: { cwd, prompt: "[scenario:slow] MCP wait semantics" },
+    })) as ToolResult,
+  );
+
+  let sawStarted = false;
+  for (let attempt = 0; attempt < 50 && !sawStarted; attempt += 1) {
+    const events = parseTool(
+      (await mcp.callTool({
+        name: "worker_events",
+        arguments: { workerId: worker.id, sinceSeq: 0 },
+      })) as ToolResult,
+    );
+    sawStarted = events.events.some((event: { type: string }) => event.type === "run.started");
+    if (!sawStarted) await sleep(20);
+  }
+  assert.equal(sawStarted, true, `run.started was never recorded; stderr=${stderr}`);
+
+  const waitStartedAt = Date.now();
+  const started = parseTool(
+    (await mcp.callTool({
+      name: "worker_wait",
+      arguments: {
+        workerId: worker.id,
+        timeoutMs: 1200,
+        until: "event",
+        types: ["run.started"],
+      },
+    })) as ToolResult,
+  );
+  assert.equal(started.timedOut, false, "an already-recorded event must not be skipped");
+  assert.equal(started.terminal, false);
+  assert.ok(Date.now() - waitStartedAt < 900, "wait should observe the existing event immediately");
+  assert.ok(started.events.some((event: { type: string }) => event.type === "run.started"));
+
+  parseTool(
+    (await mcp.callTool({
+      name: "worker_send",
+      arguments: { workerId: worker.id, message: "MCP_WAIT_STEER", mode: "steer" },
+    })) as ToolResult,
+  );
+
+  const final = parseTool(
+    (await mcp.callTool({
+      name: "worker_wait",
+      arguments: { workerId: worker.id, timeoutMs: 12_000, until: "terminal" },
+    })) as ToolResult,
+  );
+  assert.equal(final.terminal, true);
+  assert.equal(final.worker.status, "completed");
+  assert.match(final.worker.result?.text ?? "", /FAKE_PI_OK/);
+  assert.match(final.worker.result?.text ?? "", /STEERED:MCP_WAIT_STEER/);
+
+  const repeatStartedAt = Date.now();
+  const repeated = parseTool(
+    (await mcp.callTool({
+      name: "worker_wait",
+      arguments: { workerId: worker.id, timeoutMs: 1000, until: "terminal" },
+    })) as ToolResult,
+  );
+  assert.equal(repeated.terminal, true);
+  assert.ok(Date.now() - repeatStartedAt < 900, "terminal wait should return immediately");
+
+  const finalSeqs = new Set(
+    final.events.map((event: { seq: number }) => event.seq),
+  );
+  const after = parseTool(
+    (await mcp.callTool({
+      name: "worker_events",
+      arguments: { workerId: worker.id, sinceSeq: final.nextSeq },
+    })) as ToolResult,
+  );
+  assert.ok(
+    after.events.every((event: { seq: number }) => !finalSeqs.has(event.seq)),
+    "the cursor must not replay events already returned by the wait",
+  );
+
+  const list = parseTool(
+    (await mcp.callTool({ name: "worker_list", arguments: {} })) as ToolResult,
+  );
+  assert.equal(list.length, 1, "the model-facing flow must not need duplicate workers");
+});
+
 test("MCP client can spawn, observe, steer, cancel, and outlive its own disconnect", async (t) => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-mcp-"));
   const cwd = await makeWorkspace();
@@ -60,8 +180,13 @@ test("MCP client can spawn, observe, steer, cancel, and outlive its own disconne
     }
   });
 
+  assert.match(mcp.getInstructions() ?? "", /pull-based/i);
   const tools = await mcp.listTools();
   const toolNames = tools.tools.map((tool) => tool.name);
+  assert.equal(
+    tools.tools.find((tool) => tool.name === "worker_status")?.annotations?.readOnlyHint,
+    true,
+  );
   for (const name of [
     "worker_spawn",
     "worker_status",

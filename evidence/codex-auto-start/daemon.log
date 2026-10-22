@@ -1,0 +1,4 @@
+2026-10-21T17:40:12.106Z INFO Supervisor initialized {"workers":0,"warnings":0}
+2026-10-21T17:40:12.109Z INFO Supervisor daemon started {"name":"harness-supervisor","version":"0.1.0","pid":55820,"endpoint":"\\\\.\\pipe\\harness-supervisor-f6f327c5a6afb30d552d","stateDir":"D:\\tmp\\hs-codex-state-wgtWD4"}
+2026-10-21T17:40:36.623Z INFO Worker w-mviedzwf-43aa498b finished {"status":"completed"}
+2026-10-21T17:40:59.189Z INFO Worker w-mvieehdm-c075ccff finished {"status":"completed"}

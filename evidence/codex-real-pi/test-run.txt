@@ -1,0 +1,16 @@
+Codex MCP E2E: PASS
+Date: 2026-10-21T17:52:02.297Z
+Host: codex-cli 0.161.0 on win32 x64
+Worker mode: real (real Pi model)
+Codex: node C:\Users\Lenovo\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js
+MCP state dir: C:\Users\Lenovo\AppData\Local\Temp\hs-codex-state-c1y1mO
+Worker: w-mvieseo3-af60d80a
+Worker status: completed
+Worker result: REAL_CODEX_OK
+Tool calls: worker_spawn, worker_wait, worker_send, worker_wait
+Daemon pre-started outside Codex: yes
+Daemon survived Codex exit: yes
+Codex usage: {"input_tokens":79662,"cached_input_tokens":64512,"cache_write_input_tokens":0,"output_tokens":301,"reasoning_output_tokens":0}
+Assertions: all passed
+
+Pi is the user's real Pi configuration. This validates the full Codex -> Supervisor -> real Pi path. Result text is model-generated and is not asserted beyond being non-empty; the steer is proven by the run.message_sent event.

@@ -127,7 +127,23 @@ CLI 的 `wait` 退出码：`0` completed，`3` failed，`4` cancelled，`5` cras
 
 ## 4. MCP 接入
 
-### Codex 配置（`~/.codex/config.toml`）
+### Codex（Windows，实测 `codex-cli 0.161.0`）
+
+已实测：Codex 通过 MCP 调用 `worker_spawn` / `worker_wait` / `worker_send`，在 Pi 运行中发送 steer，收回完成结果；外部预启动的 daemon 在 Codex 退出后仍可连接。证据见 [`evidence/codex-real-pi/`](evidence/codex-real-pi/)。
+
+#### 1. 构建并预先启动 daemon
+
+`codex exec` 退出时会终止 MCP server 的整个进程树。若让 MCP server 自动拉起 daemon，daemon 也会被强杀且没有 graceful shutdown 记录（见 [`evidence/codex-auto-start/`](evidence/codex-auto-start/)）。需要 Worker 在 Codex 退出后继续运行，请在 **Codex 之外**先启动并保持 daemon：
+
+```powershell
+npm install
+npm run build
+node D:/Projects/Harness-Supervisor/dist/src/cli.js up
+```
+
+默认状态目录是 `~/.harness-supervisor`。如果 daemon 使用 `--state-dir`，Codex MCP 的 args 必须指向同一个目录，否则 MCP server 会在 Codex 的进程树里另起一个 daemon。
+
+#### 2. 配置 `~/.codex/config.toml`
 
 ```toml
 [mcp_servers.harness_supervisor]
@@ -135,21 +151,41 @@ command = "node"
 args = ["D:/Projects/Harness-Supervisor/dist/src/mcp.js"]
 startup_timeout_sec = 30
 tool_timeout_sec = 150
+
+# codex exec 默认 approval_policy=never，未放行时 MCP 调用会被取消并报：
+# "MCP tool call requires approval, but approval policy is never"
+# 自动化场景需要放行该服务器的工具；只在可信工作区使用。
+default_tools_approval_mode = "approve"
 ```
 
-其他 MCP 客户端可使用 [`examples/mcp.json`](examples/mcp.json)。
+`codex exec` 还需要加 `-c approval_policy="on-request"`（或写进 profile / 顶层配置）。交互式 Codex 可把 `approve` 改为 `prompt` 或 `writes`，保留逐次审批。
 
-MCP server 会自动启动本地 daemon；主客户端退出后 daemon 和 Worker 继续存在。
+Windows 路径建议使用 `D:/...` 正斜杠，避免 TOML 反斜杠转义；`tool_timeout_sec` 必须大于你使用的 `worker_wait` 超时（工具上限 120s）。
+
+#### 3. 注册并检查
+
+```powershell
+codex mcp add harness_supervisor -- node D:/Projects/Harness-Supervisor/dist/src/mcp.js
+codex mcp list
+```
+
+`codex mcp add` 适合快速注册；超时和审批字段需再手工补进 `config.toml`。修改配置后重启 Codex 会话。启动后可以用 `/mcp`（交互式）或直接要求 Codex 调用 `worker_spawn` 来确认工具可见。
+
+#### 4. 其他 MCP 客户端
+
+可使用 [`examples/mcp.json`](examples/mcp.json)。MCP server 在 daemon 未运行时可以自动启动它；但如上面的 Codex 限制，若宿主会清理子进程树，请改为外部预启动 daemon。
+
+### 工具清单
 
 ### 工具清单
 
 | 工具 | 用途 |
 | --- | --- |
-| `worker_spawn` | 启动 Worker；**prompt 被接受即返回**，不等待完成 |
-| `worker_status` | 状态、最近事件、pending input、结果/错误、stderr 尾部 |
+| `worker_spawn` | 启动 Worker；**prompt 被接受即返回**，不等待完成；返回 `id`、`lastSeq` |
+| `worker_status` | 状态、`lastSeq`、最近事件、pending input、结果/错误、stderr 尾部 |
 | `worker_list` | 列出 Worker（持久化，跨 daemon 重启） |
-| `worker_events` | 按 `sinceSeq` 增量读取事件 |
-| `worker_wait` | 有界长轮询；默认 20s，最大 120s；等待终态或首个匹配事件 |
+| `worker_events` | 按 `sinceSeq` 增量读取事件；`sinceSeq=0` 读完整历史 |
+| `worker_wait` | 有界长轮询；默认 20s，最大 120s；不带 `sinceSeq` 时先检查当前状态/最近 20 条事件，再等待；带 `sinceSeq` 时严格按游标增量 |
 | `worker_send` | 运行中追加 `steer` / `follow-up`；不用于回答扩展对话框 |
 | `worker_answer` | 回答 `run.needs_input`（Pi extension select/confirm/input/editor） |
 | `worker_cancel` | abort + 终止进程树 + 确认终态；不影响其他 Worker |
@@ -165,12 +201,28 @@ MCP server 会自动启动本地 daemon；主客户端退出后 daemon 和 Worke
 5. 必要时 `worker_cancel` 或 `worker_resume`
 6. 终态后读取 `result.text` / `error`
 
+### 等待语义（MCP 层）
+
+- **不带 `sinceSeq`**：先查当前状态和最近 20 条事件。如果 Worker 已经终态、`awaiting_input`，或指定的 `types` 事件已经出现，立即返回；否则从当前末尾开始等待新事件。这避免“刚 spawn 完调用 wait 等 `run.started`，但事件已经发生”时白等到超时。
+- **带 `sinceSeq`**：严格游标语义，只返回 `seq > sinceSeq` 的事件；适合无损增量消费。用上一次结果的 `nextSeq` 或 Worker 的 `lastSeq`。
+- 不带游标返回的是最近窗口，不是完整历史；需要完整历史用 `worker_events(sinceSeq=0)`。
+- 终态后重复调用不带游标的 `worker_wait` 会立即返回，不应用于轮询循环；读状态或结果后应停止。
+
 ### 关于“主动唤醒”
 
 - `run.needs_input`、进度、完成事件都会写入 daemon 的事件日志。
 - MCP 工具调用是拉取式的：宿主必须调用 `worker_wait` / `worker_events` 才能看到事件。
 - 本项目不伪造“后台无限唤醒主 Agent”的能力。若宿主未来支持 notification/channel，可在其上增加推送层；v0.1 没有。
 - 宿主的 MCP tool timeout 必须大于你设置的 `worker_wait` 时间。
+
+### Codex 宿主限制（实测）
+
+- **进程树清理**：`codex exec 0.161.0` 退出时会终止 MCP server 的整个进程树。自动拉起的 daemon 也会被杀，且没有 shutdown 记录；因此长任务应使用外部预启动 daemon。`evidence/codex-auto-start/daemon.log` 与残留 `daemon.lock` 是实测证据。
+- **无后台唤醒**：在本次 `codex exec` 流程中，所有观察都发生在同步 MCP 工具调用内；没有可用的“daemon 主动把新 turn 推给 Codex”的机制。主 Agent 必须在当前 turn 调用 `worker_wait`。
+- **沙箱范围**：Codex 的 `-s read-only` 等 sandbox 约束不阻止 MCP server / Worker 启动本地进程和写入 Supervisor 状态目录。MCP server 是宿主进程，工具审批和 OS 权限才是实际边界。
+- **审批**：`codex exec` 默认的审批策略会取消未放行的 MCP 调用；本项目的实测组合是 `default_tools_approval_mode = "approve"` + `approval_policy = "on-request"`。`approve` 会自动放行启动/取消 Worker 这类有副作用的工具，只应在可信工作区使用。
+- **环境继承**：外部预启动的 daemon 使用它自己的环境启动 Pi；Codex MCP 配置里的 `env` 只在 MCP server 自动启动新 daemon 时生效。不要把 Pi 凭据只放在 Codex MCP 的环境表里而期待已运行的 daemon 使用它。
+- **版本**：以上仅在 `codex-cli 0.161.0`、Windows 上实测；Codex 的配置字段和审批行为可能随版本变化。
 
 ---
 
@@ -305,6 +357,7 @@ Pi 没有可用的 pause/resume 原语，Supervisor 不实现假暂停。capabil
 - **本地 IPC 认证**：daemon 在状态目录生成随机 token（`ipc.token`；POSIX 创建时 0600，Windows 继承目录 ACL），客户端必须通过 timing-safe hello 握手。token 不写日志、不回显；但同用户进程仍可读取该文件，所以 token 不能防御同用户恶意 Worker。
 - **凭据**：Supervisor 自身的日志、事件、stderr、结果和错误会做静态模式与敏感环境变量值脱敏，但这是**捕获后的尽力而为**，不是访问控制。Worker 仍能读取继承的环境变量，也可能把凭据写入自己的输出或被 Pi 记录。`--api-key` / `--no-session` 被禁止放进 `extraArgs`，但这只约束显式参数，不改变环境继承。
 - **工具 allowlist 不是沙箱**：`tools` 只限制传给 Pi 的工具集合；Pi 扩展、shell 和网络能力仍可能扩大边界。
+- **Codex 的 sandbox 不等于 MCP 沙箱**：`codex exec -s read-only` 只约束 Codex 的 shell 工具；MCP server 及其启动的 Worker 仍是宿主进程，可写 Supervisor 状态目录和运行本地命令。Codex 侧的 `default_tools_approval_mode` 是工具调用边界，不是文件系统隔离。
 - **生命周期控制 ≠ 资源配额**：`maxDurationMs`、取消和 `maxWorkers` 只控制进程生命周期，不限制 CPU、内存、磁盘、网络或子进程产生的资源消耗。
 - **取消范围**：只针对该 Worker 的 PID / 进程组，不用命令字符串过滤作为安全边界。daemon 重启后的 `orphaned` 进程不再受控，Supervisor 不会假装取消。
 - **Supervisor 不自动重试**：进程断开、daemon 重启、任务失败都不会由 Supervisor 自动重跑可能产生副作用的任务。Pi 自身的 provider 级 auto-retry 仍由其配置控制，Supervisor 只透传 `auto_retry_*` 事件；需要严格禁止时应在 Pi 侧关闭。
@@ -339,10 +392,10 @@ npm test
 结果（最终运行）：
 
 - 22 个单元测试：JSONL framing、脱敏、持久化/游标、IPC 协议校验、Pi 启动参数
-- 23 个集成测试：CLI、daemon、并发取消隔离、增量事件、steer、extension 授权、失败/崩溃/取消区分、max duration、强制终止、daemon 崩溃/重启对账/resume、优雅关闭、MCP 全流程与客户端断连，以及并发/竞态回归
+- 24 个集成测试：CLI、daemon、并发取消隔离、增量事件、steer、extension 授权、失败/崩溃/取消区分、max duration、强制终止、daemon 崩溃/重启对账/resume、优雅关闭、MCP 全流程与客户端断连、MCP 条件等待，以及并发/竞态回归
 - 2 个依赖真实 Pi 的测试默认跳过（`RUN_REAL_PI=1`）；其中 native session resume 测试不调用模型，real worker 测试会调用一次低成本模型
 
-最终运行：47 tests，45 pass，0 fail，2 skipped。完整输出见 [`evidence/test-suite-races.txt`](evidence/test-suite-races.txt)。
+最终运行：48 tests，46 pass，0 fail，2 skipped。完整输出见 [`evidence/test-suite-races.txt`](evidence/test-suite-races.txt)。
 
 覆盖的关键断言包括：
 
@@ -357,6 +410,8 @@ npm test
 - resume 在 session 文件缺失时明确拒绝，不伪造成功；resumeCount 只在加载和新 prompt 都成功后增加；
 - 不响应 abort 的 Harness 会被强制终止并确认进程死亡；
 - MCP 客户端断开后 daemon 和 Worker 继续，重连可读到完成结果；
+- MCP `worker_wait` 不带游标时能看到已经发生的 `run.started`，带游标时不重放；
+- MCP 服务器 instructions 和只读工具的 annotation 可见；
 - 并发 spawn 不能突破 `maxWorkers`；
 - 取消开始后 send/answer 被拒绝，重复 answer 只有一个成功；
 - 取消会先清空 Pi 队列，非空清空记录 `queue_cleared`；
@@ -387,11 +442,21 @@ npm run e2e:parent
 
 实际结果：父 Pi（真实模型）通过 bash 工具调用 Supervisor CLI；Supervisor 启动真实子 Pi Worker；子 Worker 写文件并返回 `WORKER_DONE`；父 Agent 读取文件后回复 `PARENT_E2E_OK`。所有断言通过，父进程 exit 0。证据见 [`evidence/parent-pi/result.json`](evidence/parent-pi/result.json) 与 [`evidence/parent-pi/run-child-worker.sh`](evidence/parent-pi/run-child-worker.sh)。
 
-完整证据索引：[`evidence/README.md`](evidence/README.md)。
+### 真实 Codex 宿主（`codex-cli 0.161.0`，Windows）
+
+```powershell
+# 先在 Codex 之外启动 daemon，再运行一次真实 Codex + 真实 Pi
+node dist/src/cli.js up
+$env:CODEX_WORKER_MODE="real"; $env:RUN_CODEX="1"; node scripts/e2e-codex.mjs
+```
+
+实际结果（正式运行）：Codex 完成 4 个 MCP 调用（`worker_spawn` / `worker_wait` / `worker_send` / `worker_wait`），只创建 1 个 Worker；Worker 在运行中收到 `CODEX_STEER` 并完成，结果为 `REAL_CODEX_OK`；外部预启动的 daemon 在 Codex 退出后仍可连接。Codex 用量：79,662 input / 301 output tokens。证据见 [`evidence/codex-real-pi/test-run.txt`](evidence/codex-real-pi/test-run.txt) 与同目录的 `codex.jsonl`、`worker.json`、`events.jsonl`。
+
+自动拉起 daemon 的实验见 [`evidence/codex-auto-start/`](evidence/codex-auto-start/)：Codex 退出时杀掉了整个 MCP 进程树，daemon 无 shutdown 记录、`daemon.lock` 残留。这就是必须以外部 daemon 运行的原因。`scripts/e2e-codex.mjs` 默认 fake Pi 模式，适合重复验证宿主传输；real 模式会额外产生真实 Pi 调用。该脚本和 Codex 的审批/进程树行为都只在上述版本与平台实测。
 
 ### 成本控制
 
-真实测试只使用 `deepseek-v4.1-flash-1017`，每次只运行一个 Worker，父/子各一次；不存在循环调用。日常测试全部使用本地模拟 Harness。
+真实测试只使用 `deepseek-v4.1-flash-1017` 或当前配置的 Pi 模型；正式 Codex 验证只运行 1 个 Worker、1 次 Codex turn，不存在循环调用。日常测试全部使用本地模拟 Harness；`RUN_CODEX=1` 必须显式设置，否则脚本跳过。
 
 ---
 
@@ -414,6 +479,7 @@ npm run e2e:parent
 15. **没有幂等键**：spawn、resume、send 都不是事务型操作。客户端/宿主超时后不要盲目重试，先通过 `status`/`list` 确认是否已生效；否则可能启动第二个 Worker 或追加一次新运行。
 16. **关停有等待上限**：shutdown 最多等待 in-flight 准入 5 秒，之后进入取消/强杀；若 Harness 连强杀都不响应，或 daemon 本身被更底层机制杀死，仍可能需要人工清理残留进程。
 17. **工具子进程的清理上限**：取消/强杀覆盖 Harness 的进程树/进程组；若 Harness 先退出，且它启动的工具子进程被 OS 重新挂接，Supervisor 无法再追踪这些孙进程。需要更强保证时应结合 OS 级 Job Object / cgroup 管理。
+18. **Codex 宿主进程树**：实测 `codex exec 0.161.0` 退出会杀掉 MCP server 的整个进程树；必须先在 Codex 之外启动 daemon，才能让 Worker 跨越 Codex 退出继续运行。交互式 Codex 的生命周期未单独实测。
 
 ---
 

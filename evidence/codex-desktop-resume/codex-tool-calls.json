@@ -1,0 +1,86 @@
+{
+  "source": "Sanitized MCP-call extract from the Codex desktop session; system prompts and conversation are not included",
+  "session": "rollout-2026-10-22T10-36-34-01a16177-a8f6-7831-9952-0d668ce8423c.jsonl",
+  "toolCalls": [
+    {
+      "timestamp": "2026-10-22T03:02:21.240Z",
+      "name": "worker_spawn",
+      "argsText": "{\n  cwd: \"D:/tmp/hs-desktop-resume\",\n  prompt: \"请创建 resume-seed.txt，内容为 SEED_OK。请记住验证码 JADE-6381，但不要把这个验证码写入任何文件，也不要在最终回复中重复它。完成后只回复 SEED_DONE。\"\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 5,
+        "pid": 45672,
+        "pidAlive": true,
+        "sessionId": "01a1618f-451f-75eb-9202-3dc4a55cd51e",
+        "resumeCount": 0
+      }
+    },
+    {
+      "timestamp": "2026-10-22T03:02:28.701Z",
+      "name": "worker_wait",
+      "argsText": "{\n  workerId: \"w-mviygqbo-7400bdab\",\n  until: \"terminal\",\n  timeoutMs: 60000\n}",
+      "result": {
+        "status": "completed",
+        "lastSeq": 11,
+        "pid": 45672,
+        "pidAlive": false,
+        "terminal": true,
+        "timedOut": false,
+        "eventTypes": [
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.completed"
+        ],
+        "sessionId": "01a1618f-451f-75eb-9202-3dc4a55cd51e",
+        "resumeCount": 0,
+        "result": {
+          "text": "SEED_DONE",
+          "truncated": false
+        }
+      }
+    },
+    {
+      "timestamp": "2026-10-22T03:02:35.910Z",
+      "name": "worker_resume",
+      "argsText": "{\n  workerId: \"w-mviygqbo-7400bdab\",\n  prompt: \"不要重新创建或修改 resume-seed.txt，也不要读取它来寻找验证码。请只根据此前会话的上下文，回忆我让你记住的验证码，把它写入 resume-recall.txt，然后只回复 RECALL_DONE:<验证码>。如果无法回忆，请明确说明。\"\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 18,
+        "pid": 66908,
+        "pidAlive": true,
+        "sessionId": "01a1618f-451f-75eb-9202-3dc4a55cd51e",
+        "resumeCount": 1
+      }
+    },
+    {
+      "timestamp": "2026-10-22T03:02:42.824Z",
+      "name": "worker_wait",
+      "argsText": "{\n  workerId: \"w-mviygqbo-7400bdab\",\n  until: \"terminal\",\n  timeoutMs: 60000\n}",
+      "result": {
+        "status": "completed",
+        "lastSeq": 24,
+        "pid": 66908,
+        "pidAlive": false,
+        "terminal": true,
+        "timedOut": false,
+        "eventTypes": [
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.completed"
+        ],
+        "sessionId": "01a1618f-451f-75eb-9202-3dc4a55cd51e",
+        "resumeCount": 1,
+        "result": {
+          "text": "RECALL_DONE:JADE-6381",
+          "truncated": false
+        }
+      }
+    }
+  ]
+}

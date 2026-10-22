@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mviycubf-d0d64d49",
+  "runtime": "pi",
+  "cwd": "D:\\tmp\\hs-desktop-cancel",
+  "promptPreview": "请创建 control-ok.txt，内容为 CONTROL_OK，然后回复 CONTROL_DONE。",
+  "status": "completed",
+  "createdAt": "2026-10-22T02:59:19.803Z",
+  "updatedAt": "2026-10-22T02:59:32.358Z",
+  "lastSeq": 12,
+  "eventCount": 12,
+  "stats": {
+    "turns": 2,
+    "toolCalls": 1,
+    "toolErrors": 0
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {},
+  "resumeCount": 0,
+  "supervisorId": "186c2acb-820c-402b-bfbc-811a7d768b58",
+  "pid": 66720,
+  "sessionId": "01a1618c-804e-7454-9b2f-244467e3e26b",
+  "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviycubf-d0d64d49\\2026-10-22T02-59-20-271Z_01a1618c-804e-7454-9b2f-244467e3e26b.jsonl",
+  "startedAt": "2026-10-22T02:59:24.831Z",
+  "endedAt": "2026-10-22T02:59:32.357Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-22T02:59:32.357Z"
+  },
+  "result": {
+    "text": "CONTROL_DONE",
+    "truncated": false
+  }
+}

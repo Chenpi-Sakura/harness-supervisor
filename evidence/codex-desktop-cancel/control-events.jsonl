@@ -1,0 +1,12 @@
+{"seq":1,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:19.811Z","type":"worker.starting","data":{"runtime":"pi","cwd":"D:\\tmp\\hs-desktop-cancel","resumed":false}}
+{"seq":2,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:19.854Z","type":"worker.started","data":{"pid":66720,"runtime":"pi"}}
+{"seq":3,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:24.729Z","type":"worker.session","data":{"sessionId":"01a1618c-804e-7454-9b2f-244467e3e26b","sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviycubf-d0d64d49\\2026-10-22T02-59-20-271Z_01a1618c-804e-7454-9b2f-244467e3e26b.jsonl","fileExists":false}}
+{"seq":4,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:24.831Z","type":"run.accepted","data":{"disposition":"started"}}
+{"seq":5,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:24.831Z","type":"run.started","data":{"pid":66720,"resumed":false}}
+{"seq":6,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:29.253Z","type":"run.progress","data":{"kind":"tool_start","tool":"write","detail":"D:/tmp/hs-desktop-cancel/control-ok.txt"}}
+{"seq":7,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:29.262Z","type":"run.progress","data":{"kind":"tool_end","tool":"write","isError":false,"durationMs":4}}
+{"seq":8,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:29.268Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":9,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:32.316Z","type":"run.progress","data":{"kind":"assistant_message","preview":"CONTROL_DONE"}}
+{"seq":10,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:32.322Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":11,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:32.357Z","type":"run.completed","data":{"sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviycubf-d0d64d49\\2026-10-22T02-59-20-271Z_01a1618c-804e-7454-9b2f-244467e3e26b.jsonl","aborted":false,"stopReason":"stop","forcedCleanup":false,"text":"CONTROL_DONE","truncated":false}}
+{"seq":12,"workerId":"w-mviycubf-d0d64d49","ts":"2026-10-22T02:59:32.358Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}

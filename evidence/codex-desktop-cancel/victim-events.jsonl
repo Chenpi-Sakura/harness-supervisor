@@ -1,0 +1,15 @@
+{"seq":1,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:08.188Z","type":"worker.starting","data":{"runtime":"pi","cwd":"D:\\tmp\\hs-desktop-cancel","resumed":false}}
+{"seq":2,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:08.225Z","type":"worker.started","data":{"pid":38304,"runtime":"pi"}}
+{"seq":3,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:12.540Z","type":"worker.session","data":{"sessionId":"01a1618c-52cf-7093-900f-9ad68a123913","sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviyclcn-ac30fc78\\2026-10-22T02-59-08-623Z_01a1618c-52cf-7093-900f-9ad68a123913.jsonl","fileExists":false}}
+{"seq":4,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:12.630Z","type":"run.accepted","data":{"disposition":"started"}}
+{"seq":5,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:12.630Z","type":"run.started","data":{"pid":38304,"resumed":false}}
+{"seq":6,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:17.201Z","type":"run.message_sent","data":{"mode":"steer","preview":"sleep 结束后请创建 queued-should-not-run.txt，内容为 QUEUED_SHOULD_NOT_RUN。"}}
+{"seq":7,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:17.822Z","type":"run.progress","data":{"kind":"assistant_message","preview":"I'll run the sleep, then create the file."}}
+{"seq":8,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:17.828Z","type":"run.progress","data":{"kind":"tool_start","tool":"bash","detail":"sleep 120"}}
+{"seq":9,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:35.361Z","type":"worker.cancel_requested","data":{"reason":"user_cancel"}}
+{"seq":10,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:35.369Z","type":"run.progress","data":{"kind":"queue_cleared","steering":1,"followUp":0}}
+{"seq":11,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:36.071Z","type":"run.progress","data":{"kind":"tool_end","tool":"bash","isError":true,"durationMs":18243}}
+{"seq":12,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:36.078Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":13,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:36.089Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":14,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:36.119Z","type":"run.cancelled","data":{"sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviyclcn-ac30fc78\\2026-10-22T02-59-08-623Z_01a1618c-52cf-7093-900f-9ad68a123913.jsonl","aborted":true,"stopReason":"error","forcedCleanup":false,"reason":"user_cancel","error":"user_cancel","partialText":""}}
+{"seq":15,"workerId":"w-mviyclcn-ac30fc78","ts":"2026-10-22T02:59:36.119Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}

@@ -1,0 +1,37 @@
+{
+  "sessions": [
+    {
+      "label": "victim",
+      "workerId": "w-mviyclcn-ac30fc78",
+      "status": "cancelled",
+      "sessionId": "01a1618c-52cf-7093-900f-9ad68a123913",
+      "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviyclcn-ac30fc78\\2026-10-22T02-59-08-623Z_01a1618c-52cf-7093-900f-9ad68a123913.jsonl",
+      "bytes": 22331,
+      "jsonlRecords": 9,
+      "recordTypes": {
+        "session": 1,
+        "session_info": 1,
+        "model_change": 1,
+        "thinking_level_change": 1,
+        "message": 5
+      }
+    },
+    {
+      "label": "control",
+      "workerId": "w-mviycubf-d0d64d49",
+      "status": "completed",
+      "sessionId": "01a1618c-804e-7454-9b2f-244467e3e26b",
+      "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviycubf-d0d64d49\\2026-10-22T02-59-20-271Z_01a1618c-804e-7454-9b2f-244467e3e26b.jsonl",
+      "bytes": 20978,
+      "jsonlRecords": 9,
+      "recordTypes": {
+        "session": 1,
+        "session_info": 1,
+        "model_change": 1,
+        "thinking_level_change": 1,
+        "message": 5
+      }
+    }
+  ],
+  "note": "Native Pi session content is intentionally not copied; only metadata is recorded."
+}

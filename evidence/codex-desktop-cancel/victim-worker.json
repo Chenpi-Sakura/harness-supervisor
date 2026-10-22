@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mviyclcn-ac30fc78",
+  "runtime": "pi",
+  "cwd": "D:\\tmp\\hs-desktop-cancel",
+  "promptPreview": "请使用 bash 执行 sleep 120。然后创建 cancel-should-not-exist.txt，内容为 SHOULD_NOT_EXIST，最后回复 LONG_DONE。",
+  "status": "cancelled",
+  "createdAt": "2026-10-22T02:59:08.183Z",
+  "updatedAt": "2026-10-22T02:59:36.119Z",
+  "lastSeq": 15,
+  "eventCount": 15,
+  "stats": {
+    "turns": 2,
+    "toolCalls": 1,
+    "toolErrors": 1
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {},
+  "resumeCount": 0,
+  "supervisorId": "186c2acb-820c-402b-bfbc-811a7d768b58",
+  "pid": 38304,
+  "sessionId": "01a1618c-52cf-7093-900f-9ad68a123913",
+  "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviyclcn-ac30fc78\\2026-10-22T02-59-08-623Z_01a1618c-52cf-7093-900f-9ad68a123913.jsonl",
+  "startedAt": "2026-10-22T02:59:12.630Z",
+  "statusReason": "user_cancel",
+  "endedAt": "2026-10-22T02:59:36.119Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-22T02:59:36.119Z"
+  },
+  "error": "user_cancel"
+}

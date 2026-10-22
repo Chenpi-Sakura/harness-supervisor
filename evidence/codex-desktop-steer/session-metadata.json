@@ -1,0 +1,15 @@
+{
+  "workerId": "w-mviy7sv0-d0d1dbfb",
+  "sessionId": "01a16188-e9a5-754d-a058-d36fe1a4f944",
+  "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviy7sv0-d0d1dbfb\\2026-10-22T02-55-25-094Z_01a16188-e9a5-754d-a058-d36fe1a4f944.jsonl",
+  "bytes": 24575,
+  "jsonlRecords": 12,
+  "recordTypes": {
+    "session": 1,
+    "session_info": 1,
+    "model_change": 1,
+    "thinking_level_change": 1,
+    "message": 8
+  },
+  "note": "Native Pi session content is intentionally not copied; only metadata is recorded."
+}

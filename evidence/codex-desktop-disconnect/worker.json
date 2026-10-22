@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mviyl5p8-ff268291",
+  "runtime": "pi",
+  "cwd": "D:\\tmp\\hs-desktop-disconnect",
+  "promptPreview": "请使用 bash 执行 sleep 90，然后创建 disconnect-ok.txt，内容为 DISCONNECT_OK，最后回复 DISCONNECT_DONE。",
+  "status": "completed",
+  "createdAt": "2026-10-22T03:05:47.804Z",
+  "updatedAt": "2026-10-22T03:07:34.561Z",
+  "lastSeq": 18,
+  "eventCount": 18,
+  "stats": {
+    "turns": 4,
+    "toolCalls": 3,
+    "toolErrors": 0
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {},
+  "resumeCount": 0,
+  "supervisorId": "186c2acb-820c-402b-bfbc-811a7d768b58",
+  "pid": 55768,
+  "sessionId": "01a16192-6bf6-71a7-a11e-c6e5aed2518d",
+  "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviyl5p8-ff268291\\2026-10-22T03-05-48-279Z_01a16192-6bf6-71a7-a11e-c6e5aed2518d.jsonl",
+  "startedAt": "2026-10-22T03:05:52.357Z",
+  "endedAt": "2026-10-22T03:07:34.560Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-22T03:07:34.560Z"
+  },
+  "result": {
+    "text": "sleep 90 已完成，`disconnect-ok.txt` 已创建（内容 `DISCONNECT_OK`，已验证）。\n\nDISCONNECT_DONE",
+    "truncated": false
+  }
+}

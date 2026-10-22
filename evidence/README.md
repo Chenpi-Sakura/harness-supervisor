@@ -38,14 +38,19 @@ All artifacts here were produced by actual runs on 2026-10-21 and 2026-10-22 (Wi
 - The same run also captured the pre-fix wait behavior that spawned a duplicate worker; that defect is fixed and covered by the MCP wait test.
 - See [codex-auto-start/test-run.txt](codex-auto-start/test-run.txt).
 
-## 6. Codex desktop -> Supervisor MCP -> real Pi
+## 6. Codex desktop E2E suite
 
-- Host: Codex desktop on Windows, MCP stdio; daemon pre-started outside Codex.
-- Result: worker `w-mvixm5gl-40179d91` completed with `DESKTOP_DONE`; the created file is exactly `SUPERVISOR_DESKTOP_OK` (21 bytes, no trailing newline); exit code 0; no duplicate worker.
-- Codex session used `supervisor_info`, `worker_spawn`, and `worker_wait`. Spawn returned `running` at `lastSeq=5`; wait returned `completed`, 9 incremental events, `timedOut=false`.
-- The raw Codex session and native Pi conversation are not copied. Only MCP call summaries, supervisor artifacts, and Pi session metadata are included.
-- See [codex-desktop/test-run.txt](codex-desktop/test-run.txt), [codex-desktop/codex-tool-calls.json](codex-desktop/codex-tool-calls.json), and [codex-desktop/events.jsonl](codex-desktop/events.jsonl).
-- Scope is this desktop spawn/wait/completion flow; desktop steer, cancel, resume, and disconnect tests are separate follow-ups.
+All five runs used the real Codex desktop app on Windows with MCP stdio, an externally pre-started daemon, and real Pi workers. The raw Codex sessions and native Pi conversations are not copied; each folder contains only sanitized MCP calls, supervisor events, result files, and Pi session metadata.
+
+| Flow | Result | Evidence |
+| --- | --- | --- |
+| Spawn / wait / completion | completed `DESKTOP_DONE`; file exactly `SUPERVISOR_DESKTOP_OK` (21 bytes); one worker | [codex-desktop](codex-desktop/test-run.txt) |
+| Mid-run steer | `worker_send` while `sleep 20` was running; `run.message_sent` seq 7 before completion seq 15; file `FIRST\nSTEERED_BY_CODEX\n` | [codex-desktop-steer](codex-desktop-steer/test-run.txt) |
+| Cancel | queued steer cleared (`steering:1`); PID 38304 dead; one `run.cancelled`; duplicate cancel idempotent; control worker completed | [codex-desktop-cancel](codex-desktop-cancel/test-run.txt) |
+| Resume | same Pi session id/file; `resumeCount=1`; new PID; code recalled from context without being in the resume prompt; seed file not replayed | [codex-desktop-resume](codex-desktop-resume/test-run.txt) |
+| Client disconnect / reconnect | daemon PID and start time unchanged; worker PID 55768 continuous across app restart; reconnect wait returned the completed result | [codex-desktop-disconnect](codex-desktop-disconnect/test-run.txt) |
+
+Scope: these runs validate client-side lifecycle flows, not daemon-crash recovery. The supervisor remains pull-only; every completion was retrieved by `worker_wait`, and no background wake-up is claimed.
 
 ## 7. Automated suite
 

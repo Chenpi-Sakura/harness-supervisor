@@ -1,0 +1,43 @@
+Codex desktop cancel E2E: PASS
+Date: 2026-10-22 (local, Windows)
+Host: Codex desktop; MCP transport stdio; GPT-6 Luna
+MCP server: C:/Program Files/nodejs/node.exe + D:/Projects/Harness-Supervisor/dist/src/mcp.js
+Daemon: external, PID 31964, stateDir C:\Users\Lenovo\.harness-supervisor
+Workspace: D:\tmp\hs-desktop-cancel
+Victim: w-mviyclcn-ac30fc78 (Pi, PID 38304), prompt = sleep 120 then create cancel-should-not-exist.txt
+Control: w-mviycubf-d0d64d49 (Pi, PID 66720), prompt = create control-ok.txt then reply CONTROL_DONE
+
+Timeline (UTC):
+- 02:59:08.171 worker_spawn victim returned running, lastSeq=5, pid=38304
+- 02:59:14.586 worker_wait run.started returned while running
+- 02:59:17.201 run.message_sent (queued steer, seq=6)
+- 02:59:17.828 Pi tool_start bash "sleep 120" (seq=8)
+- 02:59:19.790 worker_spawn control returned running, lastSeq=5, pid=66720
+- 02:59:27.059 control worker_wait terminal returned completed, lastSeq=11
+- 02:59:35.351 worker_cancel returned cancelled, lastSeq=15, pidAlive=false
+- 02:59:35.361 worker.cancel_requested (seq=9)
+- 02:59:35.369 queue_cleared steering=1 followUp=0 (seq=10)
+- 02:59:36.071 bash tool_end isError=true (aborted)
+- 02:59:36.119 run.cancelled (seq=14, aborted=true, reason=user_cancel)
+- 02:59:36.119 worker.exited code=0, forced=false (seq=15)
+- 02:59:38.981 duplicate worker_cancel returned cancelled with lastSeq still 15
+- 02:59:42.530 victim worker_status: cancelled, pidAlive=false
+- 02:59:46.424 control worker_status: completed, result=CONTROL_DONE, pidAlive=false
+
+Assertions:
+- The queued steer was cleared before abort; queue_cleared reports steering=1.
+- No cancel-should-not-exist.txt and no queued-should-not-run.txt were created.
+- The victim process PID 38304 is not alive (checked independently with a signal-0 probe).
+- Exactly one run.cancelled event exists; duplicate cancel is idempotent.
+- The control worker completed with CONTROL_DONE and control-ok.txt contains CONTROL_OK.
+- Only two workers exist for this workspace; no third spawn.
+- Victim exit code 0, forced=false; toolErrors=1 is the expected aborted bash call, not an unexpected failure.
+
+Scope:
+- This validates desktop cancellation, queue clearing, process termination, idempotent duplicate cancel, and isolation from another worker.
+- It does not validate restart recovery or resume.
+
+Sanitization:
+- The raw Codex session and system prompts are NOT copied.
+- Only MCP call names, arguments, timestamps, and selected results are extracted.
+- Native Pi session content is not copied; session-metadata.json contains only size and record types.

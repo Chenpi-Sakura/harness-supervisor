@@ -1,0 +1,38 @@
+Codex desktop disconnect/reconnect E2E: PASS
+Date: 2026-10-22 (local, Windows)
+Host: Codex desktop; MCP transport stdio; GPT-6 Luna
+MCP server: C:/Program Files/nodejs/node.exe + D:/Projects/Harness-Supervisor/dist/src/mcp.js
+Daemon: external, PID 31964, supervisorId 186c2acb-820c-402b-bfbc-811a7d768b58,
+        startedAt 2026-10-22T02:30:05.897Z (unchanged before and after the test)
+Worker: w-mviyl5p8-ff268291, runtime pi, PID 55768
+Workspace: D:\tmp\hs-desktop-disconnect
+
+Timeline (UTC):
+- 03:05:47.791 worker_spawn returned running, PID 55768
+- 03:05:54.467 worker_wait run.started returned while running
+- 03:05:56.965 Pi tool_start bash "sleep 90"
+- The Codex desktop client was then fully quit and later reopened by the operator.
+- 03:07:27.073 after reconnect, worker_wait (terminal, 120000 ms) was called on the same worker id
+- 03:07:27.166 Pi tool_end for sleep (duration 90194 ms)
+- 03:07:29.765 write disconnect-ok.txt
+- 03:07:34.560 run.completed on the same worker PID; exit code 0
+- 03:07:34.561 worker.exited forced=false
+
+Assertions:
+- Daemon PID, supervisorId, and startedAt are unchanged; the daemon was not restarted.
+- Worker PID 55768 is identical before and after the client disconnect; no new worker was created.
+- worker_spawn count for this workspace is exactly 1.
+- The event journal spans the disconnect period and ends with run.completed.
+- The reconnect wait returned 11 events and completed result; timedOut=false.
+- disconnect-ok.txt is exactly "DISCONNECT_OK" (13 bytes).
+- Final pidAlive=false; no tool errors; exit code 0.
+
+Scope:
+- This validates MCP client disconnect/reconnect against a live external daemon and an already-running Worker.
+- It does NOT simulate a daemon crash; no orphaned/interrupted reconciliation occurred.
+- The supervisor remains pull-only: after reconnect the client had to call worker_wait to read the persisted state.
+
+Sanitization:
+- The raw Codex session and system prompts are NOT copied.
+- Only MCP call names, arguments, timestamps, and selected results are extracted.
+- Native Pi session content is not copied; session-metadata.json contains only size and record types.

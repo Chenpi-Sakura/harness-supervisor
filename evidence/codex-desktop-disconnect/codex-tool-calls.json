@@ -1,0 +1,63 @@
+{
+  "source": "Sanitized MCP-call extract from the Codex desktop session; system prompts and conversation are not included",
+  "session": "rollout-2026-10-22T10-36-34-01a16177-a8f6-7831-9952-0d668ce8423c.jsonl",
+  "toolCalls": [
+    {
+      "timestamp": "2026-10-22T03:05:47.791Z",
+      "name": "worker_spawn",
+      "argsText": "{\n  cwd: \"D:/tmp/hs-desktop-disconnect\",\n  prompt: \"请使用 bash 执行 sleep 90，然后创建 disconnect-ok.txt，内容为 DISCONNECT_OK，最后回复 DISCONNECT_DONE。\"\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 5,
+        "pid": 55768,
+        "pidAlive": true
+      }
+    },
+    {
+      "timestamp": "2026-10-22T03:05:54.467Z",
+      "name": "worker_wait",
+      "argsText": "{\n  workerId: \"w-mviyl5p8-ff268291\",\n  until: \"event\",\n  types: [\"run.started\"],\n  timeoutMs: 15000\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 5,
+        "pid": 55768,
+        "pidAlive": true,
+        "terminal": false,
+        "timedOut": false,
+        "eventTypes": [
+          "run.started"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-10-22T03:07:27.073Z",
+      "name": "worker_wait",
+      "argsText": "{\n  workerId: \"w-mviyl5p8-ff268291\",\n  until: \"terminal\",\n  timeoutMs: 120000\n}",
+      "result": {
+        "status": "completed",
+        "lastSeq": 17,
+        "pid": 55768,
+        "pidAlive": false,
+        "terminal": true,
+        "timedOut": false,
+        "eventTypes": [
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.completed"
+        ],
+        "result": {
+          "text": "sleep 90 已完成，`disconnect-ok.txt` 已创建（内容 `DISCONNECT_OK`，已验证）。\n\nDISCONNECT_DONE",
+          "truncated": false
+        }
+      }
+    }
+  ]
+}

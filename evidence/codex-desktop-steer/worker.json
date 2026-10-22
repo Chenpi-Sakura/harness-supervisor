@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mviy7sv0-d0d1dbfb",
+  "runtime": "pi",
+  "cwd": "D:\\tmp\\hs-desktop-steer",
+  "promptPreview": "请使用 bash 执行 sleep 20。然后创建 steer-check.txt，先写入 FIRST。若收到补充指令，请按补充指令继续处理。最后回复 SLOW_DONE。",
+  "status": "completed",
+  "createdAt": "2026-10-22T02:55:24.636Z",
+  "updatedAt": "2026-10-22T02:56:04.870Z",
+  "lastSeq": 16,
+  "eventCount": 16,
+  "stats": {
+    "turns": 3,
+    "toolCalls": 2,
+    "toolErrors": 0
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {},
+  "resumeCount": 0,
+  "supervisorId": "186c2acb-820c-402b-bfbc-811a7d768b58",
+  "pid": 43564,
+  "sessionId": "01a16188-e9a5-754d-a058-d36fe1a4f944",
+  "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviy7sv0-d0d1dbfb\\2026-10-22T02-55-25-094Z_01a16188-e9a5-754d-a058-d36fe1a4f944.jsonl",
+  "startedAt": "2026-10-22T02:55:29.967Z",
+  "endedAt": "2026-10-22T02:56:04.864Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-22T02:56:04.864Z"
+  },
+  "result": {
+    "text": "Steer 指令已按要求处理，`D:/tmp/hs-desktop-steer/steer-check.txt`：\n\n```\nFIRST\nSTEERED_BY_CODEX\n```\n\nSTEER_DONE",
+    "truncated": false
+  }
+}

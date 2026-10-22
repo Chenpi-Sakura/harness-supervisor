@@ -1,0 +1,25 @@
+{"seq":1,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:21.258Z","type":"worker.starting","data":{"runtime":"pi","cwd":"D:\\tmp\\hs-desktop-resume","resumed":false}}
+{"seq":2,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:21.295Z","type":"worker.started","data":{"pid":45672,"runtime":"pi"}}
+{"seq":3,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:25.791Z","type":"worker.session","data":{"sessionId":"01a1618f-451f-75eb-9202-3dc4a55cd51e","sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviygqbo-7400bdab\\2026-10-22T03-02-21-728Z_01a1618f-451f-75eb-9202-3dc4a55cd51e.jsonl","fileExists":false}}
+{"seq":4,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:25.880Z","type":"run.accepted","data":{"disposition":"started"}}
+{"seq":5,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:25.880Z","type":"run.started","data":{"pid":45672,"resumed":false}}
+{"seq":6,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:30.294Z","type":"run.progress","data":{"kind":"tool_start","tool":"bash","detail":"printf 'SEED_OK' > resume-seed.txt && cat resume-seed.txt"}}
+{"seq":7,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:30.428Z","type":"run.progress","data":{"kind":"tool_end","tool":"bash","isError":false,"durationMs":129}}
+{"seq":8,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:30.435Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":9,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:32.444Z","type":"run.progress","data":{"kind":"assistant_message","preview":"SEED_DONE"}}
+{"seq":10,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:32.451Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":11,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:32.481Z","type":"run.completed","data":{"sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviygqbo-7400bdab\\2026-10-22T03-02-21-728Z_01a1618f-451f-75eb-9202-3dc4a55cd51e.jsonl","aborted":false,"stopReason":"stop","forcedCleanup":false,"text":"SEED_DONE","truncated":false}}
+{"seq":12,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:32.482Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}
+{"seq":13,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:35.923Z","type":"worker.starting","data":{"runtime":"pi","resumed":true,"sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviygqbo-7400bdab\\2026-10-22T03-02-21-728Z_01a1618f-451f-75eb-9202-3dc4a55cd51e.jsonl"}}
+{"seq":14,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:35.961Z","type":"worker.started","data":{"pid":66908,"runtime":"pi"}}
+{"seq":15,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:40.708Z","type":"worker.session","data":{"sessionId":"01a1618f-451f-75eb-9202-3dc4a55cd51e","sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviygqbo-7400bdab\\2026-10-22T03-02-21-728Z_01a1618f-451f-75eb-9202-3dc4a55cd51e.jsonl","fileExists":true}}
+{"seq":16,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:40.807Z","type":"run.accepted","data":{"disposition":"started","resumed":true}}
+{"seq":17,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:40.807Z","type":"worker.resumed","data":{"sessionId":"01a1618f-451f-75eb-9202-3dc4a55cd51e","sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviygqbo-7400bdab\\2026-10-22T03-02-21-728Z_01a1618f-451f-75eb-9202-3dc4a55cd51e.jsonl","resumeCount":1}}
+{"seq":18,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:40.807Z","type":"run.started","data":{"pid":66908,"resumed":true}}
+{"seq":19,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:45.851Z","type":"run.progress","data":{"kind":"tool_start","tool":"bash","detail":"printf 'JADE-6381' > resume-recall.txt && cat resume-recall.txt"}}
+{"seq":20,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:45.986Z","type":"run.progress","data":{"kind":"tool_end","tool":"bash","isError":false,"durationMs":129}}
+{"seq":21,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:45.994Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":22,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:49.095Z","type":"run.progress","data":{"kind":"assistant_message","preview":"RECALL_DONE:JADE-6381"}}
+{"seq":23,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:49.100Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":24,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:49.133Z","type":"run.completed","data":{"sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviygqbo-7400bdab\\2026-10-22T03-02-21-728Z_01a1618f-451f-75eb-9202-3dc4a55cd51e.jsonl","aborted":false,"stopReason":"stop","forcedCleanup":false,"text":"RECALL_DONE:JADE-6381","truncated":false}}
+{"seq":25,"workerId":"w-mviygqbo-7400bdab","ts":"2026-10-22T03:02:49.134Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}

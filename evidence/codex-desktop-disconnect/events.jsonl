@@ -1,0 +1,18 @@
+{"seq":1,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:05:47.809Z","type":"worker.starting","data":{"runtime":"pi","cwd":"D:\\tmp\\hs-desktop-disconnect","resumed":false}}
+{"seq":2,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:05:47.859Z","type":"worker.started","data":{"pid":55768,"runtime":"pi"}}
+{"seq":3,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:05:52.265Z","type":"worker.session","data":{"sessionId":"01a16192-6bf6-71a7-a11e-c6e5aed2518d","sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviyl5p8-ff268291\\2026-10-22T03-05-48-279Z_01a16192-6bf6-71a7-a11e-c6e5aed2518d.jsonl","fileExists":false}}
+{"seq":4,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:05:52.357Z","type":"run.accepted","data":{"disposition":"started"}}
+{"seq":5,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:05:52.357Z","type":"run.started","data":{"pid":55768,"resumed":false}}
+{"seq":6,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:05:56.965Z","type":"run.progress","data":{"kind":"tool_start","tool":"bash","detail":"sleep 90 && echo slept"}}
+{"seq":7,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:27.166Z","type":"run.progress","data":{"kind":"tool_end","tool":"bash","isError":false,"durationMs":90194}}
+{"seq":8,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:27.174Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":9,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:29.765Z","type":"run.progress","data":{"kind":"tool_start","tool":"write","detail":"D:/tmp/hs-desktop-disconnect/disconnect-ok.txt"}}
+{"seq":10,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:29.776Z","type":"run.progress","data":{"kind":"tool_end","tool":"write","isError":false,"durationMs":5}}
+{"seq":11,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:29.784Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":12,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:31.941Z","type":"run.progress","data":{"kind":"tool_start","tool":"bash","detail":"cat D:/tmp/hs-desktop-disconnect/disconnect-ok.txt"}}
+{"seq":13,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:32.121Z","type":"run.progress","data":{"kind":"tool_end","tool":"bash","isError":false,"durationMs":175}}
+{"seq":14,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:32.128Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":15,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:34.524Z","type":"run.progress","data":{"kind":"assistant_message","preview":"sleep 90 已完成，`disconnect-ok.txt` 已创建（内容 `DISCONNECT_OK`，已验证）。\n\nDISCONNECT_DONE"}}
+{"seq":16,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:34.529Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":17,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:34.560Z","type":"run.completed","data":{"sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviyl5p8-ff268291\\2026-10-22T03-05-48-279Z_01a16192-6bf6-71a7-a11e-c6e5aed2518d.jsonl","aborted":false,"stopReason":"stop","forcedCleanup":false,"text":"sleep 90 已完成，`disconnect-ok.txt` 已创建（内容 `DISCONNECT_OK`，已验证）。\n\nDISCONNECT_DONE","truncated":false}}
+{"seq":18,"workerId":"w-mviyl5p8-ff268291","ts":"2026-10-22T03:07:34.561Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}

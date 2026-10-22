@@ -1,0 +1,16 @@
+{"seq":1,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:55:24.641Z","type":"worker.starting","data":{"runtime":"pi","cwd":"D:\\tmp\\hs-desktop-steer","resumed":false}}
+{"seq":2,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:55:24.679Z","type":"worker.started","data":{"pid":43564,"runtime":"pi"}}
+{"seq":3,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:55:29.845Z","type":"worker.session","data":{"sessionId":"01a16188-e9a5-754d-a058-d36fe1a4f944","sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviy7sv0-d0d1dbfb\\2026-10-22T02-55-25-094Z_01a16188-e9a5-754d-a058-d36fe1a4f944.jsonl","fileExists":false}}
+{"seq":4,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:55:29.967Z","type":"run.accepted","data":{"disposition":"started"}}
+{"seq":5,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:55:29.967Z","type":"run.started","data":{"pid":43564,"resumed":false}}
+{"seq":6,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:55:37.428Z","type":"run.progress","data":{"kind":"tool_start","tool":"bash","detail":"sleep 20"}}
+{"seq":7,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:55:38.106Z","type":"run.message_sent","data":{"mode":"steer","preview":"请在 steer-check.txt 末尾追加一行 STEERED_BY_CODEX，保留 FIRST，然后回复 STEER_DONE。"}}
+{"seq":8,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:55:57.580Z","type":"run.progress","data":{"kind":"tool_end","tool":"bash","isError":false,"durationMs":20146}}
+{"seq":9,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:55:57.586Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":10,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:56:01.769Z","type":"run.progress","data":{"kind":"tool_start","tool":"bash","detail":"cd /d/tmp/hs-desktop-steer && printf 'FIRST\\n' > steer-check.txt && printf 'STEERED_BY_CODEX\\n' >> steer-check.txt && cat steer-check.txt"}}
+{"seq":11,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:56:01.902Z","type":"run.progress","data":{"kind":"tool_end","tool":"bash","isError":false,"durationMs":130}}
+{"seq":12,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:56:01.908Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":13,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:56:04.828Z","type":"run.progress","data":{"kind":"assistant_message","preview":"Steer 指令已按要求处理，`D:/tmp/hs-desktop-steer/steer-check.txt`：\n\n```\nFIRST\nSTEERED_BY_CODEX\n```\n\nSTEER_DONE"}}
+{"seq":14,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:56:04.834Z","type":"run.progress","data":{"kind":"turn_complete"}}
+{"seq":15,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:56:04.864Z","type":"run.completed","data":{"sessionFile":"C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviy7sv0-d0d1dbfb\\2026-10-22T02-55-25-094Z_01a16188-e9a5-754d-a058-d36fe1a4f944.jsonl","aborted":false,"stopReason":"stop","forcedCleanup":false,"text":"Steer 指令已按要求处理，`D:/tmp/hs-desktop-steer/steer-check.txt`：\n\n```\nFIRST\nSTEERED_BY_CODEX\n```\n\nSTEER_DONE","truncated":false}}
+{"seq":16,"workerId":"w-mviy7sv0-d0d1dbfb","ts":"2026-10-22T02:56:04.870Z","type":"worker.exited","data":{"code":0,"signal":null,"forced":false}}

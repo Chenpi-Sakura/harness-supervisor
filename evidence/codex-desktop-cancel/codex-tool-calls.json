@@ -1,0 +1,128 @@
+{
+  "source": "Sanitized MCP-call extract from the Codex desktop session; system prompts and conversation are not included",
+  "session": "rollout-2026-10-22T10-36-34-01a16177-a8f6-7831-9952-0d668ce8423c.jsonl",
+  "toolCalls": [
+    {
+      "timestamp": "2026-10-22T02:59:08.171Z",
+      "name": "worker_spawn",
+      "argsText": "{\n  cwd: \"D:/tmp/hs-desktop-cancel\",\n  prompt: \"请使用 bash 执行 sleep 120。然后创建 cancel-should-not-exist.txt，内容为 SHOULD_NOT_EXIST，最后回复 LONG_DONE。\"\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 5,
+        "pid": 38304,
+        "pidAlive": true
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:59:14.586Z",
+      "name": "worker_wait",
+      "argsText": "{\n  workerId: \"w-mviyclcn-ac30fc78\",\n  until: \"event\",\n  types: [\"run.started\"],\n  timeoutMs: 15000\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 5,
+        "pid": 38304,
+        "pidAlive": true,
+        "terminal": false,
+        "timedOut": false,
+        "eventTypes": [
+          "run.started"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:59:17.189Z",
+      "name": "worker_send",
+      "argsText": "{\n  workerId: \"w-mviyclcn-ac30fc78\",\n  message: \"sleep 结束后请创建 queued-should-not-run.txt，内容为 QUEUED_SHOULD_NOT_RUN。\",\n  mode: \"steer\"\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 6,
+        "pid": 38304,
+        "pidAlive": true
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:59:19.790Z",
+      "name": "worker_spawn",
+      "argsText": "{\n  cwd: \"D:/tmp/hs-desktop-cancel\",\n  prompt: \"请创建 control-ok.txt，内容为 CONTROL_OK，然后回复 CONTROL_DONE。\"\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 5,
+        "pid": 66720,
+        "pidAlive": true
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:59:27.059Z",
+      "name": "worker_wait",
+      "argsText": "{\n  workerId: \"w-mviycubf-d0d64d49\",\n  until: \"terminal\",\n  timeoutMs: 60000\n}",
+      "result": {
+        "status": "completed",
+        "lastSeq": 11,
+        "pid": 66720,
+        "pidAlive": false,
+        "terminal": true,
+        "timedOut": false,
+        "eventTypes": [
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.completed"
+        ],
+        "result": {
+          "text": "CONTROL_DONE",
+          "truncated": false
+        }
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:59:35.351Z",
+      "name": "worker_cancel",
+      "argsText": "{\n  workerId: \"w-mviyclcn-ac30fc78\",\n  timeoutMs: 20000\n}",
+      "result": {
+        "status": "cancelled",
+        "lastSeq": 15,
+        "pid": 38304,
+        "pidAlive": false
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:59:38.981Z",
+      "name": "worker_cancel",
+      "argsText": "{\n  workerId: \"w-mviyclcn-ac30fc78\",\n  timeoutMs: 20000\n}",
+      "result": {
+        "status": "cancelled",
+        "lastSeq": 15,
+        "pid": 38304,
+        "pidAlive": false
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:59:42.530Z",
+      "name": "worker_status",
+      "argsText": "{workerId: \"w-mviyclcn-ac30fc78\"}",
+      "result": {
+        "status": "cancelled",
+        "lastSeq": 15,
+        "pid": 38304,
+        "pidAlive": false
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:59:46.424Z",
+      "name": "worker_status",
+      "argsText": "{workerId: \"w-mviycubf-d0d64d49\"}",
+      "result": {
+        "status": "completed",
+        "lastSeq": 12,
+        "pid": 66720,
+        "pidAlive": false,
+        "result": {
+          "text": "CONTROL_DONE",
+          "truncated": false
+        }
+      }
+    }
+  ]
+}

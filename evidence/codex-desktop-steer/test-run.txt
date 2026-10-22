@@ -1,0 +1,35 @@
+Codex desktop steer E2E: PASS
+Date: 2026-10-22 (local, Windows)
+Host: Codex desktop; MCP transport stdio; GPT-6 Luna
+MCP server: C:/Program Files/nodejs/node.exe + D:/Projects/Harness-Supervisor/dist/src/mcp.js
+Daemon: external, PID 31964, stateDir C:\Users\Lenovo\.harness-supervisor
+Worker: w-mviy7sv0-d0d1dbfb (runtime pi)
+Workspace: D:\tmp\hs-desktop-steer
+Initial prompt: sleep 20, then create steer-check.txt with FIRST, then reply SLOW_DONE.
+Steer message: append STEERED_BY_CODEX to steer-check.txt, reply STEER_DONE.
+
+Timeline (UTC):
+- 02:55:24.623 worker_spawn returned status=running, lastSeq=5
+- 02:55:34.379 worker_wait until=event (run.started) returned while running
+- 02:55:37.428 Pi tool_start: bash "sleep 20"
+- 02:55:38.106 Supervisor recorded run.message_sent (mode=steer, seq=7)
+- 02:55:57.580 Pi tool_end for sleep (duration 20146 ms)
+- 02:56:04.864 run.completed (seq=15), exit code 0, pidAlive=false
+- 02:56:04.870 worker.exited forced=false
+
+Assertions:
+- worker_send was called while the worker was running, not after completion.
+- run.message_sent (seq 7) is before run.completed (seq 15).
+- steer-check.txt is exactly "FIRST\nSTEERED_BY_CODEX\n" (23 bytes).
+- Only one worker exists for D:/tmp/hs-desktop-steer.
+- No tool errors, empty stderr, no duplicate spawn.
+- Codex session contains 4 MCP calls: worker_spawn, worker_wait(run.started), worker_send, worker_wait(terminal).
+
+Scope:
+- This validates desktop steer delivery and its effect on the final Pi result.
+- It does not validate cancel, resume, disconnect, or daemon restart recovery.
+
+Sanitization:
+- The raw Codex session and system prompts are NOT copied.
+- Only MCP call names, arguments, timestamps, and selected results are extracted.
+- Native Pi session content is not copied; session-metadata.json contains only size and record types.

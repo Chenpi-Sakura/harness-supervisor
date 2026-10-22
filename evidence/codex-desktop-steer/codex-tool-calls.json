@@ -1,0 +1,69 @@
+{
+  "source": "Sanitized MCP-call extract from the Codex desktop session; system prompts and conversation are not included",
+  "session": "rollout-2026-10-22T10-36-34-01a16177-a8f6-7831-9952-0d668ce8423c.jsonl",
+  "toolCalls": [
+    {
+      "timestamp": "2026-10-22T02:55:24.623Z",
+      "name": "worker_spawn",
+      "argsText": "{\n  cwd: \"D:/tmp/hs-desktop-steer\",\n  prompt: \"请使用 bash 执行 sleep 20。然后创建 steer-check.txt，先写入 FIRST。若收到补充指令，请按补充指令继续处理。最后回复 SLOW_DONE。\"\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 5,
+        "pidAlive": true
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:55:34.379Z",
+      "name": "worker_wait",
+      "argsText": "{\n  workerId: \"w-mviy7sv0-d0d1dbfb\",\n  until: \"event\",\n  types: [\"run.started\"],\n  timeoutMs: 15000\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 5,
+        "terminal": false,
+        "timedOut": false,
+        "nextSeq": 5,
+        "eventTypes": [
+          "run.started"
+        ],
+        "pidAlive": true
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:55:38.093Z",
+      "name": "worker_send",
+      "argsText": "{\n  workerId: \"w-mviy7sv0-d0d1dbfb\",\n  message: \"请在 steer-check.txt 末尾追加一行 STEERED_BY_CODEX，保留 FIRST，然后回复 STEER_DONE。\",\n  mode: \"steer\"\n}",
+      "result": {
+        "status": "running",
+        "lastSeq": 7,
+        "pidAlive": true
+      }
+    },
+    {
+      "timestamp": "2026-10-22T02:55:41.452Z",
+      "name": "worker_wait",
+      "argsText": "{\n  workerId: \"w-mviy7sv0-d0d1dbfb\",\n  until: \"terminal\",\n  timeoutMs: 60000\n}",
+      "result": {
+        "status": "completed",
+        "lastSeq": 15,
+        "terminal": true,
+        "timedOut": false,
+        "nextSeq": 15,
+        "eventTypes": [
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.completed"
+        ],
+        "result": {
+          "text": "Steer 指令已按要求处理，`D:/tmp/hs-desktop-steer/steer-check.txt`：\n\n```\nFIRST\nSTEERED_BY_CODEX\n```\n\nSTEER_DONE",
+          "truncated": false
+        },
+        "pidAlive": false
+      }
+    }
+  ]
+}

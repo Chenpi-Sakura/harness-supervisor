@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mviygqbo-7400bdab",
+  "runtime": "pi",
+  "cwd": "D:\\tmp\\hs-desktop-resume",
+  "promptPreview": "不要重新创建或修改 resume-seed.txt，也不要读取它来寻找验证码。请只根据此前会话的上下文，回忆我让你记住的验证码，把它写入 resume-recall.txt，然后只回复 RECALL_DONE:<验证码>。如果无法回忆，请明确说明。",
+  "status": "completed",
+  "createdAt": "2026-10-22T03:02:21.252Z",
+  "updatedAt": "2026-10-22T03:02:49.134Z",
+  "lastSeq": 25,
+  "eventCount": 25,
+  "stats": {
+    "turns": 4,
+    "toolCalls": 2,
+    "toolErrors": 0
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {},
+  "resumeCount": 1,
+  "supervisorId": "186c2acb-820c-402b-bfbc-811a7d768b58",
+  "pid": 66908,
+  "sessionId": "01a1618f-451f-75eb-9202-3dc4a55cd51e",
+  "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviygqbo-7400bdab\\2026-10-22T03-02-21-728Z_01a1618f-451f-75eb-9202-3dc4a55cd51e.jsonl",
+  "startedAt": "2026-10-22T03:02:40.806Z",
+  "endedAt": "2026-10-22T03:02:49.133Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-22T03:02:49.133Z"
+  },
+  "result": {
+    "text": "RECALL_DONE:JADE-6381",
+    "truncated": false
+  }
+}

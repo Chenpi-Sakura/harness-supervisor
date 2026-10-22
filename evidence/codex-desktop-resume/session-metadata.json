@@ -1,0 +1,16 @@
+{
+  "workerId": "w-mviygqbo-7400bdab",
+  "sessionId": "01a1618f-451f-75eb-9202-3dc4a55cd51e",
+  "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviygqbo-7400bdab\\2026-10-22T03-02-21-728Z_01a1618f-451f-75eb-9202-3dc4a55cd51e.jsonl",
+  "bytes": 25246,
+  "jsonlRecords": 14,
+  "recordTypes": {
+    "session": 1,
+    "session_info": 2,
+    "model_change": 1,
+    "thinking_level_change": 1,
+    "message": 9
+  },
+  "resumeCount": 1,
+  "note": "One Pi session is shared across the seed run and the resumed run. Native session content is intentionally not copied."
+}

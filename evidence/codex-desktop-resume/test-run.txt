@@ -1,0 +1,36 @@
+Codex desktop resume E2E: PASS
+Date: 2026-10-22 (local, Windows)
+Host: Codex desktop; MCP transport stdio; GPT-6 Luna
+MCP server: C:/Program Files/nodejs/node.exe + D:/Projects/Harness-Supervisor/dist/src/mcp.js
+Daemon: external, PID 31964, stateDir C:\Users\Lenovo\.harness-supervisor
+Worker: w-mviygqbo-7400bdab (runtime pi)
+Workspace: D:\tmp\hs-desktop-resume
+
+Seed run:
+- Prompt: create resume-seed.txt with SEED_OK, remember JADE-6381, do not write it to any file or repeat it in the reply.
+- Result: completed, SEED_DONE, PID 45672, session 01a1618f-451f-75eb-9202-3dc4a55cd51e.
+- resume-seed.txt is exactly 7 bytes "SEED_OK" (no JADE-6381).
+
+Resume run:
+- worker_resume returned running, PID 66908, same sessionId, resumeCount=1 (lastSeq=18).
+- worker.starting resumed=true (seq 13), worker.session fileExists=true (seq 15),
+  run.accepted resumed=true (seq 16), worker.resumed resumeCount=1 (seq 17),
+  run.started resumed=true (seq 18).
+- The resume prompt did not contain JADE-6381; it asked Pi to recall the code from the prior session context.
+- New run wrote resume-recall.txt = "JADE-6381" (9 bytes) and replied RECALL_DONE:JADE-6381.
+- Final status completed, PID 66908, exit code 0, pidAlive=false.
+
+No replay:
+- resume-seed.txt was written only once, in the seed run (seq 6), and was not modified during resume.
+- The resumed run only wrote resume-recall.txt (seq 19).
+- One worker exists for this workspace; no second spawn.
+
+Scope:
+- This validates native Pi session context restoration, session identity checks, and new-instruction continuation.
+- It does not validate taking over a live process; the first process had already exited.
+- It does not validate daemon crash recovery.
+
+Sanitization:
+- The raw Codex session and system prompts are NOT copied.
+- Only MCP call names, arguments, timestamps, and selected results are extracted.
+- Native Pi session content is not copied; session-metadata.json contains only size and record types.

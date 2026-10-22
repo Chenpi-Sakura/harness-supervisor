@@ -80,6 +80,10 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       closeGraceMs: intEnv("HARNESS_SUPERVISOR_CLOSE_GRACE_MS", 1500, 100, 30_000),
       abortTimeoutMs: intEnv("HARNESS_SUPERVISOR_ABORT_TIMEOUT_MS", 20_000, 500, 120_000),
     },
+    notify: {
+      channel: process.env.HARNESS_SUPERVISOR_NOTIFY_CHANNEL === "codex-queue" ? "codex-queue" : "none",
+      codexThreadId: process.env.HARNESS_SUPERVISOR_CODEX_WAKE_THREAD || undefined,
+    },
   });
   await supervisor.init();
 

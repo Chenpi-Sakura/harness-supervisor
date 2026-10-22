@@ -238,6 +238,46 @@ function runTurn(record: InputRecord): void {
     return;
   }
 
+  if (text.includes("[scenario:multi-result-near]")) {
+    // Two result records 200ms apart: inside the 350ms settle window, so the
+    // adapter must coalesce them into ONE terminal state using the last text.
+    assistant("PART1");
+    later(20, () => {
+      busy = false;
+      resultRecord("FIRST");
+      later(200, () => {
+        busy = true;
+        assistant("PART2");
+        later(20, () => {
+          busy = false;
+          resultRecord("SECOND");
+          drainQueue();
+        });
+      });
+    });
+    return;
+  }
+
+  if (text.includes("[scenario:multi-result-wide]")) {
+    // Two result records 2000ms apart: the first one settles after the 350ms
+    // quiet window, and the late result arrives after the run is finished.
+    assistant("PART1");
+    later(20, () => {
+      busy = false;
+      resultRecord("FIRST");
+      later(2000, () => {
+        busy = true;
+        assistant("PART2");
+        later(20, () => {
+          busy = false;
+          resultRecord("SECOND");
+          drainQueue();
+        });
+      });
+    });
+    return;
+  }
+
   if (text.includes("[scenario:permission]")) {
     const toolUseId = `tool-${randomUUID()}`;
     waitingPermission = toolUseId;

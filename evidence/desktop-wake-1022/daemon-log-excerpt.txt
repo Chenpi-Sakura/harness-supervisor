@@ -1,0 +1,8 @@
+# 转录自测试结束后端窗口输出（原始 daemon.log 已随状态目录删除）
+# daemon: pid 44056, stateDir=%TEMP%\hs-e2e-wake-1022, 外部预启动
+2026-10-22T11:42:56.408Z INFO Supervisor initialized {"workers":0,"warnings":0}
+2026-10-22T11:42:56.412Z INFO Supervisor daemon started {"name":"harness-supervisor","version":"0.1.0","pid":44056,"endpoint":"\\.\pipe\harness-supervisor-7f5809cad58b5033e715","stateDir":"C:\Users\Lenovo\AppData\Local\Temp\hs-e2e-wake-1022"}
+...
+2026-10-22T11:52:10.007Z INFO Worker w-mvjhawr9-686b5f0f finished {"status":"completed"}
+# 注：11:52:10.007Z 的 finished 与 11:52:10.951Z 的投递成功属于同一秒级窗口；
+# 投递明细见 inbox.json 的 delivery 字段。

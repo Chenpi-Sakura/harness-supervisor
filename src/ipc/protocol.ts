@@ -51,6 +51,14 @@ const ConfigFields = {
   extraArgs: z.array(z.string().max(2000)).max(30).optional(),
 };
 
+const RequestIdField = {
+  /**
+   * Optional client-supplied idempotency key. Requests without it keep the
+   * legacy "not idempotent" behaviour.
+   */
+  requestId: z.string().min(1).max(200).optional(),
+};
+
 const SpawnSchema = z
   .object({
     runtime: z.string().min(1).max(50).optional(),
@@ -58,6 +66,7 @@ const SpawnSchema = z
     prompt: z.string().min(1).max(256 * 1024),
     name: z.string().min(1).max(200).optional(),
     ...ConfigFields,
+    ...RequestIdField,
   })
   .strict();
 
@@ -66,6 +75,7 @@ const ResumeSchema = z
     workerId: z.string().min(1).max(200),
     prompt: z.string().min(1).max(256 * 1024),
     ...ConfigFields,
+    ...RequestIdField,
   })
   .strict();
 
@@ -110,6 +120,7 @@ export const METHOD_SCHEMAS = {
       workerId: WorkerIdSchema,
       message: z.string().min(1).max(64 * 1024),
       mode: z.enum(["steer", "follow-up"]).optional(),
+      ...RequestIdField,
     })
     .strict(),
   answer: z
@@ -126,7 +137,39 @@ export const METHOD_SCHEMAS = {
     })
     .strict(),
   info: z.object({}).strict(),
+  notifications: z
+    .object({
+      state: z.enum(["pending", "delivered", "failed", "all"]).optional(),
+      workerId: WorkerIdSchema.optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    })
+    .strict(),
+  notification_ack: z
+    .object({
+      ids: z.array(z.string().min(1).max(300)).min(1).max(200),
+      by: z.string().min(1).max(100).optional(),
+    })
+    .strict(),
+  notification_target: z
+    .object({
+      channel: z.enum(["none", "codex-queue"]).optional(),
+      codexThreadId: z.string().min(1).max(200).nullable().optional(),
+    })
+    .strict(),
+  notification_retry: z
+    .object({
+      states: z.array(z.enum(["pending", "delivered", "failed"])).min(1).max(3).optional(),
+    })
+    .strict(),
   ping: z.object({}).strict(),
+  prune: z
+    .object({
+      olderThanDays: z.number().int().min(0).max(3650).optional(),
+      keep: z.number().int().min(0).max(10000).optional(),
+      dryRun: z.boolean().optional(),
+      includeSessions: z.boolean().optional(),
+    })
+    .strict(),
   shutdown: z.object({ reason: z.string().max(200).optional() }).strict(),
 } as const;
 

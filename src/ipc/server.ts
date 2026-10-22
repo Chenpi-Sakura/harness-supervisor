@@ -187,13 +187,16 @@ export class IpcServer {
     const supervisor = this.options.supervisor;
     switch (method) {
       case "spawn": {
-        return supervisor.spawn(params as Parameters<Supervisor["spawn"]>[0]);
+        const { requestId, ...input } = params as Parameters<Supervisor["spawn"]>[0] & {
+          requestId?: string;
+        };
+        return supervisor.spawn(input, { requestId });
       }
       case "resume": {
-        const { workerId, ...input } = params as { workerId: string } & Parameters<
+        const { workerId, requestId, ...input } = params as { workerId: string; requestId?: string } & Parameters<
           Supervisor["resume"]
         >[1];
-        return supervisor.resume(workerId, input);
+        return supervisor.resume(workerId, input, { requestId });
       }
       case "status": {
         const { workerId, recentEvents } = params as {
@@ -220,8 +223,10 @@ export class IpcServer {
         return supervisor.wait(workerId, options);
       }
       case "send": {
-        const { workerId, message, mode } = params as SendParams;
-        return supervisor.send(workerId, message, mode ?? "steer");
+        const { workerId, message, mode, requestId } = params as SendParams & {
+          requestId?: string;
+        };
+        return supervisor.send(workerId, message, mode ?? "steer", { requestId });
       }
       case "answer": {
         const { workerId, requestId, response } = params as AnswerParams;
@@ -233,6 +238,37 @@ export class IpcServer {
       }
       case "info":
         return supervisor.info();
+      case "notifications": {
+        const { state, workerId, limit } = params as {
+          state?: "pending" | "delivered" | "failed" | "all";
+          workerId?: string;
+          limit?: number;
+        };
+        return supervisor.notifications({ state, workerId, limit });
+      }
+      case "notification_ack": {
+        const { ids, by } = params as { ids: string[]; by?: string };
+        return supervisor.ackNotifications(ids, by);
+      }
+      case "notification_target": {
+        return supervisor.setNotifyTarget(
+          params as { channel?: "none" | "codex-queue"; codexThreadId?: string | null },
+        );
+      }
+      case "prune": {
+        const { olderThanDays, keep, dryRun, includeSessions } = params as {
+          olderThanDays?: number;
+          keep?: number;
+          dryRun?: boolean;
+          includeSessions?: boolean;
+        };
+        return supervisor.prune({ olderThanDays, keep, dryRun, includeSessions });
+      }
+      case "notification_retry": {
+        const { states } = params as { states?: Array<"pending" | "delivered" | "failed"> };
+        const retried = await supervisor.retryNotifications(states);
+        return { retried };
+      }
       case "ping":
         return { pong: true, pid: process.pid, uptimeMs: Date.now() - Date.parse(supervisor.startedAt) };
       case "shutdown":

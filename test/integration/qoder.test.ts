@@ -316,3 +316,42 @@ test("Qoder startup reports an honest login error when the CLI is not authentica
   assert.equal(list[0]?.status, "failed");
   assert.match(list[0]?.error ?? "", /qodercli login/);
 });
+
+test("two result records inside the settle window merge into one terminal state", async (t) => {
+  const { client, cwd } = await startQoderHarness(t);
+  const worker = await spawnQoder(client, cwd, "[scenario:multi-result-near] two results quickly");
+  const final = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(final.worker.status, "completed");
+  assert.equal(final.worker.result?.text, "SECOND", "the last result inside the window wins");
+
+  const events = await eventsOf(client, worker.id);
+  assert.equal(
+    events.events.filter((event) => event.type === "run.completed").length,
+    1,
+    "a near-duplicate result must not create a second terminal event",
+  );
+});
+
+test("a second result beyond the quiet window is ignored (documented early-settle limit)", async (t) => {
+  const { client, cwd } = await startQoderHarness(t);
+  const worker = await spawnQoder(client, cwd, "[scenario:multi-result-wide] late second result");
+  const final = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(final.worker.status, "completed");
+  assert.equal(final.worker.result?.text, "FIRST", "the run settles on the first quiet result");
+
+  // The late result arrives after the run already settled: it must not resurrect
+  // the worker or emit a second completion (the risk is documented in README).
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  const after = await client.request<{ worker: { status: string; result?: { text: string } } }>(
+    "status",
+    { workerId: worker.id },
+  );
+  assert.equal(after.worker.status, "completed");
+  assert.equal(after.worker.result?.text, "FIRST");
+  const events = await eventsOf(client, worker.id);
+  assert.equal(
+    events.events.filter((event) => event.type === "run.completed").length,
+    1,
+    "exactly one terminal event even when a late result arrives",
+  );
+});

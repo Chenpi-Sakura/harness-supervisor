@@ -1,0 +1,110 @@
+{
+  "test": "Codex 桌面端 A 级主动唤醒（回合结束后由 HS 投递通知并触发新回合）",
+  "date": "2026-10-22",
+  "timezone": "Asia/Shanghai (UTC+8)",
+  "result": "pass-once",
+  "environment": {
+    "os": "Windows 11",
+    "node": "v24.21.0",
+    "codexCli": "0.161.0",
+    "codexHost": "Codex 桌面（会话内模型显示 GPT-6 Luna）",
+    "harnessSupervisor": {
+      "branch": "feat-261022-async-notify",
+      "commit": "3d28ce7",
+      "version": "0.1.0"
+    },
+    "runtime": "pi",
+    "stateDir": "%TEMP%\\hs-e2e-wake-1022（测试后已删除）",
+    "workDir": "%TEMP%\\hs-e2e-work（测试后已删除）"
+  },
+  "setup": {
+    "daemon": {
+      "pid": 44056,
+      "startedAt": "2026-10-22T11:42:56.412Z",
+      "mode": "外部预启动（daemon --foreground），不在桌面进程树内"
+    },
+    "mcpServer": {
+      "name": "hs_e2e",
+      "command": "node dist/src/mcp.js --state-dir <临时状态目录>",
+      "note": "作为第二个 MCP server 临时加入 ~/.codex/config.toml，测试后已移除"
+    },
+    "wakeTarget": {
+      "channel": "codex-queue",
+      "codexThreadId": "01a16370-4dd1-7200-8e00-0219a0d15735",
+      "updatedAt": "2026-10-22T11:49:13.475Z"
+    }
+  },
+  "task": {
+    "workerId": "w-mvjhawr9-686b5f0f",
+    "workerName": "desktop-wake-test",
+    "prompt": "用 shell 等待 120 秒，然后把文本 PI_WAKE_OK 写入当前目录的 wake-proof.txt，最后用一句话报告完成。不要修改其他文件。",
+    "agentInstruction": "使用 hs_e2e 的 worker_spawn 启动后立即结束回合，不调用 worker_wait/worker_status/worker_events，不 sleep"
+  },
+  "timeline": [
+    { "at": "2026-10-22T11:42:56.412Z", "event": "测试 daemon 启动（stateDir=%TEMP%\\hs-e2e-wake-1022）" },
+    { "at": "2026-10-22T11:47:49Z", "event": "桌面会话创建（thread 01a16370-4dd1-7200-8e00-0219a0d15735）" },
+    { "at": "2026-10-22T11:49:13.475Z", "event": "notify-target 注册为 codex-queue + 该 thread" },
+    { "at": "约 2026-10-22T11:49:50Z", "event": "桌面 agent 调用 worker_spawn，随后立即结束回合（该回合用时 20 秒）" },
+    { "at": "2026-10-22T11:52:09.971Z", "event": "Worker 完成：run.completed（seq 17），Notifier 生成通知 w-mvjhawr9-686b5f0f#17" },
+    { "at": "2026-10-22T11:52:10.951Z", "event": "codex queue 投递成功：delivered，attempts=1，messageId=01a16374-554f-7aa1-81e1-4e4870668685" },
+    { "at": "2026-10-22T11:52:09Z 之后的数秒内", "event": "桌面在同一 thread 自动开始新回合，复述 Worker 完成并用工具读取结果（见 desktop-wake.png）" }
+  ],
+  "notification": {
+    "id": "w-mvjhawr9-686b5f0f#17",
+    "workerId": "w-mvjhawr9-686b5f0f",
+    "runtime": "pi",
+    "seq": 17,
+    "eventType": "run.completed",
+    "kind": "completed",
+    "createdAt": "2026-10-22T11:52:09.971Z",
+    "summary": {
+      "status": "completed",
+      "text": "任务完成。\n\n- 用 shell 等待了 120 秒\n- 在 `/tmp/hs-e2e-work/wake-proof.txt` 写入 `PI_WAKE_OK`\n- 校验：文件存在，内容为 `PI_WAKE_OK`（11 字节）\n- 未修改其他文件（目录内仅此一个文件）"
+    },
+    "delivery": {
+      "state": "delivered",
+      "channel": "codex-queue",
+      "attempts": 1,
+      "lastAttemptAt": "2026-10-22T11:52:10.951Z",
+      "messageId": "01a16374-554f-7aa1-81e1-4e4870668685"
+    }
+  },
+  "counts": {
+    "pending": 0,
+    "delivered": 1,
+    "failed": 0,
+    "unacked": 1
+  },
+  "groundTruth": {
+    "file": "%TEMP%\\hs-e2e-work\\wake-proof.txt",
+    "content": "PI_WAKE_OK",
+    "bytes": 11,
+    "mtimeLocal": "2026-10-22 19:51",
+    "note": "文件内容在删除前用 Get-Content 核对；与 Worker 自述一致"
+  },
+  "observedInDesktop": {
+    "autoNewTurn": true,
+    "evidence": "desktop-wake.png：回合结束后，同一 thread 收到 [harness-supervisor] 通知并以助手消息继续作答，未由用户发送新消息",
+    "firstTurnDuration": "20 秒（界面显示）"
+  },
+  "limitations": [
+    "仅完成一次成功验收，未做重复稳定性测试",
+    "唤醒依赖桌面 Codex 在回合结束后仍加载该 thread；thread 未加载时消息只留在队列",
+    "投递为 at-least-once；delivered 只代表入队成功，不能单独证明被唤醒（本次通过同一 thread 的新回合证明）",
+    "未测量从投递到新回合开始的精确延迟（截图只能给出秒级顺序）",
+    "未验证多通知并发、桌面忙碌/离线、长文本摘要等边界"
+  ],
+  "cleanup": [
+    "停止测试 daemon（pid 44056）",
+    "删除测试状态目录与工作目录",
+    "从 ~/.codex/config.toml 移除 [mcp_servers.hs_e2e]",
+    "终止残留的 hs_e2e MCP server 进程",
+    "确认 ~/.codex/queue_1.sqlite 的 queued_items = 0"
+  ],
+  "provenance": {
+    "summary.json": "根据终端输出与截图整理（原始 stateDir 已按要求删除，无法逐字节还原）",
+    "inbox.json": "终端 `inbox --state all --limit 20 --json` 输出转录",
+    "daemon-log-excerpt.txt": "终端 daemon 输出转录",
+    "desktop-wake.png": "原始桌面截图，未修改"
+  }
+}

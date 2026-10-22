@@ -116,4 +116,29 @@ The added regression coverage:
 - See [qoder-real/result.json](qoder-real/result.json), [qoder-real/events.jsonl](qoder-real/events.jsonl), and [qoder-real/test-run.txt](qoder-real/test-run.txt).
 - Not validated: real steer, cancel, tool calls, or `can_use_tool` approval. The task was intentionally text-only, so no permission prompt was auto-approved.
 
+## 11. Codex wake feasibility probe (2026-10-22)
+
+- Host: Windows, `codex-cli 0.161.0` with the desktop app's `codex app-server` running, model `gpt-6-luna` (low effort, minimal prompts).
+- E1: a thread created by `codex exec` was messaged with `codex queue --thread <id> --message ...` after the process exited. The message was persisted in `~/.codex/queue_1.sqlite` but no turn started and the rollout did not grow for 15+ seconds.
+- E2: a probe app-server loaded a thread and finished a turn. An external `codex queue` call started a new turn automatically ~2.5s later (queue item drained).
+- Conclusion: A-level wake has a supported path (`codex queue` + a host that has the thread loaded); it does not require process injection or DB edits. Desktop GUI verification (thread still loaded after the turn ends) is still pending.
+- See [codex-wake-probe/README.md](codex-wake-probe/README.md), [codex-wake-probe/e1-exec-thread.jsonl.txt](codex-wake-probe/e1-exec-thread.jsonl.txt), and [codex-wake-probe/e2-auto-drain.txt](codex-wake-probe/e2-auto-drain.txt).
+
+## 12. Real Qoder interaction E2E (executed 2026-10-22)
+
+- Host: Windows, `qodercli 1.1.76`, model `DeepSeek-Flash`, isolated daemons (`permission mode auto` and `default`).
+- Command: `QODER_REAL=1 QODER_REAL_MODEL=DeepSeek-Flash npm run e2e:qoder:interactions`.
+- Verified: real Bash tool call returned `HS_QODER_TOOL_OK`; cancel during a run with a queued follow-up ended `cancelled`, process not alive, queued text never executed; `AskUserQuestion` surfaced as `run.needs_input` with options Red/Blue and the answer `Blue` reached the model (`Blue.`).
+- Accepted but ineffective: steer and follow-up produced `run.message_sent` but did not change the answer or start a second turn (`extraTurns=1`); an immediate steer probe confirmed the same result.
+- Not verified: permission allow/deny. Under `permission mode=default` a Bash `echo` call produced no `can_use_tool` request, so the approval path was not exercised end to end.
+- See [qoder-interactions/README.md](qoder-interactions/README.md), [qoder-interactions/summary.json](qoder-interactions/summary.json), [qoder-interactions/steer-immediate.txt](qoder-interactions/steer-immediate.txt), and [qoder-interactions/run.log](qoder-interactions/run.log).
+
+## 13. Codex wake end-to-end (executed 2026-10-22)
+
+- Command: `npm run e2e:codex:wake` (real `codex app-server` session with the real HS MCP server attached, simulated slow worker, isolated state dirs).
+- Timeline: Codex turn 1 ended 07:25:55, worker finished after that, HS delivered one notification via `codex queue` at 07:26:35, and Codex started turn 2 **by itself** at 07:26:43 and answered `Worker w-mvj7vkgn-70fba0e8 completed successfully. Result: FAKE_PI_OK.`
+- Inbox: `delivered=1, pending=0, failed=0`; `turnsStarted=2`.
+- See [codex-wake-e2e/README.md](codex-wake-e2e/README.md), [codex-wake-e2e/result-late-worker.json](codex-wake-e2e/result-late-worker.json) and [codex-wake-e2e/result.json](codex-wake-e2e/result.json).
+- Remaining gap: confirmation that the Codex *desktop window* keeps the thread loaded after a turn ends (the mechanism itself is proven; the session here is an app-server session managed by the probe).
+
 > Note: the original temp state/work directories may be cleaned up; the artifacts relevant to each run are copied into these evidence folders.

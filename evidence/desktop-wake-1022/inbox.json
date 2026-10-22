@@ -1,0 +1,35 @@
+{
+  "notifications": [
+    {
+      "id": "w-mvjhawr9-686b5f0f#17",
+      "workerId": "w-mvjhawr9-686b5f0f",
+      "runtime": "pi",
+      "seq": 17,
+      "eventType": "run.completed",
+      "kind": "completed",
+      "createdAt": "2026-10-22T11:52:09.971Z",
+      "summary": {
+        "status": "completed",
+        "text": "任务完成。\n\n- 用 shell 等待了 120 秒\n- 在 `/tmp/hs-e2e-work/wake-proof.txt` 写入 `PI_WAKE_OK`\n- 校验：文件存在，内容为 `PI_WAKE_OK`（11 字节）\n- 未修改其他文件（目录内仅此一个文件）"
+      },
+      "delivery": {
+        "state": "delivered",
+        "channel": "codex-queue",
+        "attempts": 1,
+        "lastAttemptAt": "2026-10-22T11:52:10.951Z",
+        "messageId": "01a16374-554f-7aa1-81e1-4e4870668685"
+      }
+    }
+  ],
+  "counts": {
+    "pending": 0,
+    "delivered": 1,
+    "failed": 0,
+    "unacked": 1
+  },
+  "target": {
+    "channel": "codex-queue",
+    "codexThreadId": "01a16370-4dd1-7200-8e00-0219a0d15735",
+    "updatedAt": "2026-10-22T11:49:13.475Z"
+  }
+}

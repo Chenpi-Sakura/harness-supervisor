@@ -103,11 +103,17 @@ test("an orphaned live PID is reported honestly and cannot be cancelled", async 
   // with a live detached PID so the control-boundary behavior is testable on
   // platforms where non-detached children die with their parent.
   await daemon.stop();
-  const orphan = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-    stdio: "ignore",
-    detached: true,
-    windowsHide: true,
-  });
+  // The fake orphan carries the worker id in its command line so the process
+  // identity check recognises it as "still this worker's process".
+  const orphan = spawn(
+    process.execPath,
+    ["-e", "setInterval(() => {}, 1000)", worker.id, worker.sessionId ?? "orphan-session"],
+    {
+      stdio: "ignore",
+      detached: true,
+      windowsHide: true,
+    },
+  );
   orphan.unref();
   orphanPid = orphan.pid;
   assert.ok(orphanPid);

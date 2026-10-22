@@ -32,7 +32,9 @@
     "e2e:qoder": "npm run build && node scripts/e2e-qoder.mjs",
     "cli": "node dist/src/cli.js",
     "mcp": "node dist/src/mcp.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "e2e:qoder:interactions": "npm run build && node scripts/e2e-qoder-interactions.mjs",
+    "e2e:codex:wake": "npm run build && node scripts/e2e-codex-wake.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

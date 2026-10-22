@@ -1,0 +1,36 @@
+{
+  "threadId": "01a16280-3cdc-7440-9077-de397104838c",
+  "hsState": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-wake-state-KSJ30Z",
+  "workDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-wake-work-eaPC2P",
+  "workerIds": [
+    "w-mvj7vkgn-70fba0e8:completed"
+  ],
+  "autoWoke": true,
+  "notificationCounts": {
+    "pending": 0,
+    "delivered": 1,
+    "failed": 0,
+    "unacked": 1
+  },
+  "notifications": [
+    {
+      "id": "w-mvj7vkgn-70fba0e8#10",
+      "kind": "completed",
+      "delivery": {
+        "state": "delivered",
+        "channel": "codex-queue",
+        "attempts": 1,
+        "lastAttemptAt": "2026-10-22T07:26:35.755Z",
+        "messageId": "01a16281-2e6a-7102-b39b-c5a5d8f9666a"
+      }
+    }
+  ],
+  "firstTurn": "{\"threadId\":\"01a16280-3cdc-7440-9077-de397104838c\",\"turn\":{\"id\":\"01a16280-4691-7f30-aa08-c760f3c5c1a5\",\"items\":[{\"type\":\"agentMessage\",\"id\":\"msg_047d0a23bb4e225c016ad9ba83245881909d434f0c64ef611a\",\"text\":\"w-mvj7vkgn-70fba0e8\",\"phase\":\"final_answer\",\"memoryCitation\":null,\"delivery\":null,\"questions\":null}],\"itemsView\":\"summary\",\"status\":\"completed\",\"error\":null,\"startedAt\":1792653936,\"completedAt\":1792653955,\"durationMs\":18994}}",
+  "secondTurn": "{\"threadId\":\"01a16280-3cdc-7440-9077-de397104838c\",\"turn\":{\"id\":\"01a16281-4e40-7fd2-a8ce-61fb9e2e1d0a\",\"items\":[{\"type\":\"agentMessage\",\"id\":\"msg_047d0a23bb4e225c016ad9bac43eac81908b42997c4ea78fd8\",\"text\":\"Worker `w-mvj7vkgn-70fba0e8` completed successfully. Result: `FAKE_PI_OK`.\",\"phase\":\"final_answer\",\"memoryCitation\":null,\"delivery\":null,\"questions\":null}],\"itemsView\":\"summary\",\"status\":\"completed\",\"error\":null,\"startedAt\":1792654003,\"completedAt\":1792654020,\"durationMs\":16555}}",
+  "timings": {
+    "firstTurnCompletedAt": "2026-10-22T07:25:55.793Z",
+    "autoWokeObservedAt": "2026-10-22T07:26:44.256Z"
+  },
+  "turnsStarted": 2,
+  "turnCompletions": 2
+}

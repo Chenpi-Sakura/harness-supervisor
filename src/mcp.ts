@@ -56,6 +56,17 @@ function compactWaitEvents(events: WorkerEvent[], includeProgress: boolean) {
   return { events: visible, eventsOmitted: events.length - visible.length };
 }
 
+const RequestIdShape = {
+  requestId: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Optional idempotency key. Retrying the same requestId with identical parameters replays the first result instead of executing again; different parameters return CONFLICT; an interrupted (unfinished) request returns UNCERTAIN and is never re-executed automatically.",
+    ),
+};
+
 const ConfigShape = {
   model: z.string().min(1).max(200).optional().describe("Pi model override"),
   provider: z.string().min(1).max(200).optional().describe("Pi provider override"),
@@ -85,7 +96,7 @@ const server = new McpServer(
   },
   {
     instructions:
-      "Harness Supervisor owns native Pi workers. worker_spawn returns after prompt acceptance, never completion. Use worker_wait without sinceSeq for condition waits (it checks current status and the latest events first), or pass a cursor for strict incremental reads. worker_wait omits noisy run.progress events by default (queue_cleared and tool-error progress are kept); pass includeProgress=true or use worker_events for the full history. worker_wait returns immediately when the worker needs input; answer with worker_answer. MCP is pull-based: there is no background wake-up. Reuse the worker id until terminal; do not spawn a duplicate for the same task.",
+      "Harness Supervisor owns native Pi workers. worker_spawn returns after prompt acceptance, never completion. Use worker_wait without sinceSeq for condition waits (it checks current status and the latest events first), or pass a cursor for strict incremental reads. worker_wait omits noisy run.progress events by default (queue_cleared and tool-error progress are kept); pass includeProgress=true or use worker_events for the full history. worker_wait returns immediately when the worker needs input; answer with worker_answer. MCP tools are pull-based: nothing is pushed into this session. Important lifecycle events (completed/failed/cancelled/needs_input/crashed/detached) are also recorded once in a durable inbox: read them with supervisor_notifications and acknowledge with supervisor_notifications_ack. If a Codex thread id is registered with supervisor_wake_target(channel='codex-queue'), the supervisor enqueues a short notice into that Codex thread with the official `codex queue` CLI when an important event happens; the Codex host only runs it when that thread is loaded. Delivery is at-least-once and does not by itself prove the main agent woke. Reuse the worker id until terminal; do not spawn a duplicate for the same task.",
   },
 );
 
@@ -101,6 +112,7 @@ server.registerTool(
       runtime: z.string().min(1).optional().describe("Runtime adapter name (default: pi; qoder uses the Qoder CLI)"),
       name: z.string().min(1).max(200).optional().describe("Human-readable worker label"),
       ...ConfigShape,
+      ...RequestIdShape,
     },
   },
   async (args) => {
@@ -117,6 +129,7 @@ server.registerTool(
           tools: args.tools,
           thinking: args.thinking,
           maxDurationMs: args.maxDurationMs,
+          requestId: args.requestId,
         },
         { timeoutMs: 90_000 },
       );
@@ -307,11 +320,12 @@ server.registerTool(
   {
     title: "Send a supplementary instruction to a running worker",
     description:
-      "Queue a steering message (delivered before the next model turn) or a follow-up (delivered after the current run) through the native harness. Only valid while the worker is running; if it already reached a terminal state this returns INVALID_STATE, and you should not spawn a replacement automatically. This does not answer extension dialogs; use worker_answer for run.needs_input events.",
+      "Queue a steering message (delivered before the next model turn) or a follow-up (delivered after the current run) through the native harness. Only valid while the worker is running; if it already reached a terminal state this returns INVALID_STATE, and you should not spawn a replacement automatically. This does not answer extension dialogs; use worker_answer for run.needs_input events. Delivery differs per runtime: Pi applies steering/follow-ups natively, while Qoder 1.1.76 accepts the stream message (run.message_sent) without a verified effect on the running turn, so do not assume the model acted on it. Pass requestId to make a retry after a timeout replay the recorded outcome instead of enqueueing the same text twice; if the daemon crashed mid-send the outcome is reported as UNCERTAIN, because the harness may already have received the message.",
     inputSchema: {
       workerId: z.string().min(1),
       message: z.string().min(1),
       mode: z.enum(["steer", "follow-up"]).optional(),
+      ...RequestIdShape,
     },
   },
   async (args) => {
@@ -321,6 +335,7 @@ server.registerTool(
           workerId: args.workerId,
           message: args.message,
           mode: (args.mode ?? "steer") as SendMode,
+          requestId: args.requestId,
         }),
       );
     } catch (error) {
@@ -406,11 +421,12 @@ server.registerTool(
   {
     title: "Resume a persisted native session with a new instruction",
     description:
-      "Start a new harness process attached to an existing Pi session file and send a new instruction. Only works for a terminal worker with a persisted session that still exists and whose old process is not alive. The supervisor verifies the session id and refuses to fake a resume. This does not continue the interrupted in-memory run, replay its tool calls, or automatically retry the old task.",
+      "Start a new harness process attached to an existing Pi session file and send a new instruction. Only works for a terminal worker with a persisted session that still exists and whose old process is not alive. The supervisor verifies the session id and refuses to fake a resume. This does not continue the interrupted in-memory run, replay its tool calls, or automatically retry the old task. Pass requestId so a retry after a timeout cannot start a second process for the same instruction.",
     inputSchema: {
       workerId: z.string().min(1),
       prompt: z.string().min(1),
       ...ConfigShape,
+      ...RequestIdShape,
     },
   },
   async (args) => {
@@ -426,6 +442,7 @@ server.registerTool(
             tools: args.tools,
             thinking: args.thinking,
             maxDurationMs: args.maxDurationMs,
+            requestId: args.requestId,
           },
           { timeoutMs: 90_000 },
         ),
@@ -447,6 +464,84 @@ server.registerTool(
   async () => {
     try {
       return ok(await client.request("info", {}));
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "supervisor_notifications",
+  {
+    title: "Read the durable notification inbox",
+    description:
+      "List durable notifications for important lifecycle events (completed, failed, cancelled, needs_input, crashed, detached). Each notification has a stable id, worker id, runtime, event seq, kind, a short summary and delivery state. Ordinary run.progress events are never included. Use it after a reconnect or daemon restart instead of polling worker status. Acknowledge processed ids with supervisor_notifications_ack so repeated sessions do not reprocess them; unacknowledged records are never dropped.",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      state: z.enum(["pending", "delivered", "failed", "all"]).optional().describe("Delivery state filter (default pending)"),
+      workerId: z.string().min(1).optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    },
+  },
+  async (args) => {
+    try {
+      return ok(
+        await client.request("notifications", {
+          state: args.state ?? "pending",
+          workerId: args.workerId,
+          limit: args.limit ?? 50,
+        }),
+      );
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "supervisor_notifications_ack",
+  {
+    title: "Acknowledge processed notifications",
+    description:
+      "Mark notification ids as processed. Idempotent: acknowledging the same id twice is a no-op. Unknown ids are reported, not treated as errors.",
+    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      ids: z.array(z.string().min(1)).min(1).max(200),
+      by: z.string().min(1).max(100).optional(),
+    },
+  },
+  async (args) => {
+    try {
+      return ok(await client.request("notification_ack", { ids: args.ids, by: args.by ?? "mcp" }));
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "supervisor_wake_target",
+  {
+    title: "Configure optional Codex thread notification delivery",
+    description:
+      "Optionally deliver important notifications into a Codex thread by running the official `codex queue --thread <id> --message <text>` CLI. channel='none' (default) keeps the inbox only. channel='codex-queue' requires a real thread id of a loaded Codex session; the Codex host starts a new turn only while that thread is loaded, so this is a best-effort wake, at-least-once, and never a guarantee. Delivery results are visible in supervisor_notifications (delivery.state/lastError).",
+    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema: {
+      channel: z.enum(["none", "codex-queue"]).optional(),
+      codexThreadId: z.string().min(1).max(200).optional().describe("Codex thread UUID or exact session name"),
+      clearThreadId: z.boolean().optional().describe("Remove the configured thread id"),
+    },
+  },
+  async (args) => {
+    try {
+      if (args.channel === undefined && args.codexThreadId === undefined && args.clearThreadId !== true) {
+        return ok(await client.request("notifications", { state: "pending", limit: 1 }));
+      }
+      const target = await client.request("notification_target", {
+        channel: args.channel,
+        codexThreadId: args.clearThreadId ? null : args.codexThreadId,
+      });
+      return ok(target);
     } catch (error) {
       return fail(error);
     }

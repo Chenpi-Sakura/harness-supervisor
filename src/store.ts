@@ -9,6 +9,7 @@ import { redactText, redactValue, safeText } from "./util/redact.js";
 const MAX_STDERR_FILE_BYTES = 128 * 1024;
 const MAX_STDERR_TAIL_CHARS = 8000;
 const MAX_EVENT_LINE_CHARS = 2 * 1024 * 1024;
+const EVENT_STREAM = "*all-workers*";
 
 export interface StoreInitResult {
   workers: WorkerRecord[];
@@ -145,6 +146,17 @@ export class Store {
     return [...this.records.values()];
   }
 
+  /**
+   * Drop an in-memory worker after its directory was removed by retention.
+   * Only ever used for terminal workers that the caller already validated.
+   */
+  forgetWorker(workerId: string): void {
+    this.records.delete(workerId);
+    this.events.delete(workerId);
+    this.stderrTails.delete(workerId);
+    this.writeErrors.delete(workerId);
+  }
+
   getEvents(workerId: string, sinceSeq: number, limit: number): {
     events: WorkerEvent[];
     nextSeq: number;
@@ -209,6 +221,7 @@ export class Store {
     }).catch((error: unknown) => this.logWriteError(workerId, error));
 
     this.bus.emit(workerId, cloneEvent(event));
+    this.bus.emit(EVENT_STREAM, cloneEvent(event));
     return cloneEvent(event);
   }
 
@@ -227,6 +240,12 @@ export class Store {
   subscribe(workerId: string, listener: (event: WorkerEvent) => void): () => void {
     this.bus.on(workerId, listener);
     return () => this.bus.off(workerId, listener);
+  }
+
+  /** Subscribe to every event of every worker (used by the notification inbox). */
+  onAnyEvent(listener: (event: WorkerEvent) => void): () => void {
+    this.bus.on(EVENT_STREAM, listener);
+    return () => this.bus.off(EVENT_STREAM, listener);
   }
 
   async appendStderr(workerId: string, text: string): Promise<void> {

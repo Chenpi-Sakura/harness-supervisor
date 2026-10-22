@@ -1,0 +1,15 @@
+Real Qoder CLI steer probe (immediate send, isolated daemon, model DeepSeek-Flash, qodercli 1.1.76)
+
+spawned w-mvj75zej-5181c6c1 running
+steer accepted            <- send() returned successfully; run.message_sent recorded
+status completed
+reflected false           <- the final answer did NOT contain IMMEDIATE_STEER_OK
+result: 1. The Nile is traditionally the longest river ... (12-fact list, unchanged by the steer)
+events: worker.starting, run.progress:session_init, worker.started, worker.session,
+        run.started, run.accepted, run.message_sent, run.progress:assistant_message,
+        run.progress:usage, run.progress:turn_complete, run.completed, worker.exited
+
+Interpretation: the supervisor writes a stream-json user message with priority="next"
+(the CLI binary itself contains the same priority values), and the CLI accepts it, but the
+running turn does not incorporate it. `run.message_sent` therefore means "accepted by the
+Qoder stream, not rejected", NOT "the model saw it".

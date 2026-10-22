@@ -204,13 +204,80 @@ export interface SupervisorInfo {
   uptimeMs: number;
   limits: SupervisorLimits;
   wake: {
-    proactive: false;
+    /**
+     * True only when a delivery channel is configured. It means the supervisor
+     * will attempt to deliver, not that the host actually woke the main agent.
+     */
+    proactive: boolean;
+    channel: "none" | "codex-queue";
+    codexThreadId?: string;
     note: string;
   };
   runtimes: RuntimeCapabilities[];
 }
 
 export type SendMode = "steer" | "follow-up";
+
+/**
+ * Important, low-frequency events that are recorded in the notification inbox.
+ * Ordinary progress is intentionally excluded.
+ */
+export type NotificationKind =
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "crashed"
+  | "needs_input"
+  | "detached";
+
+export type NotificationDeliveryState = "pending" | "delivered" | "failed";
+
+export interface NotificationRecord {
+  /** Stable identity derived from worker + event seq, so one event yields one record. */
+  id: string;
+  workerId: string;
+  runtime: string;
+  seq: number;
+  eventType: string;
+  kind: NotificationKind;
+  createdAt: string;
+  summary: {
+    status?: WorkerStatus;
+    text?: string;
+    requestId?: string;
+    method?: string;
+    options?: string[];
+  };
+  delivery: {
+    state: NotificationDeliveryState;
+    channel: string;
+    attempts: number;
+    lastAttemptAt?: string;
+    lastError?: string;
+    messageId?: string;
+  };
+  ackAt?: string;
+  ackBy?: string;
+}
+
+export interface NotificationCounts {
+  pending: number;
+  delivered: number;
+  failed: number;
+  unacked: number;
+}
+
+export interface NotificationsResult {
+  notifications: NotificationRecord[];
+  counts: NotificationCounts;
+  target: NotifyTarget;
+}
+
+export interface NotifyTarget {
+  channel: "none" | "codex-queue";
+  codexThreadId?: string;
+  updatedAt?: string;
+}
 
 export type ExtensionUiResponse =
   | { value: string }

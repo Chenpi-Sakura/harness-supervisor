@@ -1,0 +1,10 @@
+# npm test (build + unit + integration + gated e2e) - 2026-10-22, branch feat-261022-async-notify (post-audit)
+✔ stderr tail keeps the newest content (11.421ms)
+ℹ tests 106
+ℹ suites 0
+ℹ pass 104
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 2
+ℹ todo 0
+ℹ duration_ms 220449.9555

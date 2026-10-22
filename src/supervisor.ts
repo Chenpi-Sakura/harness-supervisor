@@ -2,6 +2,14 @@ import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { SupervisorError, errorMessage } from "./errors.js";
+import {
+  IdempotencyStore,
+  hashParams,
+  validateIdempotencyKey,
+  type IdempotencyRecord,
+} from "./idempotency.js";
+import { Notifier, notificationId, notificationKindFor } from "./notify.js";
+import { Retention, type PruneOptions, type PruneResult } from "./retention.js";
 import { Store } from "./store.js";
 import {
   ACTIVE_STATUSES,
@@ -13,6 +21,9 @@ import {
   type HarnessExit,
   type HarnessSession,
   type HarnessSpawnSpec,
+  type NotificationsResult,
+  type NotificationDeliveryState,
+  type NotifyTarget,
   type PendingInput,
   type ReadEventsResult,
   type ResumeInput,
@@ -30,6 +41,7 @@ import {
 } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
 import { clampInt, Deferred, isPidAlive, newWorkerId, sleep, withTimeout } from "./util/async.js";
+import { inspectProcess } from "./util/process.js";
 import type { Logger } from "./util/logger.js";
 import { redactText, safeText, truncateText } from "./util/redact.js";
 import { VERSION, TOOL_NAME } from "./version.js";
@@ -91,6 +103,11 @@ export interface SupervisorOptions {
   stateDir: string;
   startedAt?: string;
   limits?: Partial<SupervisorLimits>;
+  notify?: {
+    channel?: "none" | "codex-queue";
+    codexThreadId?: string;
+    codexBin?: string;
+  };
 }
 
 export class Supervisor {
@@ -99,6 +116,9 @@ export class Supervisor {
   readonly stateDir: string;
   readonly startedAt: string;
   readonly limits: SupervisorLimits;
+  readonly notifier: Notifier;
+  readonly idempotency: IdempotencyStore;
+  readonly retention: Retention;
   private readonly adapters: Map<string, HarnessAdapter>;
   private readonly logger: Logger;
   private readonly runtimes = new Map<string, Runtime>();
@@ -115,29 +135,63 @@ export class Supervisor {
     this.stateDir = options.stateDir;
     this.startedAt = options.startedAt ?? new Date().toISOString();
     this.limits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) };
+    this.idempotency = new IdempotencyStore(this.stateDir, this.logger);
+    this.notifier = new Notifier({
+      stateDir: this.stateDir,
+      logger: this.logger,
+      channel: options.notify?.channel ?? "none",
+      codexThreadId: options.notify?.codexThreadId,
+      codexBin: options.notify?.codexBin,
+    });
+    this.retention = new Retention({
+      store: this.store,
+      notifier: this.notifier,
+      logger: this.logger,
+      sessionsDir: this.store.sessionsDir,
+    });
   }
 
   async init(): Promise<void> {
     if (this.initialized) return;
+    await this.notifier.init();
+    await this.idempotency.init();
+    this.store.onAnyEvent((event) => {
+      const record = this.store.getWorker(event.workerId);
+      if (!record) return;
+      this.notifier.ingest(record, event);
+    });
     const { workers, warnings } = await this.store.init();
     const now = new Date().toISOString();
     for (const record of workers) {
       if (!isTerminal(record.status)) {
         const previousStatus = record.status;
-        const pidAlive = isPidAlive(record.pid);
-        const status: WorkerStatus = pidAlive ? "orphaned" : "interrupted";
+        const identity = await inspectProcess(record.pid, [
+          record.id,
+          record.sessionId,
+          record.sessionFile,
+        ]);
+        const pidAlive = identity.alive;
+        // A live PID is only treated as our harness when its command line carries
+        // one of our worker/session tokens. Otherwise it is a reused PID and the
+        // original process is gone.
+        const pidOurs = identity.verified !== false;
+        const orphaned = pidAlive && pidOurs;
+        const status: WorkerStatus = orphaned ? "orphaned" : "interrupted";
         record.status = status;
-        record.statusReason = pidAlive
+        record.statusReason = orphaned
           ? "Supervisor restarted and no longer owns the live harness process"
-          : "Supervisor restarted after the harness process was lost; outcome unknown";
+          : pidAlive
+            ? "The recorded PID is alive but its command line does not match this worker (PID reused); the original process is gone and the outcome is unknown"
+            : "Supervisor restarted after the harness process was lost; outcome unknown";
         record.endedAt = now;
         record.updatedAt = now;
         this.store.appendEvent(
           record.id,
-          pidAlive ? "worker.orphaned" : "worker.interrupted",
+          orphaned ? "worker.orphaned" : "worker.interrupted",
           {
             pid: record.pid,
             pidAlive,
+            pidVerified: identity.verified,
             previousStatus,
             note: "Not resumed automatically. Resume is an explicit operation using the persisted session file.",
           },
@@ -151,10 +205,89 @@ export class Supervisor {
       }
     }
     this.initialized = true;
+    await this.reconcileNotifications();
     this.logger.info("Supervisor initialized", {
       workers: workers.length,
       warnings: warnings.length,
     });
+  }
+
+  /**
+   * Rebuild inbox records for important events that were persisted before a
+   * crash (event written, notification not yet written). Ids are derived from
+   * (worker, seq), so this can never duplicate a notification.
+   */
+  private async reconcileNotifications(): Promise<void> {
+    let created = 0;
+    for (const record of this.store.listWorkers()) {
+      let cursor = 0;
+      for (;;) {
+        const page = this.store.getEvents(record.id, cursor, 500);
+        for (const event of page.events) {
+          if (notificationKindFor(event.type) && !this.notifier.has(notificationId(record.id, event.seq))) {
+            created += 1;
+          }
+          this.notifier.ingest(record, event);
+        }
+        if (!page.hasMore) break;
+        cursor = page.nextSeq;
+      }
+    }
+    if (created > 0) {
+      this.logger.info("Reconciled notification inbox from persisted events", { created });
+    }
+    await this.notifier.flush();
+    if (this.notifier.getTarget().channel !== "none") {
+      void this.notifier.retryPending(["pending"]).catch((error: unknown) => {
+        this.logger.warn("Failed to retry pending notifications", {
+          error: errorMessage(error),
+        });
+      });
+    }
+  }
+
+  notifications(filter: {
+    state?: "pending" | "delivered" | "failed" | "all";
+    workerId?: string;
+    limit?: number;
+  } = {}): NotificationsResult {
+    this.assertInitialized();
+    return {
+      notifications: this.notifier.list(filter),
+      counts: this.notifier.counts(),
+      target: this.notifier.getTarget(),
+    };
+  }
+
+  async ackNotifications(ids: string[], by?: string): Promise<{ acked: number; missing: string[] }> {
+    this.assertInitialized();
+    return this.notifier.ack(ids, by);
+  }
+
+  async setNotifyTarget(input: {
+    channel?: "none" | "codex-queue";
+    codexThreadId?: string | null;
+  }): Promise<NotifyTarget> {
+    this.assertInitialized();
+    return this.notifier.setTarget(input);
+  }
+
+  async retryNotifications(states?: NotificationDeliveryState[]): Promise<number> {
+    this.assertInitialized();
+    return this.notifier.retryPending(states);
+  }
+
+  /**
+   * Opt-in maintenance: drop old terminal workers, compact metadata logs.
+   * Never removes an active worker or a worker with an unacknowledged notification.
+   */
+  async prune(options: PruneOptions = {}): Promise<PruneResult & { compacted: unknown }> {
+    this.assertInitialized();
+    const result = await this.retention.prune(options);
+    if (options.dryRun) return { ...result, compacted: null };
+    const notifications = await this.notifier.compact({ olderThanDays: 30 });
+    const idempotency = await this.idempotency.compact();
+    return { ...result, compacted: { notifications, idempotency } };
   }
 
   info(): SupervisorInfo {
@@ -168,21 +301,107 @@ export class Supervisor {
       uptimeMs: Date.now() - Date.parse(this.startedAt),
       limits: this.limits,
       wake: {
-        proactive: false,
-        note: "Events are persisted and retrievable. MCP tools are pull-based: the host must call worker_wait or worker_events to observe them. The supervisor does not claim the ability to wake the main agent in the background.",
+        proactive: this.notifier.getTarget().channel !== "none",
+        channel: this.notifier.getTarget().channel,
+        codexThreadId: this.notifier.getTarget().codexThreadId,
+        note:
+          "MCP tools are pull-based: events are persisted and the host must call worker_wait/worker_events/supervisor_notifications to observe them. Important lifecycle events (completed, failed, cancelled, needs_input, crashed, detached) are additionally recorded once in a durable notification inbox with stable ids. With channel=codex-queue the supervisor also enqueues a short message into the configured Codex thread through the official `codex queue` CLI. Whether the Codex host starts a new turn depends on the host having that thread loaded; delivery is at-least-once and never proves the main agent woke.",
       },
       runtimes: [...this.adapters.values()].map((adapter) => adapter.capabilities),
     };
   }
 
-  async spawn(input: SpawnInput): Promise<WorkerSummary> {
+  async spawn(input: SpawnInput, options: { requestId?: string } = {}): Promise<WorkerSummary> {
     this.assertInitialized();
+    this.assertAcceptingWork();
+    const requestId = validateIdempotencyKey(options.requestId);
+    if (!requestId) return this.spawnOnce(input);
+    return this.withIdempotency("spawn", requestId, input, (workerId) =>
+      this.spawnOnce(input, workerId),
+    );
+  }
+
+  private async spawnOnce(input: SpawnInput, workerIdOut?: { value?: string }): Promise<WorkerSummary> {
     this.assertAcceptingWork();
     this.reserveSpawnSlot();
     try {
-      return await this.spawnInternal(input);
+      const summary = await this.spawnInternal(input);
+      if (workerIdOut) workerIdOut.value = summary.id;
+      return summary;
     } finally {
       this.pendingSpawns -= 1;
+    }
+  }
+
+  /**
+   * Run a side-effecting operation under an optional client request id.
+   * The record is written before execution starts, so a daemon crash leaves an
+   * explicit `in_progress` marker that is reported as UNCERTAIN instead of being
+   * silently re-executed.
+   */
+  private async withIdempotency(
+    method: "spawn" | "resume" | "send",
+    requestId: string,
+    params: unknown,
+    run: (workerIdOut: { value?: string }) => Promise<WorkerSummary>,
+  ): Promise<WorkerSummary> {
+    const hash = hashParams({ method, params });
+    const begin = this.idempotency.begin(method, requestId, hash);
+    if (begin.kind === "conflict") {
+      throw new SupervisorError(
+        "CONFLICT",
+        `requestId ${requestId} was already used for ${method} with different parameters`,
+        { requestId, method, firstSeenAt: begin.record.createdAt },
+      );
+    }
+    if (begin.kind === "running") {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        `requestId ${requestId} is still being processed for ${method}; nothing was executed again`,
+        { requestId, method },
+      );
+    }
+    if (begin.kind === "uncertain") {
+      throw new SupervisorError(
+        "UNCERTAIN",
+        `The daemon restarted while requestId ${requestId} (${method}) was being processed. The operation may or may not have executed; inspect workers before retrying with a new requestId.`,
+        { requestId, method, workerId: begin.record.workerId },
+      );
+    }
+    if (begin.kind === "replay") {
+      const record = begin.record;
+      const workerId = record.workerId;
+      if (record.state === "failed" && record.error) {
+        // The original attempt threw; replaying must not look like a success.
+        throw new SupervisorError(
+          record.error.code as SupervisorError["code"],
+          `Replayed result for requestId ${requestId}: ${record.error.message}`,
+          { requestId, method, replayed: true, workerId },
+        );
+      }
+      const current = workerId ? this.store.getWorker(workerId) : undefined;
+      if (current) return this.summary(current);
+      return record.result as WorkerSummary;
+    }
+
+    const workerIdOut: { value?: string } = {};
+    try {
+      const summary = await run(workerIdOut);
+      await this.idempotency.complete(method, requestId, summary, summary.id);
+      return summary;
+    } catch (error) {
+      const workerId =
+        workerIdOut.value ??
+        (error instanceof SupervisorError && typeof error.details?.workerId === "string"
+          ? (error.details.workerId as string)
+          : undefined);
+      if (isPreSideEffectError(error) && !workerId) {
+        // Nothing was created, so the request id stays reusable.
+        await this.idempotency.release(method, requestId);
+      } else {
+        await this.idempotency.fail(method, requestId, error, workerId);
+      }
+      throw error;
     }
   }
 
@@ -290,8 +509,25 @@ export class Supervisor {
     }
   }
 
-  async resume(workerId: string, input: ResumeInput): Promise<WorkerSummary> {
+  async resume(
+    workerId: string,
+    input: ResumeInput,
+    options: { requestId?: string } = {},
+  ): Promise<WorkerSummary> {
     this.assertInitialized();
+    this.assertAcceptingWork();
+    const requestId = validateIdempotencyKey(options.requestId);
+    if (!requestId) return this.resumeOnce(workerId, input);
+    return this.withIdempotency("resume", requestId, { workerId, input }, (workerIdOut) =>
+      this.resumeOnce(workerId, input, workerIdOut),
+    );
+  }
+
+  private async resumeOnce(
+    workerId: string,
+    input: ResumeInput,
+    workerIdOut?: { value?: string },
+  ): Promise<WorkerSummary> {
     this.assertAcceptingWork();
     const record = this.requireWorker(workerId);
     if (this.resuming.has(workerId)) {
@@ -301,6 +537,7 @@ export class Supervisor {
       });
     }
     this.resuming.add(workerId);
+    if (workerIdOut) workerIdOut.value = workerId;
     try {
       return await this.resumeInternal(workerId, input, record);
     } finally {
@@ -359,11 +596,19 @@ export class Supervisor {
       );
     }
     if (isPidAlive(record.pid)) {
-      throw new SupervisorError(
-        "INVALID_STATE",
-        "The previous harness process still appears to be alive. Refusing concurrent resume of the same session.",
-        { pid: record.pid },
-      );
+      const identity = await inspectProcess(record.pid, [
+        record.id,
+        record.sessionId,
+        record.sessionFile,
+      ]);
+      // A reused PID must not block resuming our own persisted session.
+      if (identity.alive && identity.verified !== false) {
+        throw new SupervisorError(
+          "INVALID_STATE",
+          "The previous harness process still appears to be alive. Refusing concurrent resume of the same session.",
+          { pid: record.pid, pidVerified: identity.verified },
+        );
+      }
     }
     let expectedSessionId: string | undefined = record.sessionId;
     if (!expectedSessionId) {
@@ -578,6 +823,20 @@ export class Supervisor {
     workerId: string,
     message: string,
     mode: SendMode = "steer",
+    options: { requestId?: string } = {},
+  ): Promise<WorkerSummary> {
+    this.assertInitialized();
+    const requestId = validateIdempotencyKey(options.requestId);
+    if (!requestId) return this.sendOnce(workerId, message, mode);
+    return this.withIdempotency("send", requestId, { workerId, message, mode }, () =>
+      this.sendOnce(workerId, message, mode),
+    );
+  }
+
+  private async sendOnce(
+    workerId: string,
+    message: string,
+    mode: SendMode = "steer",
   ): Promise<WorkerSummary> {
     this.assertInitialized();
     const record = this.requireWorker(workerId);
@@ -712,11 +971,30 @@ export class Supervisor {
     const existingRuntime = this.runtimes.get(workerId);
     if (isTerminal(record.status)) {
       if (record.status === "orphaned" && isPidAlive(record.pid)) {
-        throw new SupervisorError(
-          "UNSUPPORTED",
-          "The supervisor no longer owns this live process after a restart. It cannot be cancelled through the supervisor; verify and terminate the recorded PID out-of-band.",
-          { pid: record.pid, workerId },
-        );
+        const identity = await inspectProcess(record.pid, [
+          record.id,
+          record.sessionId,
+          record.sessionFile,
+        ]);
+        if (identity.alive && identity.verified !== false) {
+          throw new SupervisorError(
+            "UNSUPPORTED",
+            "The supervisor no longer owns this live process after a restart. It cannot be cancelled through the supervisor; verify and terminate the recorded PID out-of-band.",
+            { pid: record.pid, workerId, pidVerified: identity.verified },
+          );
+        }
+        if (identity.verified === false) {
+          // The PID now belongs to an unrelated process: report that honestly
+          // instead of pretending the worker was terminated.
+          record.statusReason =
+            "The recorded PID belongs to a different process (PID reused); there is no live harness process to cancel.";
+          this.store.appendEvent(workerId, "run.progress", {
+            kind: "pid_identity_mismatch",
+            pid: record.pid,
+            note: "Recorded PID is alive but not this worker; nothing was terminated.",
+          });
+          await this.store.saveWorker(record);
+        }
       }
       if (existingRuntime) {
         await this.waitForRuntimeTerminal(
@@ -797,6 +1075,8 @@ export class Supervisor {
         await this.forceTerminalCancelled(runtime);
       }
     }
+    this.notifier.stop();
+    await this.notifier.flush().catch(() => undefined);
     await this.store.flush().catch((error: unknown) => {
       this.logger.error("Failed to flush persistence during shutdown", {
         error: errorMessage(error),
@@ -1633,6 +1913,21 @@ function validateUiResponse(pending: PendingInput, response: ExtensionUiResponse
       options: pending.options,
     });
   }
+}
+
+/**
+ * Errors that happen before any worker or message was created. For these the
+ * request id stays reusable instead of pinning the caller to a transient failure.
+ */
+function isPreSideEffectError(error: unknown): boolean {
+  if (!(error instanceof SupervisorError)) return false;
+  if (typeof error.details?.workerId === "string") return false;
+  return (
+    error.code === "BAD_REQUEST" ||
+    error.code === "UNSUPPORTED" ||
+    error.code === "INVALID_STATE" ||
+    error.code === "LIMIT_EXCEEDED"
+  );
 }
 
 function classifyErrorCode(

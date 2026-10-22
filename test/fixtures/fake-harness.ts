@@ -156,6 +156,10 @@ function respond(id, command, success, data, error) {
 }
 
 function finalText(scenario, prompt) {
+  if (process.env.FAKE_PI_LONG_TEXT === "1") {
+    // ~200 KB final answer: exercises result truncation end to end.
+    return `FAKE_PI_LONG ${"x".repeat(200 * 1024)}`;
+  }
   const parts = [];
   if (resumed) parts.push("RESUMED");
   if (scenario === "no-text") return "";
@@ -223,6 +227,26 @@ async function runPrompt(prompt) {
     durationMs: step,
   });
 
+  if (scenario === "busy") {
+    // Stress the event log with many progress events (no notification must be created).
+    for (let index = 0; index < 150; index += 1) {
+      emit({
+        type: "tool_execution_start",
+        toolCallId: `call_busy_${index}`,
+        toolName: "bash",
+        args: { command: `echo busy-${index}` },
+      });
+      emit({
+        type: "tool_execution_end",
+        toolCallId: `call_busy_${index}`,
+        toolName: "bash",
+        result: { content: [{ type: "text", text: `busy-${index}` }], details: {} },
+        isError: false,
+        durationMs: 0,
+      });
+    }
+  }
+
   if (scenario === "error") {
     const message = assistantMessage("", "error", "FAKE_PROVIDER_ERROR");
     appendSession(message);
@@ -281,6 +305,11 @@ function handleLine(line) {
   if (Date.now() < acceptAfter) {
     setTimeout(() => handleLine(line), Math.max(1, acceptAfter - Date.now()));
     return;
+  }
+  if (process.env.FAKE_PI_START_FAIL === "1") {
+    // Startup failure before the prompt is accepted (used to test idempotency).
+    process.stderr.write("fake-pi: simulated startup failure\n");
+    process.exit(9);
   }
   let record;
   try {

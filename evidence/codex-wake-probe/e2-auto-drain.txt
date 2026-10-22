@@ -1,0 +1,10 @@
+2026-10-22T06:13:03.596Z NOTIF thread/status/changed {"threadId":"01a1623d-d0a4-7493-b44d-5d1143efb6fe","status":{"type":"active","activeFlags":[]}}
+2026-10-22T06:13:03.597Z NOTIF turn/started {"threadId":"01a1623d-d0a4-7493-b44d-5d1143efb6fe","turn":{"id":"01a1623d-d9f9-7511-86d7-cd8730bd66cd","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":1792649583,"completedAt":null,"durationMs":null}}
+2026-10-22T06:13:07.630Z NOTIF thread/status/changed {"threadId":"01a1623d-d0a4-7493-b44d-5d1143efb6fe","status":{"type":"idle"}}
+2026-10-22T06:13:07.632Z NOTIF turn/completed {"threadId":"01a1623d-d0a4-7493-b44d-5d1143efb6fe","turn":{"id":"01a1623d-d9f9-7511-86d7-cd8730bd66cd","items":[{"type":"agentMessage","id":"msg_06463dd343d052ab016ad9a973267081938da8e5badcb5382c","text":"PROBE-SEED","phase":"final_answer","memoryCitation":null,"delivery":n
+2026-10-22T06:13:07.786Z SEED_DONE notifications=26
+2026-10-22T06:13:08.204Z QUEUE_EXIT 0 out=Queued message 01a1623d-ed68-7bf3-b4ef-95a6359e1577 for thread 01a1623d-d0a4-7493-b44d-5d1143efb6fe. err=
+2026-10-22T06:13:10.752Z NOTIF thread/status/changed {"threadId":"01a1623d-d0a4-7493-b44d-5d1143efb6fe","status":{"type":"active","activeFlags":[]}}
+2026-10-22T06:13:10.753Z NOTIF turn/started {"threadId":"01a1623d-d0a4-7493-b44d-5d1143efb6fe","turn":{"id":"01a1623d-f7a3-7421-be15-7a83b1aa46f8","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":1792649590,"completedAt":null,"durationMs":null}}
+2026-10-22T06:13:10.754Z NEW_TURN {"threadId":"01a1623d-d0a4-7493-b44d-5d1143efb6fe","turn":{"id":"01a1623d-f7a3-7421-be15-7a83b1aa46f8","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":1792649590,"completedAt":null,"durationMs":null}}
+2026-10-22T06:13:10.755Z RESULT AUTO_DRAIN after 0 turn notifications

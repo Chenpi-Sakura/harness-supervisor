@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"01a16239-2158-7242-a064-e979ff702903"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Under-development features enabled: respect_system_proxy. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in C:\\Users\\Lenovo\\.codex\\config.toml."}}
+{"type":"turn.started"}

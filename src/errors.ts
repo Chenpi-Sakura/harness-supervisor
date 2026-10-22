@@ -8,6 +8,8 @@ export type SupervisorErrorCode =
   | "HARNESS_TIMEOUT"
   | "TIMEOUT"
   | "LIMIT_EXCEEDED"
+  | "CONFLICT"
+  | "UNCERTAIN"
   | "INTERNAL";
 
 export class SupervisorError extends Error {

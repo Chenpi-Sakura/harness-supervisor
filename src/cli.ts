@@ -34,16 +34,30 @@ Daemon:
 Workers:
   spawn --prompt <text> [--cwd <dir>] [--name <n>] [--model <m>] [--provider <p>]
         [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder]
-        [--extra-args '["--no-extensions"]'] [--wait] [--json]
+        [--extra-args '["--no-extensions"]'] [--request-id <key>] [--wait] [--json]
   list [--status running,failed] [--limit 50] [--json]
   status <workerId> [--json]
   events <workerId> [--since <seq>] [--limit 100] [--json]
   wait <workerId> [--since <seq>] [--timeout-ms 30000] [--until terminal|event]
        [--types run.completed,run.failed] [--json]
-  send <workerId> --message <text> [--mode steer|follow-up]
+  send <workerId> --message <text> [--mode steer|follow-up] [--request-id <key>]
   answer <workerId> --request-id <id> (--value <v> | --confirmed | --denied | --cancelled)
   cancel <workerId> [--timeout-ms 10000]
   resume <workerId> --prompt <text> [--model <m>] [--provider <p>] [--json]
+
+Notifications:
+  inbox [--state pending|delivered|failed|all] [--worker <id>] [--limit 50] [--json]
+  ack --ids <id1,id2> [--by <name>]
+  notify-target [--channel none|codex-queue] [--thread <codexThreadId>] [--json]
+        Register the Codex thread that should receive important events through the
+        official "codex queue" CLI. The Codex host only runs the message while that
+        thread is loaded; delivery is at-least-once and is not a wake guarantee.
+  retry-notifications [--states pending,failed]
+
+Maintenance:
+  prune [--older-than-days 7] [--keep 20] [--dry-run] [--include-sessions] [--json]
+        Remove old terminal workers and compact metadata logs. Active workers and
+        workers with unacknowledged notifications are never removed.
 
 Global:
   --state-dir <dir>          Supervisor state directory
@@ -245,6 +259,17 @@ async function main(): Promise<void> {
         denied: { type: "boolean" },
         cancelled: { type: "boolean" },
         foreground: { type: "boolean" },
+        ids: { type: "string" },
+        by: { type: "string" },
+        channel: { type: "string" },
+        thread: { type: "string" },
+        "older-than-days": { type: "string" },
+        keep: { type: "string" },
+        "dry-run": { type: "boolean" },
+        "include-sessions": { type: "boolean" },
+        state: { type: "string" },
+        states: { type: "string" },
+        worker: { type: "string" },
       },
     });
   } catch (error) {
@@ -329,6 +354,7 @@ async function main(): Promise<void> {
             thinking: stringArg(values.thinking, "thinking"),
             maxDurationMs: intArg(values["max-duration-ms"], "max-duration-ms"),
             extraArgs: parseExtraArgs(values["extra-args"]),
+            requestId: stringArg(values["request-id"], "request-id"),
           },
           { timeoutMs: 90_000 },
         );
@@ -470,7 +496,12 @@ async function main(): Promise<void> {
         if (mode !== "steer" && mode !== "follow-up") {
           throw new SupervisorError("BAD_REQUEST", "--mode must be steer or follow-up");
         }
-        const result = await client.request<WorkerSummary>("send", { workerId, message, mode });
+        const result = await client.request<WorkerSummary>("send", {
+          workerId,
+          message,
+          mode,
+          requestId: stringArg(values["request-id"], "request-id"),
+        });
         if (json) printJson(result);
         else process.stdout.write(`Sent ${mode} to ${workerId}; status=${result.status}.\n`);
         return;
@@ -538,11 +569,141 @@ async function main(): Promise<void> {
             thinking: stringArg(values.thinking, "thinking"),
             maxDurationMs: intArg(values["max-duration-ms"], "max-duration-ms"),
             extraArgs: parseExtraArgs(values["extra-args"]),
+            requestId: stringArg(values["request-id"], "request-id"),
           },
           { timeoutMs: 90_000 },
         );
         if (json) printJson(result);
         else printWorker(result);
+        return;
+      }
+      case "inbox": {
+        const state = (stringArg(values.state, "state") ?? "pending") as
+          | "pending"
+          | "delivered"
+          | "failed"
+          | "all";
+        if (!["pending", "delivered", "failed", "all"].includes(state)) {
+          throw new SupervisorError("BAD_REQUEST", "--state must be pending, delivered, failed or all");
+        }
+        const result = await client.request("notifications", {
+          state,
+          workerId: stringArg(values.worker, "worker"),
+          limit: intArg(values.limit, "limit", 50),
+        });
+        if (json) printJson(result);
+        else {
+          const typed = result as {
+            notifications: Array<{
+              id: string;
+              workerId: string;
+              kind: string;
+              createdAt: string;
+              delivery: { state: string };
+              ackAt?: string;
+              summary: { text?: string };
+            }>;
+            counts: { pending: number; delivered: number; failed: number; unacked: number };
+            target: { channel: string; codexThreadId?: string };
+          };
+          if (typed.notifications.length === 0) {
+            process.stdout.write("No notifications.\n");
+          } else {
+            for (const item of typed.notifications) {
+              const ack = item.ackAt ? " acked" : "";
+              process.stdout.write(
+                `${item.id}  ${item.kind}  delivery=${item.delivery.state}${ack}  ${item.createdAt}\n  ${(item.summary.text ?? "").slice(0, 300)}\n`,
+              );
+            }
+          }
+          process.stdout.write(
+            `\ncounts: pending=${typed.counts.pending} delivered=${typed.counts.delivered} failed=${typed.counts.failed} unacked=${typed.counts.unacked}\n` +
+              `target: channel=${typed.target.channel}${typed.target.codexThreadId ? ` thread=${typed.target.codexThreadId}` : ""}\n`,
+          );
+        }
+        return;
+      }
+      case "ack": {
+        const ids = (stringArg(values.ids, "ids") ?? positionals.slice(1).join(","))
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+        if (ids.length === 0) throw new SupervisorError("BAD_REQUEST", "--ids is required");
+        const result = await client.request("notification_ack", {
+          ids,
+          by: stringArg(values.by, "by") ?? "cli",
+        });
+        if (json) printJson(result);
+        else {
+          const typed = result as { acked: number; missing: string[] };
+          process.stdout.write(`acked=${typed.acked}`);
+          if (typed.missing.length > 0) process.stdout.write(` missing=${typed.missing.join(",")}`);
+          process.stdout.write("\n");
+        }
+        return;
+      }
+      case "notify-target": {
+        const channel = stringArg(values.channel, "channel");
+        if (channel !== undefined && channel !== "none" && channel !== "codex-queue") {
+          throw new SupervisorError("BAD_REQUEST", "--channel must be none or codex-queue");
+        }
+        const thread = stringArg(values.thread, "thread");
+        if (channel === undefined && thread === undefined) {
+          const current = await client.request("notifications", { state: "pending", limit: 1 });
+          printJson((current as { target: unknown }).target);
+          return;
+        }
+        const target = await client.request("notification_target", {
+          channel,
+          codexThreadId: thread,
+        });
+        if (json) printJson(target);
+        else {
+          const typed = target as { channel: string; codexThreadId?: string };
+          process.stdout.write(
+            `notification target: channel=${typed.channel}${typed.codexThreadId ? ` thread=${typed.codexThreadId}` : ""}\n`,
+          );
+        }
+        return;
+      }
+      case "prune": {
+        const result = await client.request(
+          "prune",
+          {
+            olderThanDays: intArg(values["older-than-days"], "older-than-days", 7),
+            keep: intArg(values.keep, "keep", 0),
+            dryRun: boolArg(values["dry-run"]),
+            includeSessions: boolArg(values["include-sessions"]),
+          },
+          { timeoutMs: 120_000 },
+        );
+        if (json) printJson(result);
+        else {
+          const typed = result as {
+            dryRun: boolean;
+            removed: string[];
+            skipped: Array<{ workerId: string; reason: string }>;
+            freedBytes: number;
+            compacted: unknown;
+          };
+          process.stdout.write(
+            `${typed.dryRun ? "would remove" : "removed"}=${typed.removed.length} skipped=${typed.skipped.length} freedBytes=${typed.freedBytes}\n`,
+          );
+          for (const id of typed.removed) process.stdout.write(`  - ${id}\n`);
+          if (typed.compacted) {
+            process.stdout.write(`compacted: ${JSON.stringify(typed.compacted)}\n`);
+          }
+        }
+        return;
+      }
+      case "retry-notifications": {
+        const states = stringArg(values.states, "states")
+          ?.split(",")
+          .map((item) => item.trim())
+          .filter(Boolean) as Array<"pending" | "delivered" | "failed"> | undefined;
+        const result = await client.request("notification_retry", { states });
+        if (json) printJson(result);
+        else process.stdout.write(`retried=${(result as { retried: number }).retried}\n`);
         return;
       }
       default:

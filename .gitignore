@@ -7,3 +7,4 @@ probe-*
 debug-*
 *.tmp
 .DS_Store
+.probe/

@@ -1,0 +1,23 @@
+{
+  "pi": {
+    "workerId": "w-mviyvtgt-89e1f44b",
+    "sessionId": "01a1619a-031a-7248-8ea0-e39196644f51",
+    "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mviyvtgt-89e1f44b\\2026-10-22T03-14-05-723Z_01a1619a-031a-7248-8ea0-e39196644f51.jsonl",
+    "bytes": 41258,
+    "jsonlRecords": 21,
+    "recordTypes": {
+      "session": 1,
+      "session_info": 1,
+      "model_change": 1,
+      "thinking_level_change": 1,
+      "message": 17
+    }
+  },
+  "codex": {
+    "sessionFile": "C:/Users/Lenovo/.codex/sessions/2026/10/22/rollout-2026-10-22T11-13-47-01a16199-bc85-7a22-b311-57149d711805.jsonl",
+    "lines": 56,
+    "model": "gpt-6-luna",
+    "note": "Raw Codex conversation is intentionally not copied."
+  },
+  "note": "Native Pi session content is intentionally not copied; only metadata is recorded."
+}

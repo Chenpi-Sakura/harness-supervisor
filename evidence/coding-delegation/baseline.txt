@@ -1,0 +1,70 @@
+
+> hs-coding-task@0.1.0 test
+> node --test
+
+✔ parses hours (1.3645ms)
+✔ parses minutes (0.8493ms)
+✖ parses seconds (0.6629ms)
+✖ parses a compound duration (0.1066ms)
+✖ parses hours, minutes, and seconds (0.1072ms)
+✔ trims surrounding whitespace (0.0787ms)
+✔ accepts zero (0.0712ms)
+✔ rejects an unknown unit (0.2154ms)
+✔ rejects a missing unit (0.0959ms)
+✔ rejects empty input (0.1583ms)
+✔ rejects a negative value (0.2312ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 8
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 143.0349
+
+✖ failing tests:
+
+test at test\duration.test.js:13:1
+✖ parses seconds (0.6629ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  2700 !== 45
+  
+      at TestContext.<anonymous> (file:///D:/tmp/hs-coding-task/test/duration.test.js:14:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 2700,
+    expected: 45,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\duration.test.js:17:1
+✖ parses a compound duration (0.1066ms)
+  Error: Invalid duration: 1h 30m
+      at parseDuration (file:///D:/tmp/hs-coding-task/src/duration.js:7:11)
+      at TestContext.<anonymous> (file:///D:/tmp/hs-coding-task/test/duration.test.js:18:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test\duration.test.js:21:1
+✖ parses hours, minutes, and seconds (0.1072ms)
+  Error: Invalid duration: 1h 30m 15s
+      at parseDuration (file:///D:/tmp/hs-coding-task/src/duration.js:7:11)
+      at TestContext.<anonymous> (file:///D:/tmp/hs-coding-task/test/duration.test.js:22:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)

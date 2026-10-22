@@ -1,0 +1,5 @@
+ src/duration.js | 53 ++++++++++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 46 insertions(+), 7 deletions(-)
+--- git diff -- test ---
+--- git status --short ---
+ M src/duration.js

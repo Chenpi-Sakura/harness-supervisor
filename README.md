@@ -183,7 +183,7 @@ codex mcp list
 | `worker_status` | 状态、`lastSeq`、最近事件、pending input、结果/错误、stderr 尾部 |
 | `worker_list` | 列出 Worker（持久化，跨 daemon 重启） |
 | `worker_events` | 按 `sinceSeq` 增量读取事件；`sinceSeq=0` 读完整历史 |
-| `worker_wait` | 有界长轮询；默认 20s，最大 120s；不带 `sinceSeq` 时先检查当前状态/最近 20 条事件，再等待；带 `sinceSeq` 时严格按游标增量 |
+| `worker_wait` | 有界长轮询；默认 20s，最大 120s；不带 `sinceSeq` 时先检查当前状态/最近 20 条事件，再等待；带 `sinceSeq` 时严格按游标增量；默认省略普通 `run.progress`（保留 `queue_cleared` 和工具错误），`includeProgress=true`（或 `types:["run.progress"]`）返回全部，完整历史用 `worker_events` |
 | `worker_send` | 运行中追加 `steer` / `follow-up`；不用于回答扩展对话框 |
 | `worker_answer` | 回答 `run.needs_input`（Pi extension select/confirm/input/editor） |
 | `worker_cancel` | abort + 终止进程树 + 确认终态；不影响其他 Worker |
@@ -204,6 +204,7 @@ codex mcp list
 - **不带 `sinceSeq`**：先查当前状态和最近 20 条事件。如果 Worker 已经终态、`awaiting_input`，或指定的 `types` 事件已经出现，立即返回；否则从当前末尾开始等待新事件。这避免“刚 spawn 完调用 wait 等 `run.started`，但事件已经发生”时白等到超时。
 - **带 `sinceSeq`**：严格游标语义，只返回 `seq > sinceSeq` 的事件；适合无损增量消费。用上一次结果的 `nextSeq` 或 Worker 的 `lastSeq`。
 - 不带游标返回的是最近窗口，不是完整历史；需要完整历史用 `worker_events(sinceSeq=0)`。
+- 默认省略普通 `run.progress`（工具开始/结束、turn、assistant 预览），只返回状态变化、输入请求、消息和终态等重要事件；`queue_cleared` 和工具错误仍会保留。`eventsOmitted` 表示本次省略了多少条。需要完整进度时传 `includeProgress=true`，或把 `run.progress` 放进 `types`；需要完整事件流时用 `worker_events`。
 - 终态后重复调用不带游标的 `worker_wait` 会立即返回，不应用于轮询循环；读状态或结果后应停止。
 
 ### 关于“主动唤醒”
@@ -390,7 +391,7 @@ npm test
 结果（最终运行）：
 
 - 22 个单元测试：JSONL framing、脱敏、持久化/游标、IPC 协议校验、Pi 启动参数
-- 24 个集成测试：CLI、daemon、并发取消隔离、增量事件、steer、extension 授权、失败/崩溃/取消区分、max duration、强制终止、daemon 崩溃/重启对账/resume、优雅关闭、MCP 全流程与客户端断连、MCP 条件等待，以及并发/竞态回归
+- 24 个集成测试：CLI、daemon、并发取消隔离、增量事件、steer、extension 授权、失败/崩溃/取消区分、max duration、强制终止、daemon 崩溃/重启对账/resume、优雅关闭、MCP 全流程与客户端断连、MCP 条件等待与紧凑事件，以及并发/竞态回归
 - 2 个依赖真实 Pi 的测试默认跳过（`RUN_REAL_PI=1`）；其中 native session resume 测试不调用模型，real worker 测试会调用一次低成本模型
 
 最终运行：48 tests，46 pass，0 fail，2 skipped。完整输出见 [`evidence/test-suite-races.txt`](evidence/test-suite-races.txt)。
@@ -409,6 +410,7 @@ npm test
 - 不响应 abort 的 Harness 会被强制终止并确认进程死亡；
 - MCP 客户端断开后 daemon 和 Worker 继续，重连可读到完成结果；
 - MCP `worker_wait` 不带游标时能看到已经发生的 `run.started`，带游标时不重放；
+- MCP `worker_wait` 默认省略 `run.progress` 并报告 `eventsOmitted`，`includeProgress=true` 或 `types=["run.progress"]` 时返回进度；
 - MCP 服务器 instructions 和只读工具的 annotation 可见；
 - 并发 spawn 不能突破 `maxWorkers`；
 - 取消开始后 send/answer 被拒绝，重复 answer 只有一个成功；
@@ -451,6 +453,23 @@ $env:CODEX_WORKER_MODE="real"; $env:RUN_CODEX="1"; node scripts/e2e-codex.mjs
 实际结果（正式运行）：Codex 完成 4 个 MCP 调用（`worker_spawn` / `worker_wait` / `worker_send` / `worker_wait`），只创建 1 个 Worker；Worker 在运行中收到 `CODEX_STEER` 并完成，结果为 `REAL_CODEX_OK`；外部预启动的 daemon 在 Codex 退出后仍可连接。Codex 用量：79,662 input / 301 output tokens。证据见 [`evidence/codex-real-pi/test-run.txt`](evidence/codex-real-pi/test-run.txt) 与同目录的 `codex.jsonl`、`worker.json`、`events.jsonl`。
 
 自动拉起 daemon 的实验见 [`evidence/codex-auto-start/`](evidence/codex-auto-start/)：Codex 退出时杀掉了整个 MCP 进程树，daemon 无 shutdown 记录、`daemon.lock` 残留。这就是必须以外部 daemon 运行的原因。`scripts/e2e-codex.mjs` 默认 fake Pi 模式，适合重复验证宿主传输；real 模式会额外产生真实 Pi 调用。该脚本和 Codex 的审批/进程树行为都只在上述版本与平台实测。
+
+### 真实 Codex 桌面端交互（GPT-6 Luna）
+
+使用真实 Codex 桌面端、外部预启动 daemon 和真实 Pi，已验证：
+
+- 运行中 steer：`worker_send` 在 `sleep 20` 期间发送，`run.message_sent`（seq 7）早于完成（seq 15），文件包含 `FIRST` 与 `STEERED_BY_CODEX`；
+- cancel：排队 steer 被清除（`queue_cleared steering=1`），受测 PID 真实退出，只记录一次 `run.cancelled`，重复取消幂等，对照 Worker 不受影响；
+- resume：同一 session ID/文件、`resumeCount=1`、新 PID，验证码只从会话上下文恢复，seed 文件未被重放；
+- 客户端断连/重连：外部 daemon PID 和启动时间不变，Worker PID 连续，重连后读取到完成结果。
+
+证据索引见 [`evidence/README.md`](evidence/README.md) 第 6 节。桌面端测试仍受 pull-only 限制；所有结果都是通过 `worker_wait` 拉取，不宣称后台唤醒。
+
+### 真实编码委派（Codex → Pi）
+
+在独立仓库 `D:\tmp\hs-coding-task` 中，Codex（GPT-6 Luna）先读取测试并委派，真实 Pi（DeepSeek `deepseek-v4.1-flash-1017`）自主修改 `src/duration.js`、运行测试并完成。基线 11 tests（8 pass / 3 fail），最终 11/11 pass；测试未修改，Worker 用时 38.0s、7 turns、8 tool calls，无中途人工干预。Codex 实际 6 次工具调用（2 次 MCP、2 次 shell、2 次宿主调用），累计 239,581 input（199,552 cached）/ 891 output tokens；Pi 用量 45,896 tokens。此结果没有原生 Codex 基线，不能据此推断节省额度。证据见 [`evidence/coding-delegation/`](evidence/coding-delegation/test-run.txt)。
+
+该委派还暴露了等待结果的上下文开销：旧版 `worker_wait` 返回 26 条进度事件（约 10 KB / 3,433 tokens）并被 Codex 截断。现已默认省略普通 `run.progress`，只保留状态变化、输入、消息、终态、队列清空和工具错误；需要完整进度时显式传 `includeProgress=true`。在同一份真实事件日志上，默认等待从 10,936 字符/27 个事件降到 4,047 字符/2 个事件（省略 25 条进度）。
 
 ### 成本控制
 

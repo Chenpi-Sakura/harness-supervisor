@@ -1,0 +1,48 @@
+{
+  "workerId": "w-mviyvtgt-89e1f44b",
+  "compact": {
+    "chars": 4047,
+    "events": 2,
+    "eventsOmitted": 25,
+    "types": [
+      "run.completed",
+      "worker.exited"
+    ],
+    "status": "completed"
+  },
+  "full": {
+    "chars": 10936,
+    "events": 27,
+    "eventsOmitted": 0,
+    "types": [
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.completed",
+      "worker.exited"
+    ],
+    "status": "completed"
+  }
+}

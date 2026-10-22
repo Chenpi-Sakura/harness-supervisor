@@ -1,0 +1,23 @@
+
+> hs-coding-task@0.1.0 test
+> node --test
+
+✔ parses hours (0.7636ms)
+✔ parses minutes (0.7939ms)
+✔ parses seconds (0.1265ms)
+✔ parses a compound duration (0.0796ms)
+✔ parses hours, minutes, and seconds (0.0822ms)
+✔ trims surrounding whitespace (0.0704ms)
+✔ accepts zero (0.0692ms)
+✔ rejects an unknown unit (0.1819ms)
+✔ rejects a missing unit (0.1185ms)
+✔ rejects empty input (0.1622ms)
+✔ rejects a negative value (0.0864ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 130.3513

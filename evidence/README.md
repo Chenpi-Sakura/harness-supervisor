@@ -52,13 +52,23 @@ All five runs used the real Codex desktop app on Windows with MCP stdio, an exte
 
 Scope: these runs validate client-side lifecycle flows, not daemon-crash recovery. The supervisor remains pull-only; every completion was retrieved by `worker_wait`, and no background wake-up is claimed.
 
-## 7. Automated suite
+## 7. Real coding delegation (Codex -> Pi)
+
+- Repo: `D:\tmp\hs-coding-task` (independent git repo, baseline 11 tests: 8 pass / 3 fail).
+- Codex (GPT-6 Luna) inspected the repo and delegated to a real Pi worker (DeepSeek `deepseek-v4.1-flash-1017`).
+- Worker `w-mviyvtgt-89e1f44b` completed in 38.0 s with 7 turns and 8 tool calls; it changed only `src/duration.js` and did not modify tests or commit.
+- Final acceptance: `npm test` 11/11 pass; `git diff -- test` empty.
+- Codex tool calls: 6 total (2 MCP: spawn/wait; 2 shell: inspection/acceptance; 2 host: discovery/cell wait). Codex cumulative usage: 239,581 input (199,552 cached) / 891 output. Pi usage: 45,896 total tokens.
+- The run exposed a 10 KB wait payload; the post-fix compact wait on the same event log is 4,047 chars / 2 events versus 10,936 chars / 27 events with progress (25 omitted).
+- See [coding-delegation/test-run.txt](coding-delegation/test-run.txt), [coding-delegation/usage.json](coding-delegation/usage.json), [coding-delegation/compact-wait-check.json](coding-delegation/compact-wait-check.json), and [coding-delegation/git-diff.patch](coding-delegation/git-diff.patch).
+
+## 8. Automated suite
 
 The fake harness is a scripted implementation of the documented Pi RPC subset. Every fake-harness test runs the production Pi adapter, IPC daemon, supervisor state machine, CLI, or MCP server; it does not bypass the implementation.
 
 - Baseline run (2026-10-21, before the lifecycle/race fixes): 38 tests, 36 pass, 0 fail, 2 skipped.
   Full output: [test-suite.txt](test-suite.txt).
-- Current run (2026-10-22, after the lifecycle/race and MCP wait fixes, re-run before the desktop interaction round): 48 tests, 46 pass, 0 fail, 2 skipped (the gated real-Pi tests), 98.2s.
+- Current run (2026-10-22, after the desktop interaction round and compact-wait change): 48 tests, 46 pass, 0 fail, 2 skipped (the gated real-Pi tests), 98.9s.
   Full output: [test-suite-races.txt](test-suite-races.txt).
 
 The added regression coverage:
@@ -73,5 +83,6 @@ The added regression coverage:
 - an orphaned live PID cannot be cancelled and is not falsely reported as cancelled;
 - MCP exposes server instructions and read-only annotations for the query tools;
 - MCP `worker_wait` without a cursor reads current status and recent events first, returns new events incrementally, does not duplicate returned seqs, and does not cause a second spawn for the same task.
+- MCP `worker_wait` omits `run.progress` by default, reports `eventsOmitted`, and returns progress when `includeProgress=true` or `types=["run.progress"]` is requested.
 
 > Note: the original temp state/work directories may be cleaned up; the artifacts relevant to each run are copied into these evidence folders.

@@ -1,0 +1,43 @@
+Codex -> Supervisor -> Pi coding delegation: PASS
+Date: 2026-10-22 (local, Windows)
+Host: Codex desktop; GPT-6 Luna; MCP over stdio
+Supervisor daemon: external, PID 31964
+Repo: D:\tmp\hs-coding-task (independent git repository, baseline commit dc28690)
+Worker: w-mviyvtgt-89e1f44b, runtime pi, model deepseek-v4.1-flash-1017 / provider new-api
+
+Task:
+- Implement parseDuration with whitespace-separated h/m/s segments, validation, and total seconds.
+- The test suite (11 tests) is the acceptance criterion; the worker must not modify tests or commit.
+
+Baseline:
+- 11 tests, 8 pass, 3 fail (seconds, compound duration, hours+minutes+seconds).
+
+Result:
+- Worker completed, exit code 0, PID 65204, pidAlive=false.
+- Worker runtime: 38.0 s (startedAt 03:14:10.629Z, endedAt 03:14:48.644Z).
+- 7 turns, 8 tool calls, 0 tool errors, 0 mid-run steer/follow-up/answer messages.
+- Changed only src/duration.js (+46/-7); tests unchanged (git diff -- test is empty); no git commit.
+- Independent re-run: npm test 11 tests, 11 pass, 0 fail, 0 skipped.
+- Codex also re-ran npm test in its acceptance step: exit code 0, 11/11 pass.
+
+Main agent metrics:
+- Model: gpt-6-luna.
+- Tool calls: 6 total.
+  - 2 MCP calls: worker_spawn (1), worker_wait (1).
+  - 2 shell calls: repository inspection, final npm test/git diff acceptance.
+  - 2 host calls: tool discovery, and a Codex cell wait after its exec cell yielded at 30 s.
+- No duplicate spawn; no worker_answer; no worker_send.
+- Codex cumulative usage: 239,581 input tokens (199,552 cached), 891 output tokens, 240,472 total, over 7 responses.
+- Pi usage: 45,896 total tokens (4,564 input, 1,908 output, 39,424 cache read, 655 reasoning), over 7 assistant messages.
+
+Interaction and human intervention:
+- 1 spawn request and 1 terminal wait; 0 supplemental messages.
+- No mid-run human intervention and no manual code edits. The operator only pasted the delegation prompt; Codex handled acceptance.
+
+Scope and caveats:
+- This is one small deterministic repository with a clear test suite, not a large real-world codebase.
+- No native Codex-only baseline was measured, so no token-savings claim is made.
+- The Codex host yielded its long exec cell at 30 s and used one host wait; the Supervisor wait itself did not time out and no duplicate worker was spawned.
+- This run used the pre-compact wait response. After observing a 10 KB wait result, worker_wait was changed to omit normal run.progress by default; that behavior is covered by the MCP integration test, not by this coding run.
+- Post-fix measurement on this same event log: compact wait returned 4,047 chars / 2 events with 25 progress events omitted; includeProgress=true returned 10,936 chars / 27 events. See compact-wait-check.json.
+- Raw Codex and Pi conversation content is not copied; see codex-tool-calls.json, usage.json, and session-metadata.json.

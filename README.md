@@ -1,6 +1,6 @@
 # Harness Supervisor v0.1
 
-一个轻量的本地生命周期与通信层，让主 Agent 通过 **CLI** 或 **MCP** 启动、观察、指导、取消和恢复其他厂商的原生 AI Harness。首版完整支持 **Pi Agent**（Pi v1.3+ 原生 RPC）。
+一个轻量的本地生命周期与通信层，让主 Agent 通过 **CLI** 或 **MCP** 启动、观察、指导、取消和恢复其他厂商的原生 AI Harness。完整支持 **Pi Agent**（Pi v1.3+ 原生 RPC）；新增实验性 **Qoder CLI** 适配（stream-json/stdio 控制协议，状态见 [§9](#9-测试与真实证据)）。
 
 它管理的是 **进程、会话和事件**，不是新的多智能体框架：
 
@@ -9,7 +9,7 @@
 - 不引入额外的 LLM 做调度或生命周期管理
 - 不重复实现 Pi 的 Agent 循环，只控制它
 
-> 一句话：主 Agent 只负责决策；Pi 仍然是 Pi；Supervisor 负责让“另一个 Pi”变得可启动、可观测、可插话、可取消、可恢复。
+> 一句话：主 Agent 只负责决策；Pi/Qoder 仍然是原来的 Harness；Supervisor 负责让“另一个 Harness”变得可启动、可观测、可插话、可取消、可恢复。
 
 ---
 
@@ -27,12 +27,13 @@ SupervisorClient ────── 本地 IPC（Windows named pipe / Unix socke
                     ├─ 追加式事件日志 + seq 游标
                     ├─ 会话元数据与重启对账
                     └─ 有界 wait / 输入请求 / 取消
-                                │  Pi 原生 RPC（严格 JSONL）
-                                ▼
-                    Pi worker 子进程
-                    ├─ 自己的 cwd
-                    ├─ 自己的 session 文件
-                    └─ 自己的进程树（可精确终止）
+                    ┌───────────┴────────────┐
+                    │ Pi 原生 RPC            │ Qoder stream-json/stdio
+                    ▼                        ▼
+            Pi worker 子进程          Qoder CLI worker 子进程
+            ├─ 自己的 cwd             ├─ 自己的 cwd
+            ├─ 自己的 session 文件     ├─ Qoder 持久化 session
+            └─ 自己的进程树            └─ 自己的进程树
 ```
 
 关键设计：**Worker 属于 daemon，而不是 CLI/MCP 连接**。
@@ -47,10 +48,12 @@ SupervisorClient ────── 本地 IPC（Windows named pipe / Unix socke
 
 - Node.js **>= 22.19**（开发与验证使用 Node v24.21.0）
 - Pi Agent **>= 1.3**，并已配置好 provider / model / 凭据
+- （可选，Qoder runtime）Qoder CLI `qodercli` 1.1.75/1.1.76（均在 Windows 实测），并已执行一次 `qodercli login`，或在 daemon 环境中设置 `QODER_PERSONAL_ACCESS_TOKEN`
 - **Windows 原生环境已实测**；WSL 需要在 WSL 内单独安装 Node 与 Pi，本项目未在本机 WSL 中实测
   - Windows 下 Supervisor 会自动定位 `~/.pi/agent/bin/pi-launcher.js`
   - 也可通过 `HARNESS_SUPERVISOR_PI_ENTRY=<pi-launcher.js 或 Pi CLI JS 入口>` 指定
   - `HARNESS_SUPERVISOR_PI_BIN` 可指定真实可执行文件，但不接受 `.cmd/.bat` shim（避免 shell 注入）
+  - Qoder 默认从 PATH 查找 `qodercli`；也可用 `HARNESS_SUPERVISOR_QODER_BIN` 或 `HARNESS_SUPERVISOR_QODER_ENTRY` 指定
 
 ```bash
 npm install
@@ -86,10 +89,17 @@ node dist/src/cli.js spawn \
   --thinking off \
   --json
 
+# Qoder Worker（需先 qodercli login；模型名用 qodercli --list-models 选择）
+node dist/src/cli.js spawn \
+  --runtime qoder \
+  --cwd D:/work/demo \
+  --model <cheap-qoder-model> \
+  --prompt "用 Write 工具创建 hello.txt，然后回复 DONE。"
+
 # 查询状态 + 最近事件
 node dist/src/cli.js status <workerId>
 
-# Worker 运行期间追加指令（Pi native steer）
+# Worker 运行期间追加指令（Pi native steer；Qoder 走 stream-json priority=next）
 node dist/src/cli.js send <workerId> --message "Also add a timestamp to the file." --mode steer
 
 # 增量读取事件（sinceSeq 游标）
@@ -98,10 +108,10 @@ node dist/src/cli.js events <workerId> --since 0 --limit 100
 # 有超时边界的等待：直到终态
 node dist/src/cli.js wait <workerId> --since 0 --timeout-ms 60000
 
-# 取消受控 Worker（先清空 Pi 队列，再 abort；必要时终止进程树）
+# 取消受控 Worker（Pi: 先清队列再 abort；Qoder: cancel_async_message + interrupt；必要时终止进程树）
 node dist/src/cli.js cancel <workerId>
 
-# 在 Pi 持久化 session 存在且旧进程已退出时，继续该会话
+# 在持久化 session 存在且旧进程已退出时，继续该会话
 node dist/src/cli.js resume <workerId> --prompt "Continue and summarize what changed."
 
 # 优雅关闭 daemon（会取消所有活动 Worker）
@@ -112,12 +122,14 @@ node dist/src/cli.js down
 
 | 行为 | 含义 |
 | --- | --- |
-| `spawn` 返回 `running` | Pi 已接受 prompt，**任务尚未完成** |
+| `spawn` 返回 `running` | Harness 已接受 prompt，**任务尚未完成** |
 | `wait` 返回 `terminal: true` | Worker 已进入终态，`completed / failed / cancelled / crashed / orphaned / interrupted` 之一 |
-| `run.completed` + `result.text` | Pi 原生 `agent_settled` 且没有 abort/error |
-| `run.failed` | Pi 报告了 provider/run 错误，或启动失败 |
+| `run.completed` + `result.text` | Pi: 原生 `agent_settled`；Qoder: `result` 非错误且已静默 |
+| `run.failed` | Harness 报告了 provider/run 错误，或启动失败；Qoder 未登录也会走这里 |
 | `run.cancelled` | 主动取消、超时或 Supervisor 关闭 |
 | `crashed` | Harness 进程在 settle 前异常退出 |
+
+Qoder 的 `steer` 使用 `priority="next"`（在安全边界注入或开始下一轮），`follow-up` 使用 `priority="later"`（空闲后执行）。它与 Pi 的 steer 不是逐字节相同的语义；Qoder 的多轮 `result` 通过短暂静默窗口合并为一次终态，详见 [§7.2](#72-qoder-cli-adapter实验性)。
 
 CLI 的 `wait` 退出码：`0` completed，`3` failed，`4` cancelled，`5` crashed/orphaned/interrupted，`2` 调用错误。`spawn --wait` 也会在 Worker 需要输入时提前返回，避免阻塞到超时。
 
@@ -184,10 +196,10 @@ codex mcp list
 | `worker_list` | 列出 Worker（持久化，跨 daemon 重启） |
 | `worker_events` | 按 `sinceSeq` 增量读取事件；`sinceSeq=0` 读完整历史 |
 | `worker_wait` | 有界长轮询；默认 20s，最大 120s；不带 `sinceSeq` 时先检查当前状态/最近 20 条事件，再等待；带 `sinceSeq` 时严格按游标增量；默认省略普通 `run.progress`（保留 `queue_cleared` 和工具错误），`includeProgress=true`（或 `types:["run.progress"]`）返回全部，完整历史用 `worker_events` |
-| `worker_send` | 运行中追加 `steer` / `follow-up`；不用于回答扩展对话框 |
-| `worker_answer` | 回答 `run.needs_input`（Pi extension select/confirm/input/editor） |
-| `worker_cancel` | abort + 终止进程树 + 确认终态；不影响其他 Worker |
-| `worker_resume` | 用新指令显式恢复已有 Pi session；校验 session ID，拒绝伪造成功 |
+| `worker_send` | 运行中追加 `steer` / `follow-up`（Pi 队列 / Qoder priority 消息）；不用于回答输入请求 |
+| `worker_answer` | 回答 `run.needs_input`（Pi extension select/confirm/input/editor；Qoder canUseTool 审批或 AskUserQuestion） |
+| `worker_cancel` | 取消 + 终止进程树 + 确认终态；不影响其他 Worker（Pi 先清队列，Qoder 先 cancel_async_message + interrupt） |
+| `worker_resume` | 用新指令显式恢复已有 session；校验 session ID，拒绝伪造成功 |
 | `supervisor_info` | 版本、限制、runtime capability、pull-only 唤醒边界 |
 
 推荐主 Agent 循环：
@@ -241,13 +253,13 @@ codex mcp list
 | `orphaned` | 是 | daemon 重启后丢失控制通道，记录中的 PID 仍存活 |
 | `interrupted` | 是 | daemon 重启后进程已不在，任务结果未知 |
 
-状态之外，Worker 记录还包含：独立 ID、cwd、PID、Pi session ID/文件、退出码、token/turn/tool 统计、pending input、最近事件、resume 信息。
+状态之外，Worker 记录还包含：独立 ID、cwd、PID、Harness session ID/文件、退出码、token/turn/tool 统计、pending input、最近事件、resume 信息。
 
 ### 事件
 
 - `worker.starting` / `worker.started` / `worker.session`
 - `run.accepted` / `run.started`
-- `run.progress`（tool start/end、turn complete、assistant message、retry、compaction、notification、`queue_cleared`）
+- `run.progress`（tool start/end、turn complete、assistant message、retry、compaction、notification、usage、`queue_cleared`、`permission_timeout`）
 - `run.needs_input` / `run.input_answered`
 - `run.message_sent`
 - `run.error`
@@ -267,9 +279,9 @@ codex mcp list
 
 ### 需要进一步指令
 
-Pi 的 `extension_ui_request`（select / confirm / input / editor）会映射为 `run.needs_input`，Worker 状态变为 `awaiting_input`。`worker_answer` 会发送 `extension_ui_response`，恢复为 `running`。
+Pi 的 `extension_ui_request`（select / confirm / input / editor）和 Qoder 的 `can_use_tool` 会映射为 `run.needs_input`，Worker 状态变为 `awaiting_input`。`worker_answer` 分别发送 `extension_ui_response` 或 `control_response`，恢复为 `running`。
 
-限制：如果 Worker 只是在普通回复里写“请确认是否继续”，Pi 没有任何原生暂停机制，Supervisor 不会假装检测到问题或自动暂停。只有 Harness 自己发出扩展对话框时，才有 `awaiting_input`。
+限制：如果 Worker 只是在普通回复里写“请确认是否继续”，Harness 没有原生暂停原语时，Supervisor 不会假装检测到问题或自动暂停。只有 Harness 自己发出扩展对话框/控制请求时，才有 `awaiting_input`。Qoder 的审批请求在 5 分钟未回答时会 deny，避免永久卡住。
 
 ---
 
@@ -280,22 +292,24 @@ Pi 的 `extension_ui_request`（select / confirm / input / editor）会映射为
 支持条件（全部满足才会执行）：
 
 1. Worker 已处于终态，且当前没有活动 runtime；
-2. Pi adapter 支持 resume；
+2. 对应 adapter 支持 resume；
 3. Worker 记录了持久化 session 文件，且文件仍存在；
 4. 旧 PID 不在运行；
-5. Supervisor 启动新的 Pi 进程并**校验 session ID 与 session 文件路径**；
+5. Supervisor 启动新的 Harness 进程并**校验 session ID 与 session 文件路径**；
 6. 调用方提供新的 prompt。
 
 任何一步不满足都会返回 `UNSUPPORTED` / `INVALID_STATE`，不会静默创建新 session 并声称恢复成功。
 
-`resume` 的语义是：**启动一个新的 Pi 进程，加载指定 session 文件，然后提交一个新的 prompt**。它不会续接原进程内存中的运行，不会补跑中断的 assistant turn，也不会重放旧工具调用或自动重试可能产生副作用的工作。`resumeCount` 和新 prompt 被接受后的 `worker.resumed` 事件都只在 session 校验通过、run 真正开始后记录；若加载失败，会恢复之前的终态并写 `worker.resume_failed`。
+`resume` 的语义是：**启动一个新的 Harness 进程，加载指定 session，然后提交一个新的 prompt**。它不会续接原进程内存中的运行，不会补跑中断的 assistant turn，也不会重放旧工具调用或自动重试可能产生副作用的工作。`resumeCount` 和新 prompt 被接受后的 `worker.resumed` 事件都只在 session 校验通过、run 真正开始后记录；若加载失败，会恢复之前的终态并写 `worker.resume_failed`。
+
+Pi 通过 `--session <file>` 加载并校验 session ID/路径。Qoder 通过 `--resume <session-id>` 加载，启动后校验 init 返回的 `session_id` 与记录一致，并要求原 session 文件仍存在；Qoder session 文件位于用户 Qoder 配置目录的 `projects/` 下，Supervisor 只记录路径与存在性，不复制其内容。
 
 ### 并发与控制语义
 
 - **并发上限是原子占位**：`maxWorkers` 同时计入活动 Worker 和正在启动的请求，检查与创建之间的 await 窗口不能突破上限。
 - **同一 Worker 的 resume 串行化**：第一次 resume 进行中时，第二次返回 `INVALID_STATE`，不会出现两个进程加载同一 session。
-- **取消开始后拒绝新控制指令**：`send` / `answer` 会返回 `INVALID_STATE`；同一对话框的第二个 answer 也会被拒绝。已经发出但仍在 Pi 队列中的 steer/follow-up 会在 abort 前通过 `clear_queue` 清除。
-- **取消顺序**：`clear_queue` → `abort` → 有界等待 `agent_settled` → 必要时强制终止进程树。Pi 文档说明 abort 会继续队列中的消息，所以必须先清队列；非空队列清空会记录 `run.progress`（`kind: "queue_cleared"`，只记录数量，不保存消息正文）。
+- **取消开始后拒绝新控制指令**：`send` / `answer` 会返回 `INVALID_STATE`；同一输入请求的第二个 answer 也会被拒绝。已经发出但仍在 Pi 队列中的 steer/follow-up 会在 abort 前通过 `clear_queue` 清除；Qoder 则发 `cancel_async_message`，只统计 CLI 确认取消的消息。
+- **取消顺序**：Pi 是 `clear_queue` → `abort` → 有界等待 `agent_settled` → 必要时强制终止进程树。Pi 文档说明 abort 会继续队列中的消息，所以必须先清队列；非空队列清空会记录 `run.progress`（`kind: "queue_cleared"`，只记录数量，不保存消息正文）。Qoder 是 `cancel_async_message` → `interrupt {cancel_queued:true}` → 有界等待 result → 必要时终止进程树。
 - **关停屏障**：`shutdown` 先拒绝新的 spawn/resume/send/answer，等待进行中的准入最多 5 秒，再取消/强杀所有活动 runtime；不会出现关停快照漏掉刚启动 Worker 的情况。
 - **线性化**：完成与取消同时发生时，以先完成的一方为准，可能返回 `completed`。终态只有在 Harness 进程停止后才可见。
 - **不是事务型 API**：spawn/resume 没有幂等键。客户端超时后不要盲目重试，应先查 `status` / `list`；in-flight 的重复 resume 会被拒绝，但已完成的 resume 再调用是一次新的显式运行。
@@ -309,7 +323,7 @@ Pi 的 `extension_ui_request`（select / confirm / input / editor）会映射为
 - **重启后没有任何 Worker 保留实时控制通道**。`status` / `events` / `wait` 仍可只读使用；不能对旧运行继续 steer 或 answer。若 daemon 在终态落盘前被杀，即使任务实际已完成，也会保守地报 `interrupted`（结果未知），不会自动改判为 `completed`；需要时只能显式 resume 读取 session。
 - **客户端断开不是 Supervisor 重启**：daemon 仍在时，任何客户端重连后都可以继续 status/send/cancel；只有 daemon 进程本身退出/被杀，才进入上述对账路径。
 - **`orphaned` 进程不能通过 Supervisor 取消**。Supervisor 会明确返回 `UNSUPPORTED`，而不是假装取消成功；需要在确认 PID 身份后由人工/平台工具终止。拒绝按记录 PID 自动 kill 是因为 PID 复用可能误杀无关进程。待旧进程真正退出后，才可以显式 resume。
-- **`resumeAvailable` 只是前置条件**：它表示 session 文件存在、旧 PID 不在运行、adapter 支持 resume，并不保证 Pi 一定能加载该文件；真正的加载会校验 session ID/路径，失败则恢复原终态并报错，不伪造成功。
+- **`resumeAvailable` 只是前置条件**：它表示 session 文件存在、旧 PID 不在运行、adapter 支持 resume，并不保证一定能加载该文件；真正的加载会校验 session ID/路径，失败则恢复原终态并报错，不伪造成功。
 - 需要显式 `resume`，且只接受已持久化 session；旧 PID 仍存活时一律拒绝。`resume` 加载的是持久化会话，不会续接原运行。
 - 平台差异：Windows 上非 detached 的 Pi 子进程在 daemon 被强杀后通常随之退出，记录会变为 `interrupted`；POSIX 或子进程自行存活时可能出现 `orphaned`。两种状态都不代表任务成功。
 
@@ -319,11 +333,13 @@ Pi 的 `extension_ui_request`（select / confirm / input / editor）会映射为
 
 ### Pause
 
-Pi 没有可用的 pause/resume 原语，Supervisor 不实现假暂停。capability 中明确 `pause: false`。`resume` 是“基于 Pi session 文件启动新进程并继续”，不是恢复同一个内存中的运行。
+Pi 没有可用的 pause 原语，Supervisor 不实现假暂停；Qoder 的 `interrupt` 是终止当前 turn，不是可继续的 pause。capability 中明确 `pause: false`。`resume` 是“基于持久化 session 启动新进程并继续”，不是恢复同一个内存中的运行。
 
 ---
 
-## 7. Pi Adapter 实现方式
+## 7. Adapter 实现方式
+
+### 7.1 Pi Adapter（完整支持）
 
 使用 Pi v1.3+ 官方文档化的 **RPC mode**（`pi --mode rpc`）：
 
@@ -343,7 +359,33 @@ Pi 没有可用的 pause/resume 原语，Supervisor 不实现假暂停。capabil
 
 这不是自研 ACP 客户端。v0.1 直接使用厂商原生 RPC；未来接入支持 ACP 的 Harness 时，可以在 adapter 层复用成熟 ACP SDK，而不是扩展本项目的协议。
 
-测试使用 `test/fixtures/fake-harness.ts`：它实现 Pi RPC 的脚本化子集，由**真实生产 adapter、daemon 和状态机**驱动，不绕过实现。
+### 7.2 Qoder CLI Adapter（实验性）
+
+Qoder 使用 **CLI 原生 stream-json + stdio 控制协议**，而不是另装 SDK 依赖：
+
+```text
+qodercli --print
+  --output-format stream-json
+  --input-format stream-json
+  --permission-prompt-tool stdio
+  --permission-mode <default|accept_edits|auto|dont_ask|plan>
+  --session-id <uuid>      # spawn
+  --resume <session-id>    # resume
+```
+
+- **启动握手**：发送 `control_request {type:"initialize"}`，等待 `system/init`；从 init 读取真实的 `session_id`、model 和 permissionMode。
+- **事件映射**：`assistant` 的 text/tool_use → `assistant_message` / `tool_start`；`user` 的 tool_result → `tool_end`；`result` → `turn_complete`、`usage`（input/output tokens、cost/credits）和最终 `settled`；`result.is_error=true` → `run.failed`。Qoder 未登录时返回的是 `subtype:"success"` + `is_error:true` 且错误文本在助手消息里，adapter 会把这种情况报为 failed，而不是 completed。
+- **预提示错误**：真实 qodercli 可能在收到 prompt 前就因认证检查发出错误 result；adapter 会缓存该错误，在 prompt 阶段抛出并走统一的启动失败清理，避免在 `worker.started`/`worker.session` 之前直接 settle。
+- **追加指令**：`steer` 发送 `priority:"next"` 的 user 消息，`follow-up` 发送 `priority:"later"`；每条消息有独立 uuid。Qoder 的多轮 result 通过 `350ms`（无待处理消息）或 `1.5s`（有待处理消息）静默窗口合并为一次终态，避免把中间 turn 误判为完成。
+- **取消**：先对已发送的 steer/follow-up 发 `cancel_async_message`，只把 CLI 明确返回 `cancelled:true` 的消息计入 `queue_cleared`；再发 `interrupt {cancel_queued:true}`；若进程不退出，Supervisor 仍会终止进程树。
+- **权限**：CLI 的 `can_use_tool` 控制请求映射为 `run.needs_input`（审批为 `select: allow/deny`，AskUserQuestion 为 `select`/`input`）；`worker_answer` 通过 `control_response` 返回 allow/deny 或 answers。5 分钟未回答会 deny，避免 Harness 永久卡住。
+- **认证与配置隔离**：桌面端注入的 `QODER_AGENT_SDK_ENTRYPOINT`、`QODER_AGENT_SDK_VERSION`、临时 auth payload、`QODER_WORKER_*` 会在子进程环境中移除，避免把 CLI 误当成 SDK 子进程；保留 `QODER_CONFIG_DIR`、`QODERCN_CONFIG_DIR`、`QODER_PERSONAL_ACCESS_TOKEN` 等正常凭据/配置来源。
+- **安全默认**：`HARNESS_SUPERVISOR_QODER_PERMISSION_MODE` 默认 `auto`；只允许 `default / accept_edits / auto / dont_ask / plan`，明确拒绝 `bypass_permissions`、`yolo`、`--dangerously-skip-permissions`。`extraArgs` 不能覆盖 session、permission、cwd、settings、MCP/远程控制等由 Supervisor 管理的参数。
+- **会话文件**：优先按 Qoder 的 `projects/<encoded-cwd>/<session-id>.jsonl` 定位，找不到时只在候选配置根目录的 `projects/*/` 下按文件名查找；不读取 session 内容。Qoder 可能首轮结束后才落盘，或落在另一个配置根；Supervisor 在 settle 时重新查询并更新记录（`worker.session` 带 `refreshed:true`），若仍不存在则 resume 诚实拒绝。
+
+**当前验证状态（必须明确）**：真实 `qodercli 1.1.76` + `DeepSeek-Flash` 的纯文本 worker 与 native resume 已在 Windows 实测通过（同一 session ID/文件、`resumeCount=1`、两次结果分别为 `QODER_E2E_OK` / `QODER_RESUME_OK`，无旧结果重放）；真实 `steer`、`cancel` 和工具权限审批仍未在真实模型上验证。协议本身还由 `qodercli 1.1.75` 的初始化/未登录路径探测与 `test/fixtures/fake-qoder.ts` 覆盖。README 仍把它标为实验性，不把协议测试等同于全部真实宿主能力。真实 E2E 命令：`npm run e2e:qoder`。
+
+测试使用 `test/fixtures/fake-harness.ts` 与 `test/fixtures/fake-qoder.ts`：它们分别实现 Pi RPC 和 Qoder stream-json 的脚本化子集，由**真实生产 adapter、daemon 和状态机**驱动，不绕过实现。
 
 ---
 
@@ -351,18 +393,21 @@ Pi 没有可用的 pause/resume 原语，Supervisor 不实现假暂停。capabil
 
 **v0.1 不是沙箱，也不提供文件系统隔离。**
 
-- **cwd 只是默认工作目录**：Supervisor 只校验它存在且是目录，并把它作为 Pi 进程的初始 cwd。它不限制 Pi 的 bash/read/write/edit 等工具访问该目录之外的路径；不要把 cwd 当作文件隔离机制。
+- **cwd 只是默认工作目录**：Supervisor 只校验它存在且是目录，并把它作为 Pi/Qoder 进程的初始 cwd。它不限制 Harness 的 bash/read/write/edit 等工具访问该目录之外的路径；不要把 cwd 当作文件隔离机制。
 - **同一 OS 用户 = 同一个信任域**：Worker 继承 daemon 的环境变量，拥有与 daemon 相同的文件、网络和进程权限。它可以读取其他 Worker 的 session/事件、Supervisor 状态目录以及 `ipc.token`。因此不要在同一用户下运行不可信 Worker 与 Supervisor。
 - **本地 IPC 认证**：daemon 在状态目录生成随机 token（`ipc.token`；POSIX 创建时 0600，Windows 继承目录 ACL），客户端必须通过 timing-safe hello 握手。token 不写日志、不回显；但同用户进程仍可读取该文件，所以 token 不能防御同用户恶意 Worker。
-- **凭据**：Supervisor 自身的日志、事件、stderr、结果和错误会做静态模式与敏感环境变量值脱敏，但这是**捕获后的尽力而为**，不是访问控制。Worker 仍能读取继承的环境变量，也可能把凭据写入自己的输出或被 Pi 记录。`--api-key` / `--no-session` 被禁止放进 `extraArgs`，但这只约束显式参数，不改变环境继承。
-- **工具 allowlist 不是沙箱**：`tools` 只限制传给 Pi 的工具集合；Pi 扩展、shell 和网络能力仍可能扩大边界。
+- **凭据**：Supervisor 自身的日志、事件、stderr、结果和错误会做静态模式与敏感环境变量值脱敏，但这是**捕获后的尽力而为**，不是访问控制。Worker 仍能读取继承的环境变量，也可能把凭据写入自己的输出或被 Harness 记录。`--api-key` / `--no-session` 被禁止放进 Pi 的 `extraArgs`；Qoder 的 `--settings`、`--permission-mode`、`--dangerously-skip-permissions`、`--remote*`、`--cwd` 等也被禁止覆盖。但这些只约束显式参数，不改变环境继承。
+- **工具 allowlist 不是沙箱**：`tools` 只限制传给 Harness 的工具集合；Pi 扩展 / Qoder plugins、shell 和网络能力仍可能扩大边界。
+- **Qoder 认证**：`qodercli login` 的登录态保存在用户 Qoder 配置目录中；Supervisor 不读取、不复制、不记录其 token。Qoder CLI 进程仍以当前 OS 用户身份运行，能访问该用户可访问的 Qoder 配置与 session 数据。桌面端注入的 SDK 入口/临时 auth payload 会被剥离，避免意外复用桌面端宿主凭据。
+- **Qoder 权限模式**：默认 `auto` 是 Qoder 自己的无人值守策略（安全读取/工作区编辑可自动批准，风险动作由其分类器或规则处理）；它不是 Supervisor 的沙箱，也不代表所有动作都已批准。需要更严格时设置 `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE=accept_edits` 或 `default`，把 `ask` 请求转成 `awaiting_input` 交给主 Agent。`bypass_permissions` / `yolo` 被明确拒绝，不会为了方便测试自动跳过审批。
+- **Qoder session 内容**：Qoder 的 session 文件可能包含完整对话与工具结果，位于用户 Qoder 配置目录；Supervisor 只在 `resume` 前后检查路径/ID，不把内容复制进自己的状态目录或证据目录。需要保留证据时应先脱敏。
 - **Codex 的 sandbox 不等于 MCP 沙箱**：`codex exec -s read-only` 只约束 Codex 的 shell 工具；MCP server 及其启动的 Worker 仍是宿主进程，可写 Supervisor 状态目录和运行本地命令。Codex 侧的 `default_tools_approval_mode` 是工具调用边界，不是文件系统隔离。
 - **生命周期控制 ≠ 资源配额**：`maxDurationMs`、取消和 `maxWorkers` 只控制进程生命周期，不限制 CPU、内存、磁盘、网络或子进程产生的资源消耗。
 - **取消范围**：只针对该 Worker 的 PID / 进程组，不用命令字符串过滤作为安全边界。daemon 重启后的 `orphaned` 进程不再受控，Supervisor 不会假装取消。
 - **Supervisor 不自动重试**：进程断开、daemon 重启、任务失败都不会由 Supervisor 自动重跑可能产生副作用的任务。Pi 自身的 provider 级 auto-retry 仍由其配置控制，Supervisor 只透传 `auto_retry_*` 事件；需要严格禁止时应在 Pi 侧关闭。
 - **限制**：默认最多 8 个并发 Worker；wait 最大 120s；prompt 最大 256K 字符；保存结果最大 64K；stderr 环形截断；IPC 请求行有大小上限。
 - **不删除用户数据**：Supervisor 只管理自己的状态目录与 Worker 进程；没有删除 Worker/会话的命令。
-- **建议**：不可信任务使用容器 / VM / 独立低权限用户运行；限制其对 Supervisor 状态目录和其他 Worker 数据的访问；使用专用只读或临时工作目录；限制网络与工具；把 Pi 凭据放在隔离配置中。
+- **建议**：不可信任务使用容器 / VM / 独立低权限用户运行；限制其对 Supervisor 状态目录和其他 Worker 数据的访问；使用专用只读或临时工作目录；限制网络与工具；把 Pi/Qoder 凭据放在隔离配置中。
 
 环境变量：
 
@@ -372,6 +417,10 @@ Pi 没有可用的 pause/resume 原语，Supervisor 不实现假暂停。capabil
 | `HARNESS_SUPERVISOR_PI_ENTRY` | Pi launcher / CLI JS 入口（Windows 推荐） |
 | `HARNESS_SUPERVISOR_PI_BIN` | Pi 可执行文件 |
 | `HARNESS_SUPERVISOR_PI_ARGS` | 追加给 Pi 的 JSON 字符串数组 |
+| `HARNESS_SUPERVISOR_QODER_BIN` | qodercli 可执行文件（不接受 `.cmd/.bat` shim） |
+| `HARNESS_SUPERVISOR_QODER_ENTRY` | qodercli 的 JS 入口（测试/替代启动） |
+| `HARNESS_SUPERVISOR_QODER_ARGS` | 追加给 qodercli 的 JSON 字符串数组（受保留参数限制） |
+| `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE` | Qoder 权限模式，默认 `auto`；拒绝 bypass/yolo |
 | `HARNESS_SUPERVISOR_MAX_WORKERS` | 并发 Worker 上限 |
 | `HARNESS_SUPERVISOR_MAX_WAIT_MS` | wait 上限 |
 | `HARNESS_SUPERVISOR_ABORT_TIMEOUT_MS` | abort 等待上限 |
@@ -390,11 +439,11 @@ npm test
 
 结果（最终运行）：
 
-- 22 个单元测试：JSONL framing、脱敏、持久化/游标、IPC 协议校验、Pi 启动参数
-- 24 个集成测试：CLI、daemon、并发取消隔离、增量事件、steer、extension 授权、失败/崩溃/取消区分、max duration、强制终止、daemon 崩溃/重启对账/resume、优雅关闭、MCP 全流程与客户端断连、MCP 条件等待与紧凑事件，以及并发/竞态回归
+- 27 个单元测试：JSONL framing、脱敏、持久化/游标、IPC 协议校验、Pi 启动参数、Qoder 启动/环境隔离/权限参数/配置根优先级
+- 33 个集成测试：CLI、daemon、并发取消隔离、增量事件、steer、extension 授权、失败/崩溃/取消区分、max duration、强制终止、daemon 崩溃/重启对账/resume、优雅关闭、MCP 全流程与客户端断连、MCP 条件等待与紧凑事件、Qoder stream-json 全流程（含 late session 与跨配置根刷新），以及并发/竞态回归
 - 2 个依赖真实 Pi 的测试默认跳过（`RUN_REAL_PI=1`）；其中 native session resume 测试不调用模型，real worker 测试会调用一次低成本模型
 
-最终运行：48 tests，46 pass，0 fail，2 skipped。完整输出见 [`evidence/test-suite-races.txt`](evidence/test-suite-races.txt)。
+最终运行：62 tests，60 pass，0 fail，2 skipped。完整输出见 [`evidence/test-suite-qoder.txt`](evidence/test-suite-qoder.txt)。
 
 覆盖的关键断言包括：
 
@@ -420,6 +469,43 @@ npm test
 - shutdown 会等待 in-flight spawn 结束，不遗留活动 Worker；
 - 并发 resume 只产生一个 runtime；
 - 对仍存活的 `orphaned` PID，cancel 明确返回 `UNSUPPORTED`，不伪造成功。
+- Qoder：`system/init` 记录 session、工具调用产生 `tool_start/tool_end`、`result` 产生 `usage/turn_complete`；
+- Qoder：steer 不产生第二个 Worker，最终结果包含 steer 内容，只记录一次 `run.completed`；
+- Qoder：取消只统计 CLI 确认 `cancelled:true` 的队列消息，进程 PID 被确认终止，重复 cancel 只有一条 `run.cancelled`；
+- Qoder：resume 使用同一 session ID/文件，新 prompt 生效，`resumeCount=1`，不重放第一次结果；
+- Qoder：`can_use_tool` 审批可 allow/deny，分别得到 completed 与 failed；
+- Qoder：未登录的 in-band 错误必须报 `failed`，不能因为 `subtype:"success"` 误报 `completed`；
+- Qoder：prompt 之前的预提示 auth 错误也必须失败并保留登录提示，不能卡在 starting 或被忽略；
+- Qoder：首轮结束后才出现的 session 文件、以及实际位于另一个配置根目录的 session，会在 settle 时刷新并记录，保证 resume 可用。
+
+Qoder 测试使用 `test/fixtures/fake-qoder.ts`。它的消息形状来自 Qoder Agent SDK 1.0.55 的协议类型和真实 `qodercli 1.1.75` 的探测，但它仍是模拟进程；**自动化通过不等于真实模型已经跑通**。
+
+### 真实 Qoder CLI 协议探测（不调用模型）
+
+2026-10-22 在 Windows 上用真实 `qodercli 1.1.75` 做了一次无会话持久化探测：发送 `initialize` 控制请求和一条 user 消息，工具集为空，未登录。真实 CLI 返回：
+
+1. `system/init` —— 说明真实 CLI 接受 Supervisor 使用的 initialize 握手；
+2. `assistant` —— 文本 `Not logged in · Please run /login`；
+3. `result` —— `subtype:"success"`、`is_error:true`、`terminal_reason:"completed"`，没有 `errors` 数组。
+
+这验证了协议握手，也暴露了真实错误形态：未登录错误不是进程退出码 42，而是 in-band 的错误 result。适配器已把这种结果映射为 `failed` 并附带登录提示；回归测试见 `Qoder in-band auth failures`。证据见 [`evidence/qoder-protocol-probe/probe.txt`](evidence/qoder-protocol-probe/probe.txt)。该探测没有调用模型，也没有生成持久化 Qoder session；它**不代表**真实 worker/steer/cancel/resume 已验证。
+
+随后又用真实 `qodercli` 通过完整 daemon/adapter 链路跑了一次**未登录、无模型调用**的 spawn（`QODER_CONFIG_DIR`/`QODERCN_CONFIG_DIR` 指向临时目录，未触碰用户 Qoder 配置）：spawn 以 `INVALID_STATE` 退出，Worker 记录为 `failed`，错误包含 `Not logged in` 和 `qodercli login` 提示；daemon 停止后 PID 已确认死亡。这验证了真实二进制的定位、initialize/system-init 握手、in-band 错误映射和清理，但仍不是一次完成的真实模型运行。证据见 [`evidence/qoder-real-adapter-probe/probe.txt`](evidence/qoder-real-adapter-probe/probe.txt)。
+
+### 真实 Qoder Worker + Resume（已执行）
+
+2026-10-22 使用用户本人的 `qodercli login`（登录态位于 `~/.qoder`）和低成本 `DeepSeek-Flash` 运行：
+
+```bash
+env -u QODERCN_CONFIG_DIR -u QODER_CONFIG_DIR \
+QODER_REAL=1 QODER_REAL_MODEL="DeepSeek-Flash" node scripts/e2e-qoder.mjs
+```
+
+实际结果：`qodercli 1.1.76`，worker `w-mvj3cs8c-bac88ff1`，spawn 约 9.7s 返回；首轮 10.0s 完成并返回 `QODER_E2E_OK`；随后 `resume` 返回 `QODER_RESUME_OK`，session ID `cd9efaad-750d-4783-b305-b3ad44e0933a` 与 session 文件均保持不变，`resumeCount=1`，第二个结果没有重放第一个答案；外部 daemon 在运行期间保持存活。任务为纯文本，不调用工具，因此没有自动批准任何权限。
+
+注意事项：Qoder 的 result 中 `usage` / `total_credits` 全为 0，这表示 CLI 没有上报 token/费用，不代表真实零成本；本项目不据此推断节省额度。首轮结束后 session 文件才出现，且实际位于登录配置根 `~/.qoder`；adapter 在 settle 时会刷新并记录真实路径（见下文 late-session 回归测试）。证据见 [`evidence/qoder-real/result.json`](evidence/qoder-real/result.json)、[`events.jsonl`](evidence/qoder-real/events.jsonl) 与 [`test-run.txt`](evidence/qoder-real/test-run.txt)。
+
+仍未验证：真实 `steer`、真实 `cancel`、工具调用与 `can_use_tool` 审批。这些需要额外真实模型调用和人工审批策略，不应由本次纯文本 E2E 冒充。
 
 ### 真实 Pi Worker
 
@@ -479,10 +565,10 @@ $env:CODEX_WORKER_MODE="real"; $env:RUN_CODEX="1"; node scripts/e2e-codex.mjs
 
 ## 10. 已知限制
 
-1. **仅完整支持 Pi**：其他 Harness 需要实现 `HarnessAdapter`；未预先编写大量无用兼容层。
+1. **Pi 完整支持，Qoder 实验性**：Qoder CLI 已有协议 adapter 和模拟协议测试，但登录后的真实 worker/steer/cancel/resume 尚未验证；其他 Harness 需要实现 `HarnessAdapter`。不要把协议测试等同于真实宿主能力。
 2. **Pull-only 事件**：MCP 没有后台唤醒主 Agent；需要宿主侧 notification 支持时再扩展。
-3. **无 pause**：Pi 无原语；resume 是新进程 + 持久化 session。
-4. **自然语言“提问”不自动变成交互**：只有原生 extension dialog 会进入 `awaiting_input`。
+3. **无 pause**：Pi/Qoder 都没有可继续的 pause 原语；resume 是新进程 + 持久化 session。
+4. **自然语言“提问”不自动变成交互**：只有原生 extension dialog（Pi）或 `can_use_tool`（Qoder）会进入 `awaiting_input`。
 5. **daemon 崩溃后无法接管原管道**：只做状态对账，不假装重连；仍存活的 `orphaned` 进程不能通过 Supervisor 取消，需人工确认 PID 后终止。
 6. **PID 复用风险**：对账只做 PID 存活检查；后果是更保守的拒绝，不会自动重跑。
 7. **非沙箱，cwd 不是隔离**：Worker 与 daemon 同用户、继承环境变量，并可按该用户的权限访问文件系统和网络，包括 Supervisor 状态目录与 `ipc.token`；不可信任务必须容器化/独立用户运行。
@@ -497,12 +583,17 @@ $env:CODEX_WORKER_MODE="real"; $env:RUN_CODEX="1"; node scripts/e2e-codex.mjs
 16. **关停有等待上限**：shutdown 最多等待 in-flight 准入 5 秒，之后进入取消/强杀；若 Harness 连强杀都不响应，或 daemon 本身被更底层机制杀死，仍可能需要人工清理残留进程。
 17. **工具子进程的清理上限**：取消/强杀覆盖 Harness 的进程树/进程组；若 Harness 先退出，且它启动的工具子进程被 OS 重新挂接，Supervisor 无法再追踪这些孙进程。需要更强保证时应结合 OS 级 Job Object / cgroup 管理。
 18. **Codex 宿主进程树**：实测 `codex exec 0.161.0` 退出会杀掉 MCP server 的整个进程树；必须先在 Codex 之外启动 daemon，才能让 Worker 跨越 Codex 退出继续运行。交互式 Codex 的生命周期未单独实测。
+19. **Qoder 多轮终态是协议启发式**：Qoder 的 stream-json 可能为 steer/follow-up 产生中间 `result`；adapter 用 350ms/1.5s 静默窗口合并为一次终态。该策略只由模拟协议测试覆盖；真实多轮延迟、工具审批与 interrupt 顺序尚未实测，若真实 CLI 在两次 result 之间静默超过窗口，存在提前判定完成的风险。
+20. **Qoder 权限交互未经真实宿主验证**：`can_use_tool` → `awaiting_input` → `worker_answer` 的映射已按官方协议类型和模拟进程测试实现，但真实 Qoder 的审批 UI/字段/超时行为需要带工具的任务验证。`auto` 模式仍可能按 Qoder 自己的策略自动处理动作，不等同于人工审批。
+21. **Qoder session 布局已真实 resume 验证，但仍依赖版本**：真实 E2E 已验证同一 session ID/文件的 `--resume`；session 文件按 `projects/<encoded-cwd>/<session-id>.jsonl` 定位，首轮后才出现，且可能位于另一个配置根（本机为 `~/.qoder`）。adapter 在 settle 时刷新真实路径，但这依赖当前布局；Qoder 版本变化可能改变。
+22. **Qoder 版本范围**：协议形状在 `qodercli 1.1.75`（无登录探测）和 `1.1.76`（真实 worker + resume）上验证，参考 Qoder Agent SDK 1.0.55；其他版本的字段、权限模式、session 布局或 stream-json 行为可能不同。升级后应重新运行 Qoder 测试与真实 E2E。
 
 ---
 
 ## 11. 下一步值得扩展（不急）
 
-- 第二个 runtime adapter（优先选支持 ACP 的原生 Harness，并复用成熟 ACP SDK）
+- 完成 Qoder 真实 steer / cancel / 工具审批验证（worker + resume 已通过，证据在 `evidence/qoder-real/`）
+- 第二个非 Pi runtime adapter（优先选支持 ACP 的原生 Harness，并复用成熟 ACP SDK）
 - 事件日志 retention / 归档 / 结构化磁盘配额
 - 宿主推送适配层（hooks/webhook/IDE channel），在真实有唤醒能力时明确标注
 - 更严格的沙箱与 per-worker 环境变量 allowlist
@@ -518,6 +609,7 @@ $env:CODEX_WORKER_MODE="real"; $env:RUN_CODEX="1"; node scripts/e2e-codex.mjs
 ```
 src/
   adapters/pi/        Pi 原生 RPC 适配器、启动解析、JSONL session
+  adapters/qoder/     Qoder CLI stream-json/stdio 适配器（实验性）
   ipc/                named pipe / Unix socket、token、server/client
   util/               JSONL、脱敏、日志、文件
   types.ts            公开类型与 Worker/Event schema
@@ -529,11 +621,12 @@ src/
   mcp.ts              MCP server
   index.ts            库导出
 test/
-  fixtures/           脚本化 Pi RPC Harness（仅测试）
+  fixtures/           脚本化 Pi RPC / Qoder stream-json Harness（仅测试）
   unit/ integration/ e2e/
 scripts/
   e2e-parent-pi.mjs   真实父 Pi -> 子 Pi 证据脚本
-evidence/             实际运行产物与断言
+  e2e-qoder.mjs       真实 Qoder worker + resume 脚本（需登录）
+evidence/             实际运行产物与断言（qoder-protocol-probe 为真实 CLI 无模型探测）
 examples/             Codex / 通用 MCP / CLI 示例
 ```
 

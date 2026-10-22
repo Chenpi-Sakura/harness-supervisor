@@ -1,6 +1,6 @@
 # Test evidence
 
-All artifacts here were produced by actual runs on 2026-10-21 and 2026-10-22 (Windows, Node v24.21.0, Pi 1.3.0, codex-cli 0.161.0).
+All artifacts here were produced by actual runs on 2026-10-21 and 2026-10-22 (Windows, Node v24.21.0, Pi 1.3.0, codex-cli 0.161.0; qodercli 1.1.75 for the protocol probe and 1.1.76 for the real worker/resume run).
 
 ## 1. Real Pi worker
 
@@ -64,12 +64,14 @@ Scope: these runs validate client-side lifecycle flows, not daemon-crash recover
 
 ## 8. Automated suite
 
-The fake harness is a scripted implementation of the documented Pi RPC subset. Every fake-harness test runs the production Pi adapter, IPC daemon, supervisor state machine, CLI, or MCP server; it does not bypass the implementation.
+The fake harnesses are scripted implementations of the documented Pi RPC subset and the Qoder stream-json/control subset. Every fake-harness test runs the production adapter, IPC daemon, supervisor state machine, CLI, or MCP server; it does not bypass the implementation.
 
 - Baseline run (2026-10-21, before the lifecycle/race fixes): 38 tests, 36 pass, 0 fail, 2 skipped.
   Full output: [test-suite.txt](test-suite.txt).
-- Current run (2026-10-22, after the desktop interaction round and compact-wait change): 48 tests, 46 pass, 0 fail, 2 skipped (the gated real-Pi tests), 98.9s.
+- Desktop interaction round (2026-10-22, after the desktop interaction round and compact-wait change): 48 tests, 46 pass, 0 fail, 2 skipped (the gated real-Pi tests), 98.9s.
   Full output: [test-suite-races.txt](test-suite-races.txt).
+- Qoder adapter round (2026-10-22): 62 tests, 60 pass, 0 fail, 2 skipped (the gated real-Pi tests).
+  Full output: [test-suite-qoder.txt](test-suite-qoder.txt).
 
 The added regression coverage:
 
@@ -84,5 +86,34 @@ The added regression coverage:
 - MCP exposes server instructions and read-only annotations for the query tools;
 - MCP `worker_wait` without a cursor reads current status and recent events first, returns new events incrementally, does not duplicate returned seqs, and does not cause a second spawn for the same task.
 - MCP `worker_wait` omits `run.progress` by default, reports `eventsOmitted`, and returns progress when `includeProgress=true` or `types=["run.progress"]` is requested.
+- Qoder stream-json init/session/tool/usage events are persisted, steer does not spawn a duplicate worker, cancellation clears only CLI-confirmed queued messages and kills the PID, resume reuses the same session id/file without replay, permission approval allow/deny works, and in-band "not logged in" results are failed rather than completed.
+- Qoder records a session file that appears after the first turn in a different config root; the settle-time refresh persists the real path and a `worker.session` event with `refreshed:true`.
+
+## 9. Real Qoder CLI protocol probe (no model call)
+
+- Host: Windows, `qodercli 1.1.75`, no login, `--no-session-persistence`, empty tool set.
+- The probe sent `control_request {type:"initialize"}` and one user message.
+- Observed: `system/init`; `assistant` text `Not logged in · Please run /login`; `result` with `subtype:"success"`, `is_error:true`, `terminal_reason:"completed"` and no `errors` array.
+- Conclusion: the real CLI accepts the initialize handshake; unauthenticated runs must be mapped to failed from `is_error`, not from the result subtype. No model was called and no Qoder session was persisted.
+- See [qoder-protocol-probe/probe.txt](qoder-protocol-probe/probe.txt).
+- This is not a completed worker, steer, cancel, permission, or resume validation.
+
+### Real adapter failure-path probe (no model call)
+
+- A real daemon was started with fresh temporary `QODER_CONFIG_DIR`/`QODERCN_CONFIG_DIR` (the user's Qoder config/session area was not used) and `node dist/src/cli.js spawn --runtime qoder ...` was invoked without login.
+- Result: spawn exit 2 with `INVALID_STATE: Not logged in · Please run /login...`; worker `w-mvj2vt5f-45bad2e8` recorded as `failed` (`startup_failed`, exit code 1, `turns=0`); no `run.completed`; events show `session_init`, the assistant login message, `worker.started`/`worker.session`, `run.failed`, and `worker.exited`. The session-path field was recorded but no session file was persisted; `resumeAvailable` was false.
+- The PID was already dead when the failed worker was listed and remained dead after daemon shutdown.
+- See [qoder-real-adapter-probe/probe.txt](qoder-real-adapter-probe/probe.txt), [worker.json](qoder-real-adapter-probe/worker.json), [events.jsonl](qoder-real-adapter-probe/events.jsonl), and [result.json](qoder-real-adapter-probe/result.json).
+- This validates real binary launch, initialize/system-init, env isolation, in-band auth error mapping, and cleanup. It does not validate a completed real model run, steering, cancellation, permission prompts, or resume.
+
+## 10. Real Qoder worker + resume (executed 2026-10-22)
+
+- Host: Windows, `qodercli 1.1.76`, login state in `~/.qoder`, model `DeepSeek-Flash`.
+- Command: `env -u QODERCN_CONFIG_DIR -u QODER_CONFIG_DIR QODER_REAL=1 QODER_REAL_MODEL="DeepSeek-Flash" node scripts/e2e-qoder.mjs`.
+- Worker `w-mvj3cs8c-bac88ff1`; spawn returned in 9.7s; first text-only run completed in 10.0s with `QODER_E2E_OK`.
+- `resume` returned `QODER_RESUME_OK` with the same session id `cd9efaad-750d-4783-b305-b3ad44e0933a` and session file, `resumeCount=1`, and no replay of the first answer. The daemon stayed alive during the run.
+- Qoder reported zero `usage` / `total_credits` fields for both turns; this is not a claim of zero token/cost usage.
+- See [qoder-real/result.json](qoder-real/result.json), [qoder-real/events.jsonl](qoder-real/events.jsonl), and [qoder-real/test-run.txt](qoder-real/test-run.txt).
+- Not validated: real steer, cancel, tool calls, or `can_use_tool` approval. The task was intentionally text-only, so no permission prompt was auto-approved.
 
 > Note: the original temp state/work directories may be cleaned up; the artifacts relevant to each run are copied into these evidence folders.

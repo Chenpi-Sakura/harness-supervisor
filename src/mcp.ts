@@ -98,7 +98,7 @@ server.registerTool(
     inputSchema: {
       cwd: z.string().min(1).describe("Working directory for the harness process"),
       prompt: z.string().min(1).describe("Task/instruction sent to the native harness"),
-      runtime: z.string().min(1).optional().describe("Runtime adapter name (default: pi)"),
+      runtime: z.string().min(1).optional().describe("Runtime adapter name (default: pi; qoder uses the Qoder CLI)"),
       name: z.string().min(1).max(200).optional().describe("Human-readable worker label"),
       ...ConfigShape,
     },

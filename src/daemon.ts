@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { PiAdapter } from "./adapters/pi/adapter.js";
+import { QoderAdapter } from "./adapters/qoder/adapter.js";
 import { SupervisorError, errorMessage } from "./errors.js";
 import { IpcServer } from "./ipc/server.js";
 import {
@@ -12,6 +13,7 @@ import {
 import { ipcEndpoint, resolveStateDir } from "./ipc/protocol.js";
 import { Store } from "./store.js";
 import { Supervisor } from "./supervisor.js";
+import type { HarnessAdapter } from "./types.js";
 import { Deferred, clampInt } from "./util/async.js";
 import { ensureDir } from "./util/fsx.js";
 import { createLogger, type Logger } from "./util/logger.js";
@@ -52,9 +54,22 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       logger.warn(`Pi RPC diagnostic for ${workerId}`, { message });
     },
   });
+  const qoderAdapter = new QoderAdapter({
+    onStderr: (workerId, text) => {
+      void store.appendStderr(workerId, text).catch((error: unknown) => {
+        logger.warn(`Failed to persist stderr for ${workerId}`, { error: errorMessage(error) });
+      });
+    },
+    onDiagnostic: (workerId, message) => {
+      logger.warn(`Qoder CLI diagnostic for ${workerId}`, { message });
+    },
+  });
   const supervisor = new Supervisor({
     store,
-    adapters: new Map([["pi", piAdapter]]),
+    adapters: new Map<string, HarnessAdapter>([
+      ["pi", piAdapter],
+      ["qoder", qoderAdapter],
+    ]),
     logger,
     supervisorId,
     stateDir,

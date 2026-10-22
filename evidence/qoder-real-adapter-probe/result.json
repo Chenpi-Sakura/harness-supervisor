@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-22",
+  "host": "Windows",
+  "qodercli": "1.1.75",
+  "config": "fresh temporary QODER_CONFIG_DIR/QODERCN_CONFIG_DIR; user Qoder config was not used",
+  "command": "node dist/src/cli.js spawn --runtime qoder --cwd <temp> --prompt \"Reply with QODER_PROBE_OK only. Do not use any tools.\" --json",
+  "spawnExit": 2,
+  "spawnError": "INVALID_STATE: Not logged in · Please run /login. Run `qodercli login` for the same OS user or set QODER_PERSONAL_ACCESS_TOKEN.",
+  "worker": {
+    "id": "w-mvj2vt5f-45bad2e8",
+    "runtime": "qoder",
+    "status": "failed",
+    "statusReason": "startup_failed",
+    "error": "Not logged in · Please run /login. Run `qodercli login` for the same OS user or set QODER_PERSONAL_ACCESS_TOKEN.",
+    "cwd": "%USERPROFILE%\\AppData\\Local\\Temp\\hs-qprobe2-work-5R2PKz",
+    "pid": 73120,
+    "sessionId": "5898a37c-f356-4156-9680-3a7e7bbb6ef0",
+    "sessionFilePathRecorded": true,
+    "sessionFileExists": false,
+    "stats": {
+      "turns": 0,
+      "toolCalls": 0,
+      "toolErrors": 0
+    },
+    "exit": {
+      "code": 1,
+      "signal": null,
+      "at": "2026-10-22T05:06:10.203Z"
+    },
+    "resumeCount": 0,
+    "capabilities": {
+      "runtime": "qoder",
+      "steer": true,
+      "followUp": true,
+      "cancel": true,
+      "resume": true,
+      "pause": false,
+      "interactiveInput": true,
+      "notes": "Qoder CLI stream-json over stdio (--print --input-format stream-json). Steering and follow-ups send priority next/later user messages; cancellation uses the interrupt control request plus process termination; permission prompts are surfaced as awaiting_input and answered through the can_use_tool control protocol; resume uses --resume <session-id> and verifies the returned session id. Qoder sessions live in the user's Qoder config directory. There is no sandbox: cwd is not a file-isolation boundary. Protocol support is covered by a scripted CLI and a real no-login failure probe; a completed real-model worker/steer/cancel/resume run is not yet validated."
+    }
+  },
+  "events": [
+    "worker.starting",
+    "run.progress:session_init",
+    "run.progress:assistant_message",
+    "worker.started",
+    "worker.session",
+    "run.failed",
+    "worker.exited"
+  ],
+  "pidAliveAtListTime": false,
+  "pidDeadAfterShutdown": true,
+  "conclusion": "The real binary was located, the initialize/system-init handshake worked, the in-band auth error was mapped to failed (not completed), and the process was gone after shutdown. No model was called and no user Qoder session was read or written.",
+  "notValidated": "completed real model run, steering, cancellation, permission prompts, resume"
+}

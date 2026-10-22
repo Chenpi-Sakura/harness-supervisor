@@ -1,0 +1,7 @@
+{"seq":1,"workerId":"w-mvj2vt5f-45bad2e8","ts":"2026-10-22T05:06:03.226Z","type":"worker.starting","data":{"runtime":"qoder","cwd":"%USERPROFILE%\\AppData\\Local\\Temp\\hs-qprobe2-work-5R2PKz","resumed":false}}
+{"seq":2,"workerId":"w-mvj2vt5f-45bad2e8","ts":"2026-10-22T05:06:07.239Z","type":"run.progress","data":{"kind":"session_init","detail":"auto (acceptEdits)"}}
+{"seq":3,"workerId":"w-mvj2vt5f-45bad2e8","ts":"2026-10-22T05:06:07.248Z","type":"run.progress","data":{"kind":"assistant_message","preview":"Not logged in · Please run /login"}}
+{"seq":4,"workerId":"w-mvj2vt5f-45bad2e8","ts":"2026-10-22T05:06:08.920Z","type":"worker.started","data":{"pid":73120,"runtime":"qoder"}}
+{"seq":5,"workerId":"w-mvj2vt5f-45bad2e8","ts":"2026-10-22T05:06:08.926Z","type":"worker.session","data":{"sessionId":"5898a37c-f356-4156-9680-3a7e7bbb6ef0","sessionFile":"%USERPROFILE%\\AppData\\Local\\Temp\\hs-qprobe2-config-HTEdap\\projects\\%USERPROFILE-ENCODED%-AppData-Local-Temp-hs-qprobe2-work-5R2PKz\\5898a37c-f356-4156-9680-3a7e7bbb6ef0.jsonl","fileExists":false}}
+{"seq":6,"workerId":"w-mvj2vt5f-45bad2e8","ts":"2026-10-22T05:06:10.203Z","type":"run.failed","data":{"stage":"startup","error":"Not logged in · Please run /login. Run `qodercli login` for the same OS user or set QODER_PERSONAL_ACCESS_TOKEN.","forcedCleanup":true}}
+{"seq":7,"workerId":"w-mvj2vt5f-45bad2e8","ts":"2026-10-22T05:06:10.203Z","type":"worker.exited","data":{"code":1,"signal":null,"forced":true}}

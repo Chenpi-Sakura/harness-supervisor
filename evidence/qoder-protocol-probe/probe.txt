@@ -1,0 +1,24 @@
+Qoder CLI real protocol probe (no model call, no session persistence)
+Date: 2026-10-22
+Host: Windows, qodercli 1.1.75
+Command: a local probe sent one control_request {type:"initialize"} and one user message,
+using --print --output-format stream-json --input-format stream-json
+--permission-prompt-tool stdio --permission-mode dont_ask --tools "" --no-session-persistence.
+The desktop-injected QODER_AGENT_SDK_ENTRYPOINT / auth-payload variables were removed first.
+
+Observed stdout records (3 total):
+
+1. type=system subtype=init
+2. type=assistant
+   text: "Not logged in · Please run /login"
+3. type=result subtype=success is_error=true terminal_reason=completed
+
+Conclusion:
+- The real CLI accepted the initialize control request and emitted the documented system init.
+- Authentication is checked per turn, not at process start: an unauthenticated run arrives as a
+  result with subtype "success" but is_error=true and no errors array; the explanation is in the
+  preceding assistant text. The adapter maps this to run.failed, not run.completed.
+- No model was called and no Qoder session was persisted by this probe.
+
+This does not validate a completed real worker, steering, cancellation, permissions, or resume.
+Those require an existing `qodercli login` state and are covered by scripts/e2e-qoder.mjs.

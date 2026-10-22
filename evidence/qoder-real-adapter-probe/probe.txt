@@ -1,0 +1,18 @@
+Real Qoder CLI adapter probe (no login, no model call)
+
+Date: 2026-10-22
+Host: Windows, qodercli 1.1.75
+Config isolation: fresh temporary QODER_CONFIG_DIR/QODERCN_CONFIG_DIR; user Qoder config was not used
+Command: node dist/src/cli.js spawn --runtime qoder --cwd <temp> --prompt "Reply with QODER_PROBE_OK only. Do not use any tools." --json
+Spawn exit: 2
+Spawn error: INVALID_STATE: Not logged in · Please run /login. Run `qodercli login` for the same OS user or set QODER_PERSONAL_ACCESS_TOKEN.
+
+Worker: w-mvj2vt5f-45bad2e8 status=failed pid=73120 session=5898a37c-f356-4156-9680-3a7e7bbb6ef0
+Turns=0 tools=0 errors=0
+Session file path recorded=true exists=false
+Event sequence: worker.starting, run.progress:session_init, run.progress:assistant_message, worker.started, worker.session, run.failed, worker.exited
+
+The PID was already dead when the failed worker was listed, and remained dead after daemon shutdown.
+
+Conclusion: The real binary was located, the initialize/system-init handshake worked, the in-band auth error was mapped to failed (not completed), and the process was gone after shutdown. No model was called and no user Qoder session was read or written.
+Not validated: completed real model run, steering, cancellation, permission prompts, resume.

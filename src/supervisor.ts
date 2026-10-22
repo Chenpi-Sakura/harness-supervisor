@@ -915,6 +915,35 @@ export class Supervisor {
     runtime.terminal.resolve();
   }
 
+  private async refreshSessionState(runtime: Runtime): Promise<void> {
+    const session = runtime.session;
+    const record = runtime.record;
+    if (!session) return;
+    try {
+      const state = await withTimeout(session.getState(), 1500, "session state refresh timed out");
+      if (state.sessionId) record.sessionId = state.sessionId;
+      if (
+        state.sessionFile &&
+        existsSync(state.sessionFile) &&
+        (!record.sessionFile ||
+          normalizePath(state.sessionFile) !== normalizePath(record.sessionFile))
+      ) {
+        record.sessionFile = state.sessionFile;
+        this.store.appendEvent(record.id, "worker.session", {
+          sessionId: record.sessionId,
+          sessionFile: state.sessionFile,
+          fileExists: true,
+          refreshed: true,
+        });
+        await this.store.saveWorker(record);
+      }
+    } catch (error) {
+      this.logger.debug(`Session state refresh failed for ${record.id}`, {
+        error: errorMessage(error),
+      });
+    }
+  }
+
   private async finalizeSettled(runtime: Runtime): Promise<void> {
     if (runtime.finalizing || isTerminal(runtime.record.status)) return;
     runtime.finalizing = true;
@@ -1182,6 +1211,7 @@ export class Supervisor {
       }
       case "settled": {
         runtime.settled = event;
+        await this.refreshSessionState(runtime);
         await this.finalizeSettled(runtime);
         break;
       }
@@ -1197,6 +1227,7 @@ export class Supervisor {
     const record = runtime.record;
     if (isTerminal(record.status) || runtime.finalizing) return;
     if (runtime.settled) {
+      await this.refreshSessionState(runtime);
       await this.finalizeSettled(runtime);
       return;
     }
@@ -1319,7 +1350,7 @@ export class Supervisor {
       ) {
         throw new SupervisorError(
           "UNSUPPORTED",
-          "Pi did not load the expected session (session ID mismatch). Refusing to report a fake resume.",
+          "The harness did not load the expected session (session ID mismatch). Refusing to report a fake resume.",
           {
             expectedSessionId: options.expectedSessionId,
             actualSessionId: state.sessionId,
@@ -1330,7 +1361,7 @@ export class Supervisor {
         if (!state.sessionFile || !existsSync(state.sessionFile)) {
           throw new SupervisorError(
             "UNSUPPORTED",
-            "Pi did not report a usable persisted session after resume.",
+            "The harness did not report a usable persisted session after resume.",
             { sessionFile: state.sessionFile },
           );
         }
@@ -1399,7 +1430,7 @@ export class Supervisor {
       this.store.appendEvent(record.id, "run.progress", {
         kind: "input_timeout",
         requestId: pending.requestId,
-        note: "Pi's extension dialog timeout elapsed; the supervisor no longer reports awaiting_input.",
+        note: "The harness input timeout elapsed; the supervisor no longer reports awaiting_input.",
       });
       void this.store.saveWorker(record).catch(() => undefined);
     }, timeoutMs + 250);

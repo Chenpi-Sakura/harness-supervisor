@@ -14,6 +14,7 @@ import type {
 import { isPidAlive, sleep } from "../../src/util/async.js";
 
 export const FAKE_ENTRY = fileURLToPath(new URL("../fixtures/fake-harness.js", import.meta.url));
+export const FAKE_QODER_ENTRY = fileURLToPath(new URL("../fixtures/fake-qoder.js", import.meta.url));
 export const DAEMON_ENTRY = fileURLToPath(new URL("../../src/daemon-entry.js", import.meta.url));
 export const MCP_ENTRY = fileURLToPath(new URL("../../src/mcp.js", import.meta.url));
 export const CLI_ENTRY = fileURLToPath(new URL("../../src/cli.js", import.meta.url));

@@ -1,0 +1,78 @@
+
+> harness-supervisor@0.1.0 test
+> npm run build && node test/run.mjs
+
+
+> harness-supervisor@0.1.0 build
+> tsc -p tsconfig.json
+
+﹣ REAL Pi loads a persisted session through the adapter and retains its session id (0.7143ms) # Set RUN_REAL_PI=1 to run this native-Pi session-loading test (it makes no model call).
+﹣ REAL Pi worker executes a task in its own working directory (0.5588ms) # Set RUN_REAL_PI=1 to run this paid, real-model integration test.
+✔ CLI starts the supervisor, spawns a worker, steers it, and reads terminal state (7370.7996ms)
+✔ CLI spawn --wait returns one final JSON document (1312.0345ms)
+✔ completed, failed, crashed, and cancelled are distinct terminal outcomes (1195.7696ms)
+✔ cancellation force-kills a harness that ignores abort (7696.3725ms)
+✔ spawn returns while running, and the worker survives main-client disconnect (3270.021ms)
+✔ event cursors are incremental and bounded waits do not replay history (2609.2218ms)
+✔ a steering message reaches a running worker (2688.2329ms)
+✔ extension dialogs surface as awaiting_input and can be answered (821.4388ms)
+✔ cancelling one worker does not disturb another (4855.1449ms)
+✔ max duration cancels the run and reports why (1832.1625ms)
+✔ resume refuses to fake a session that no longer exists (706.6511ms)
+✔ MCP wait without a cursor observes current state and returns incremental results (4762.2658ms)
+✔ MCP client can spawn, observe, steer, cancel, and outlive its own disconnect (7194.2882ms)
+✔ Qoder worker runs through stream-json, persists a session, and exposes tool events (1281.7577ms)
+✔ Qoder records a session file that appears after the first turn in another config root (2769.6913ms)
+✔ Qoder steering interrupts a running turn and the final result reflects the steer (1807.4264ms)
+✔ Qoder cancellation clears a queued follow-up, kills the process, and stays idempotent (874.2508ms)
+✔ Qoder resume continues the same native session and reads prior context (1874.1948ms)
+✔ Qoder permission requests surface as awaiting_input and allow or deny correctly (1484.8585ms)
+✔ Qoder in-band auth failures are reported as failed, not completed (748.4348ms)
+✔ Qoder pre-prompt in-band auth errors fail the spawn with the login hint (701.1086ms)
+✔ Qoder startup reports an honest login error when the CLI is not authenticated (642.0955ms)
+✔ concurrent spawn requests cannot exceed maxWorkers (695.5006ms)
+✔ send and duplicate answer are rejected once cancellation starts (686.5671ms)
+✔ duplicate concurrent answers to one dialog are rejected (726.0273ms)
+✔ cancel clears queued steering before aborting (686.786ms)
+✔ cancel during startup cancels before the prompt is accepted (6061.9962ms)
+✔ concurrent cancels are idempotent and record one cancellation (665.0646ms)
+✔ shutdown waits out an in-flight spawn and leaves no live worker (856.495ms)
+✔ concurrent resumes produce one live runtime only (885.463ms)
+✔ daemon crash leaves an explicitly detached worker; resume is manual and verified (1518.0002ms)
+✔ an orphaned live PID is reported honestly and cannot be cancelled (1231.054ms)
+✔ graceful daemon shutdown cancels active workers and records why (1140.818ms)
+✔ IPC endpoint is deterministic and platform-appropriate (0.9874ms)
+✔ token digests are comparable fixed-length buffers (0.1466ms)
+✔ parses a valid hello and rejects malformed ones (1.1948ms)
+✔ validates request envelopes and method params (1.3581ms)
+✔ decodes multiple records across arbitrary byte boundaries (1.2605ms)
+✔ does not split on U+2028 / U+2029 and strips CRLF (0.1335ms)
+✔ reports invalid JSON but continues with later records (0.7918ms)
+✔ parses a final line without a newline on end (0.147ms)
+✔ ignores empty lines and non-object records (0.16ms)
+✔ JS entry launches as node <entry> <pi args>, not node <pi args> <entry> (2.4705ms)
+✔ explicit executable gets Pi args after it (0.2558ms)
+✔ malformed Pi args env is rejected (1.3429ms)
+✔ extraArgs cannot override supervisor-managed Pi options (0.3358ms)
+✔ Qoder launch strips desktop SDK entrypoint state and keeps the child standalone (4.7075ms)
+✔ Qoder permission modes default to auto and reject bypass modes (0.4612ms)
+✔ Qoder extraArgs cannot override supervisor-managed or safety-sensitive flags (0.2647ms)
+✔ Qoder config roots prefer QODER_CONFIG_DIR over QODERCN_CONFIG_DIR (4.5063ms)
+✔ Qoder session paths are derived from the project directory and session id (0.4455ms)
+✔ redacts common API key and bearer formats (1.8197ms)
+✔ redacts sensitive environment values (0.1706ms)
+✔ redacts private key blocks (0.1472ms)
+✔ safeText truncates and redacts (0.142ms)
+✔ truncateText reports whether it truncated (0.5881ms)
+✔ persists records and events and reloads them with a valid cursor (32.716ms)
+✔ ignores a corrupt trailing event line on reload (13.7578ms)
+✔ event writes preserve ordering even when enqueued together (35.2919ms)
+✔ stderr tail keeps the newest content (11.4851ms)
+ℹ tests 62
+ℹ suites 0
+ℹ pass 60
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 2
+ℹ todo 0
+ℹ duration_ms 117353.6829

@@ -29,6 +29,7 @@
     "test:e2e": "npm run build && node test/run.mjs e2e",
     "e2e:parent": "npm run build && node scripts/e2e-parent-pi.mjs",
     "e2e:codex": "npm run build && node scripts/e2e-codex.mjs",
+    "e2e:qoder": "npm run build && node scripts/e2e-qoder.mjs",
     "cli": "node dist/src/cli.js",
     "mcp": "node dist/src/mcp.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"

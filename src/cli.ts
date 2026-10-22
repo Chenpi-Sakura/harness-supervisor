@@ -33,7 +33,7 @@ Daemon:
 
 Workers:
   spawn --prompt <text> [--cwd <dir>] [--name <n>] [--model <m>] [--provider <p>]
-        [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi]
+        [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder]
         [--extra-args '["--no-extensions"]'] [--wait] [--json]
   list [--status running,failed] [--limit 50] [--json]
   status <workerId> [--json]

@@ -9,6 +9,8 @@ import {
   isTerminal,
   type ExtensionUiResponse,
   type SendMode,
+  type WaitResult,
+  type WorkerEvent,
   type WorkerStatus,
   type WorkerStatusResult,
 } from "./types.js";
@@ -44,6 +46,16 @@ function fail(error: unknown) {
   };
 }
 
+function compactWaitEvents(events: WorkerEvent[], includeProgress: boolean) {
+  if (includeProgress) return { events, eventsOmitted: 0 };
+  const visible = events.filter((event) => {
+    if (event.type !== "run.progress") return true;
+    const kind = event.data?.kind;
+    return kind === "queue_cleared" || (kind === "tool_end" && event.data?.isError === true);
+  });
+  return { events: visible, eventsOmitted: events.length - visible.length };
+}
+
 const ConfigShape = {
   model: z.string().min(1).max(200).optional().describe("Pi model override"),
   provider: z.string().min(1).max(200).optional().describe("Pi provider override"),
@@ -73,7 +85,7 @@ const server = new McpServer(
   },
   {
     instructions:
-      "Harness Supervisor owns native Pi workers. worker_spawn returns after prompt acceptance, never completion. Use worker_wait without sinceSeq for condition waits (it checks current status and the latest events first), or pass a cursor for strict incremental reads. worker_wait returns immediately when the worker needs input; answer with worker_answer. MCP is pull-based: there is no background wake-up. Reuse the worker id until terminal; do not spawn a duplicate for the same task.",
+      "Harness Supervisor owns native Pi workers. worker_spawn returns after prompt acceptance, never completion. Use worker_wait without sinceSeq for condition waits (it checks current status and the latest events first), or pass a cursor for strict incremental reads. worker_wait omits noisy run.progress events by default (queue_cleared and tool-error progress are kept); pass includeProgress=true or use worker_events for the full history. worker_wait returns immediately when the worker needs input; answer with worker_answer. MCP is pull-based: there is no background wake-up. Reuse the worker id until terminal; do not spawn a duplicate for the same task.",
   },
 );
 
@@ -212,7 +224,7 @@ server.registerTool(
   {
     title: "Wait for worker progress or completion",
     description:
-      "Bounded long-poll. MCP tools are pull-based: this returns when the host calls it, and the supervisor cannot wake the main agent in the background. Default 20s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
+      "Bounded long-poll. MCP tools are pull-based: this returns when the host calls it, and the supervisor cannot wake the main agent in the background. Default 20s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. Normal run.progress events are omitted by default to keep context small; queue_cleared and tool-error progress are retained. Pass includeProgress=true (or request types=['run.progress']) for full progress, or use worker_events for complete history. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
     annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: false },
     inputSchema: {
       workerId: z.string().min(1),
@@ -220,11 +232,17 @@ server.registerTool(
       timeoutMs: z.number().int().min(0).max(120_000).optional(),
       until: z.enum(["terminal", "event"]).optional(),
       types: z.array(z.string()).max(30).optional().describe("Wake early on any of these event types"),
+      includeProgress: z
+        .boolean()
+        .optional()
+        .describe("Include run.progress events (tool/turn/assistant updates). Defaults to false; use worker_events for full history"),
     },
   },
   async (args) => {
     const timeoutMs = args.timeoutMs ?? 20_000;
     const until = args.until ?? "terminal";
+    const includeProgress =
+      args.includeProgress === true || (args.types?.includes("run.progress") ?? false);
     try {
       let sinceSeq = args.sinceSeq;
       if (sinceSeq === undefined) {
@@ -245,9 +263,14 @@ server.registerTool(
           needsInput ||
           (until === "event" && typeFilter !== null && matched.length > 0)
         ) {
+          const compacted = compactWaitEvents(
+            terminal || needsInput ? recent : matched,
+            includeProgress,
+          );
           return ok({
             worker: current,
-            events: terminal || needsInput ? recent : matched,
+            events: compacted.events,
+            eventsOmitted: compacted.eventsOmitted,
             nextSeq: current.lastSeq,
             hasMore: false,
             timedOut: false,
@@ -256,19 +279,23 @@ server.registerTool(
         }
         sinceSeq = current.lastSeq;
       }
-      return ok(
-        await client.request(
-          "wait",
-          {
-            workerId: args.workerId,
-            sinceSeq,
-            timeoutMs,
-            until,
-            types: args.types,
-          },
-          { timeoutMs: timeoutMs + 10_000 },
-        ),
+      const result = await client.request<WaitResult>(
+        "wait",
+        {
+          workerId: args.workerId,
+          sinceSeq,
+          timeoutMs,
+          until,
+          types: args.types,
+        },
+        { timeoutMs: timeoutMs + 10_000 },
       );
+      const compacted = compactWaitEvents(result.events, includeProgress);
+      return ok({
+        ...result,
+        events: compacted.events,
+        eventsOmitted: compacted.eventsOmitted,
+      });
     } catch (error) {
       return fail(error);
     }

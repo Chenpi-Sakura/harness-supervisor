@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "w-mvixm5gl-40179d91",
+  "runtime": "pi",
+  "cwd": "D:\\tmp\\hs-desktop-test",
+  "promptPreview": "请创建文件 desktop-check.txt，内容必须恰好是 SUPERVISOR_DESKTOP_OK，然后回复 DESKTOP_DONE。",
+  "status": "completed",
+  "createdAt": "2026-10-22T02:38:34.533Z",
+  "updatedAt": "2026-10-22T02:38:50.728Z",
+  "lastSeq": 15,
+  "eventCount": 15,
+  "stats": {
+    "turns": 3,
+    "toolCalls": 2,
+    "toolErrors": 0
+  },
+  "capabilities": {
+    "runtime": "pi",
+    "steer": true,
+    "followUp": true,
+    "cancel": true,
+    "resume": true,
+    "pause": false,
+    "interactiveInput": true,
+    "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+  },
+  "config": {},
+  "resumeCount": 0,
+  "supervisorId": "186c2acb-820c-402b-bfbc-811a7d768b58",
+  "pid": 35236,
+  "sessionId": "01a16179-802e-7011-86ea-a495133b7f27",
+  "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mvixm5gl-40179d91\\2026-10-22T02-38-35-054Z_01a16179-802e-7011-86ea-a495133b7f27.jsonl",
+  "startedAt": "2026-10-22T02:38:39.928Z",
+  "endedAt": "2026-10-22T02:38:50.723Z",
+  "exit": {
+    "code": 0,
+    "signal": null,
+    "at": "2026-10-22T02:38:50.723Z"
+  },
+  "result": {
+    "text": "已创建 `D:/tmp/hs-desktop-test/desktop-check.txt`，内容恰为 `SUPERVISOR_DESKTOP_OK`（无结尾换行）。\n\nDESKTOP_DONE",
+    "truncated": false
+  }
+}

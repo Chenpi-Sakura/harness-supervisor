@@ -1,0 +1,81 @@
+{
+  "source": "Sanitized extract from the Codex desktop session; system prompts and conversation are not included",
+  "session": "rollout-2026-10-22T10-36-34-01a16177-a8f6-7831-9952-0d668ce8423c.jsonl",
+  "toolCalls": [
+    {
+      "name": "supervisor_info",
+      "argsText": "{}",
+      "result": {
+        "version": "0.1.0",
+        "pid": 31964,
+        "stateDir": "C:\\Users\\Lenovo\\.harness-supervisor",
+        "wake": {
+          "proactive": false,
+          "note": "Events are persisted and retrievable. MCP tools are pull-based: the host must call worker_wait or worker_events to observe them. The supervisor does not claim the ability to wake the main agent in the background."
+        },
+        "runtimes": [
+          {
+            "runtime": "pi",
+            "steer": true,
+            "followUp": true,
+            "cancel": true,
+            "resume": true,
+            "pause": false,
+            "interactiveInput": true,
+            "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+          }
+        ]
+      }
+    },
+    {
+      "name": "worker_spawn",
+      "argsText": "{\n  cwd: \"D:/tmp/hs-desktop-test\",\n  prompt: \"请创建文件 desktop-check.txt，内容必须恰好是 SUPERVISOR_DESKTOP_OK，然后回复 DESKTOP_DONE。\"\n}",
+      "result": {
+        "id": "w-mvixm5gl-40179d91",
+        "status": "running",
+        "lastSeq": 5,
+        "pid": 35236,
+        "sessionId": "01a16179-802e-7011-86ea-a495133b7f27",
+        "sessionFile": "C:\\Users\\Lenovo\\.harness-supervisor\\sessions\\w-mvixm5gl-40179d91\\2026-10-22T02-38-35-054Z_01a16179-802e-7011-86ea-a495133b7f27.jsonl",
+        "cwd": "D:\\tmp\\hs-desktop-test",
+        "promptPreview": "请创建文件 desktop-check.txt，内容必须恰好是 SUPERVISOR_DESKTOP_OK，然后回复 DESKTOP_DONE。"
+      }
+    },
+    {
+      "name": "worker_wait",
+      "argsText": "{\n  workerId: \"w-mvixm5gl-40179d91\",\n  until: \"terminal\",\n  timeoutMs: 60000\n}",
+      "result": {
+        "worker": {
+          "id": "w-mvixm5gl-40179d91",
+          "status": "completed",
+          "lastSeq": 14,
+          "result": {
+            "text": "已创建 `D:/tmp/hs-desktop-test/desktop-check.txt`，内容恰为 `SUPERVISOR_DESKTOP_OK`（无结尾换行）。\n\nDESKTOP_DONE",
+            "truncated": false
+          },
+          "pidAlive": false
+        },
+        "terminal": true,
+        "timedOut": false,
+        "nextSeq": 14,
+        "hasMore": false,
+        "eventTypes": [
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.progress",
+          "run.completed"
+        ]
+      }
+    }
+  ],
+  "counts": {
+    "supervisor_info": 1,
+    "worker_spawn": 1,
+    "worker_wait": 1
+  }
+}

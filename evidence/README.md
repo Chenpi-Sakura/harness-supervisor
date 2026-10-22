@@ -38,13 +38,22 @@ All artifacts here were produced by actual runs on 2026-10-21 and 2026-10-22 (Wi
 - The same run also captured the pre-fix wait behavior that spawned a duplicate worker; that defect is fixed and covered by the MCP wait test.
 - See [codex-auto-start/test-run.txt](codex-auto-start/test-run.txt).
 
-## 6. Automated suite
+## 6. Codex desktop -> Supervisor MCP -> real Pi
+
+- Host: Codex desktop on Windows, MCP stdio; daemon pre-started outside Codex.
+- Result: worker `w-mvixm5gl-40179d91` completed with `DESKTOP_DONE`; the created file is exactly `SUPERVISOR_DESKTOP_OK` (21 bytes, no trailing newline); exit code 0; no duplicate worker.
+- Codex session used `supervisor_info`, `worker_spawn`, and `worker_wait`. Spawn returned `running` at `lastSeq=5`; wait returned `completed`, 9 incremental events, `timedOut=false`.
+- The raw Codex session and native Pi conversation are not copied. Only MCP call summaries, supervisor artifacts, and Pi session metadata are included.
+- See [codex-desktop/test-run.txt](codex-desktop/test-run.txt), [codex-desktop/codex-tool-calls.json](codex-desktop/codex-tool-calls.json), and [codex-desktop/events.jsonl](codex-desktop/events.jsonl).
+- Scope is this desktop spawn/wait/completion flow; desktop steer, cancel, resume, and disconnect tests are separate follow-ups.
+
+## 7. Automated suite
 
 The fake harness is a scripted implementation of the documented Pi RPC subset. Every fake-harness test runs the production Pi adapter, IPC daemon, supervisor state machine, CLI, or MCP server; it does not bypass the implementation.
 
 - Baseline run (2026-10-21, before the lifecycle/race fixes): 38 tests, 36 pass, 0 fail, 2 skipped.
   Full output: [test-suite.txt](test-suite.txt).
-- Current run (2026-10-22, after the lifecycle/race and MCP wait fixes): 48 tests, 46 pass, 0 fail, 2 skipped (the gated real-Pi tests).
+- Current run (2026-10-22, after the lifecycle/race and MCP wait fixes, re-run before the desktop interaction round): 48 tests, 46 pass, 0 fail, 2 skipped (the gated real-Pi tests), 98.2s.
   Full output: [test-suite-races.txt](test-suite-races.txt).
 
 The added regression coverage:

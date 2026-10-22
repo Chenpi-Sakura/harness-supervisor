@@ -1,0 +1,34 @@
+{
+  "name": "harness-supervisor",
+  "version": "0.1.0",
+  "pid": 31964,
+  "stateDir": "C:\\Users\\Lenovo\\.harness-supervisor",
+  "supervisorId": "186c2acb-820c-402b-bfbc-811a7d768b58",
+  "startedAt": "2026-10-22T02:30:05.897Z",
+  "uptimeMs": 1135321,
+  "limits": {
+    "maxWorkers": 8,
+    "maxWaitMs": 120000,
+    "defaultWaitMs": 30000,
+    "closeGraceMs": 1500,
+    "abortTimeoutMs": 20000,
+    "maxResultBytes": 65536,
+    "maxEventStringBytes": 8192
+  },
+  "wake": {
+    "proactive": false,
+    "note": "Events are persisted and retrievable. MCP tools are pull-based: the host must call worker_wait or worker_events to observe them. The supervisor does not claim the ability to wake the main agent in the background."
+  },
+  "runtimes": [
+    {
+      "runtime": "pi",
+      "steer": true,
+      "followUp": true,
+      "cancel": true,
+      "resume": true,
+      "pause": false,
+      "interactiveInput": true,
+      "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+    }
+  ]
+}

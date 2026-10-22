@@ -1,0 +1,28 @@
+Codex desktop E2E: PASS
+Date: 2026-10-22 (local, Windows)
+Host: Codex desktop; MCP transport stdio
+MCP server: C:/Program Files/nodejs/node.exe + D:/Projects/Harness-Supervisor/dist/src/mcp.js
+Daemon: external pre-started, PID 31964, stateDir C:\Users\Lenovo\.harness-supervisor
+Worker: w-mvixm5gl-40179d91 (runtime pi)
+Prompt: 请创建文件 desktop-check.txt，内容必须恰好是 SUPERVISOR_DESKTOP_OK，然后回复 DESKTOP_DONE。
+MCP calls observed in the Codex session: supervisor_info, worker_spawn, worker_wait
+  - worker_spawn returned status=running, lastSeq=5
+  - worker_wait (until=terminal, 60000 ms) returned status=completed, terminal=true, timedOut=false, nextSeq=14
+  - worker_wait returned 9 incremental events (8 run.progress + run.completed)
+Result: completed, exit code 0, pidAlive=false, stderr empty
+File: D:\tmp\hs-desktop-test\desktop-check.txt
+  21 bytes, exactly SUPERVISOR_DESKTOP_OK, no trailing newline
+Pi session: 22,013 bytes, 11 JSONL records, resumeAvailable=true
+Events: 15 total, ordered from worker.starting through worker.exited (forced=false)
+Duplicate spawn: none; worker_list contains one worker and the session contains one worker_spawn call
+
+Scope:
+- This validates Codex desktop -> MCP -> real Pi spawn/wait/completion and terminal result retrieval.
+- It does not validate desktop steer, cancel, resume, client disconnect, or daemon restart recovery.
+- MCP remains pull-only; this run used a synchronous worker_wait and did not rely on background wake-up.
+
+Sanitization:
+- The raw Codex session and system prompts are NOT copied here.
+- Only MCP call names, arguments, and selected results are extracted into codex-tool-calls.json.
+- Native Pi session content is NOT copied; session-metadata.json records only file size, record count, and record types.
+- No raw session content or environment data is included.

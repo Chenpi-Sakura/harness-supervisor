@@ -177,8 +177,6 @@ codex mcp list
 
 ### 工具清单
 
-### 工具清单
-
 | 工具 | 用途 |
 | --- | --- |
 | `worker_spawn` | 启动 Worker；**prompt 被接受即返回**，不等待完成；返回 `id`、`lastSeq` |

@@ -15,7 +15,7 @@ import type {
 } from "../../types.js";
 import { Deferred, withTimeout } from "../../util/async.js";
 import { ensureDir } from "../../util/fsx.js";
-import { safeText } from "../../util/redact.js";
+import { redactText, safeText } from "../../util/redact.js";
 import type { McodeLaunch } from "./launch.js";
 
 export interface McodeAcpSessionOptions {
@@ -47,7 +47,7 @@ export type McodePermissionMode = (typeof MCODE_PERMISSION_MODES)[number];
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
+  timer?: NodeJS.Timeout;
   method: string;
 }
 
@@ -572,10 +572,13 @@ export class McodeAcpSession implements HarnessSession {
   private async sendPrompt(message: string): Promise<void> {
     if (!this.sessionId) return;
     try {
+      // ACP keeps this request open for the entire native turn, including
+      // permission waits. Only control RPCs use the short request deadline;
+      // cancellation, process exit and Supervisor maxDuration bound the run.
       const result = (await this.request("session/prompt", {
         sessionId: this.sessionId,
         prompt: [{ type: "text", text: message }],
-      })) as { stopReason?: string } | undefined;
+      }, 0)) as { stopReason?: string } | undefined;
       const stopReason = typeof result?.stopReason === "string" ? result.stopReason : undefined;
       this.promptActive = false;
       if (stopReason === "cancelled" || this.abortRequested) {
@@ -833,8 +836,11 @@ export class McodeAcpSession implements HarnessSession {
         ? String((toolCall.rawInput as Record<string, unknown>).command ?? "tool")
         : "tool");
     const title = typeof obj.title === "string" ? obj.title : `Allow ${toolName}?`;
-    const message_ =
-      typeof obj.message === "string" ? obj.message : "This tool call needs approval.";
+    const message_ = [
+      title,
+      typeof obj.message === "string" ? obj.message : undefined,
+      toolCall?.rawInput !== undefined ? `Input: ${JSON.stringify(toolCall.rawInput)}` : undefined,
+    ].filter((value): value is string => typeof value === "string" && value.length > 0).join("\n");
 
     const pending: PendingPermission = {
       requestId,
@@ -868,7 +874,10 @@ export class McodeAcpSession implements HarnessSession {
       requestId,
       method: "select",
       title: safeText(title, 300),
-      message: safeText(message_, 2000),
+      // Approval needs the actual arguments, not just an agent-written title.
+      // Preserve the complete redacted input in pendingInput; event/notification
+      // storage keeps its own existing bounds independently.
+      message: redactText(message_),
       options: options.map((option) => option.name),
       timeoutMs: PERMISSION_TIMEOUT_MS,
     });
@@ -942,7 +951,7 @@ export class McodeAcpSession implements HarnessSession {
     const id = this.nextId();
     const limit = timeoutMs ?? this.requestTimeoutMs;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = limit > 0 ? setTimeout(() => {
         this.pending.delete(String(id));
         reject(
           new SupervisorError(
@@ -951,8 +960,8 @@ export class McodeAcpSession implements HarnessSession {
             { method },
           ),
         );
-      }, Math.max(1, limit));
-      timer.unref?.();
+      }, limit) : undefined;
+      timer?.unref?.();
       this.pending.set(String(id), { resolve, reject, timer, method });
       this.write({ jsonrpc: "2.0", id, method, params }).catch((error: unknown) => {
         const entry = this.pending.get(String(id));

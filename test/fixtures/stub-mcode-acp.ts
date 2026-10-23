@@ -137,7 +137,7 @@ function handleMessage(message: JsonRpcMessage): void {
           method: "session/request_permission",
           params: {
             sessionId,
-            toolCall: { toolCallId: "tool-1", title: "bash", rawInput: { command: "echo hi" } },
+            toolCall: { toolCallId: "tool-1", title: "bash", rawInput: { command: process.env.STUB_PERMISSION_COMMAND ?? "echo hi" } },
             options: [
               { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
               { optionId: "allow-always", name: "Always allow", kind: "allow_always" },
@@ -159,6 +159,7 @@ function handleMessage(message: JsonRpcMessage): void {
     }
     case "mcode/session/steer": {
       if (id === undefined) return;
+      if (process.env.STUB_IGNORE_STEER === "1") return;
       if (!promptActive) {
         // The real agent answers this way when the turn is not admitted.
         emit({

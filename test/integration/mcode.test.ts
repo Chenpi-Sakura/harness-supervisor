@@ -284,6 +284,16 @@ test("MiniMax Code run can be cancelled while it is still running", async (t) =>
   assert.ok(types.includes("run.cancelled"), "run.cancelled must be recorded");
 });
 
+test("Supervisor maxDuration still cancels an unbounded ACP prompt", async (t) => {
+  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "hang" });
+  const worker = await client.request<WorkerSummary>("spawn", {
+    runtime: "mcode", cwd, prompt: "wait for cancellation", maxDurationMs: 1000,
+  }, { timeoutMs: 60_000 });
+  const final = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(final.worker.status, "cancelled");
+  assert.equal(final.worker.statusReason, "max_duration_exceeded");
+});
+
 test("MiniMax Code run errors are reported as a failed worker", async (t) => {
   const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "fail" });
   const worker = await spawnMcode(client, cwd, "boom");

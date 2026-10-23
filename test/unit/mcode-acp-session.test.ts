@@ -16,6 +16,16 @@ interface HarnessRun {
   stderr: string[];
 }
 
+async function pendingInput(events: HarnessEvent[]) {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const event = events.find(event => event.type === "needs_input");
+    if (event?.type === "needs_input") return event;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.fail("the native permission request was not surfaced");
+}
+
 /**
  * Drives the real adapter against a stub agent that numbers its reverse
  * requests from zero, like the real MiniMax Code agent does.
@@ -23,6 +33,7 @@ interface HarnessRun {
 async function runAgainstStub(
   t: { after(fn: () => void): void },
   env: Record<string, string> = {},
+  requestTimeoutMs?: number,
 ): Promise<HarnessRun> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hs-mcode-stub-"));
   const events: HarnessEvent[] = [];
@@ -35,6 +46,7 @@ async function runAgainstStub(
       env: { ...process.env, ...env },
     },
     args: [],
+    requestTimeoutMs,
     cwd: dir,
     sessionDir: dir,
     callbacks: {
@@ -48,6 +60,45 @@ async function runAgainstStub(
   });
   return { session, events, stderr };
 }
+
+test("ACP prompt survives the control request deadline while waiting for native input", async (t) => {
+  const { session, events } = await runAgainstStub(t, {}, 500);
+  await session.prompt("long-running audit");
+  const pending = await pendingInput(events);
+  await new Promise(resolve => setTimeout(resolve, 900));
+  assert.equal(events.some(event => event.type === "settled"), false);
+  assert.equal(events.some(event => event.type === "run_error"), false);
+  await session.answer(pending.requestId, { value: "Allow once" });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  const settled = events.find(event => event.type === "settled");
+  assert.ok(settled?.type === "settled");
+  assert.equal(settled.aborted, false);
+  assert.match(settled.finalText ?? "", /STUB_ANSWERED/);
+});
+
+test("control RPCs still time out without terminating the ongoing prompt", async (t) => {
+  const { session, events } = await runAgainstStub(t, { STUB_IGNORE_STEER: "1" }, 500);
+  await session.prompt("working");
+  const pending = await pendingInput(events);
+  await assert.rejects(session.steer("adjust"), (error: unknown) =>
+    error instanceof SupervisorError && error.code === "HARNESS_TIMEOUT" && error.message.includes("mcode/session/steer"));
+  assert.equal(events.some(event => event.type === "settled"), false);
+  await session.answer(pending.requestId, { value: "Allow once" });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.ok(events.some(event => event.type === "settled"));
+});
+
+test("permission context includes the complete actual arguments instead of only the title", async (t) => {
+  const command = `echo ${"x".repeat(2500)} CONTEXT_END`;
+  const { session, events } = await runAgainstStub(t, { STUB_PERMISSION_COMMAND: command });
+  await session.prompt("inspect");
+  const pending = await pendingInput(events);
+  assert.ok(pending.message?.includes(command));
+  assert.match(pending.message ?? "", /CONTEXT_END/);
+  assert.match(pending.message ?? "", /Input:/);
+  assert.deepEqual(pending.options, ["Allow once", "Always allow", "Deny"]);
+  await session.answer(pending.requestId, { value: "Deny" });
+});
 
 test("the supervisor keeps its request ids apart from the agent's reverse requests", async (t) => {
   const { session, events, stderr } = await runAgainstStub(t);

@@ -35,6 +35,13 @@ async function startMcodeHarness(
   const client = await daemon.start({
     env: {
       HARNESS_SUPERVISOR_MCODE_ENTRY: FAKE_MCODE_ENTRY,
+      // The suite must not depend on the ambient environment. A shell that
+      // exports a permission mode (for example while a real daemon runs in
+      // bypass mode) would otherwise decide what these tests observe: the
+      // permission cases would silently see no approval request at all. The
+      // Ask mode is pinned here, and a test that needs another mode states it
+      // explicitly.
+      HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default",
       ...extraEnv,
     },
   });

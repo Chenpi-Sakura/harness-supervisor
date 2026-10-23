@@ -40,6 +40,19 @@ function notify(method: string, params: Record<string, unknown>): void {
   emit({ jsonrpc: "2.0", method, params });
 }
 
+/**
+ * The command the agent asks approval for.
+ *
+ * `STUB_PERMISSION_COMMAND` sets it verbatim. `STUB_PERMISSION_PAD` builds a
+ * command of the given length instead, so a test can use a huge native payload
+ * without pushing a huge environment variable.
+ */
+function stubPermissionCommand(): string {
+  const pad = Number.parseInt(process.env.STUB_PERMISSION_PAD ?? "", 10);
+  if (Number.isFinite(pad) && pad > 0) return `echo ${"x".repeat(pad)}`;
+  return process.env.STUB_PERMISSION_COMMAND ?? "echo hi";
+}
+
 function handleMessage(message: JsonRpcMessage): void {
   const { id, method, params } = message;
 
@@ -137,7 +150,7 @@ function handleMessage(message: JsonRpcMessage): void {
           method: "session/request_permission",
           params: {
             sessionId,
-            toolCall: { toolCallId: "tool-1", title: "bash", rawInput: { command: process.env.STUB_PERMISSION_COMMAND ?? "echo hi" } },
+            toolCall: { toolCallId: "tool-1", title: "bash", rawInput: { command: stubPermissionCommand() } },
             options: [
               { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
               { optionId: "allow-always", name: "Always allow", kind: "allow_always" },

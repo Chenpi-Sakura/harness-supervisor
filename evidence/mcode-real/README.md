@@ -54,6 +54,15 @@
 
 原始产物见 [mcode-steer-e2e.json](mcode-steer-e2e.json)。
 
+## 长回合回归（0.4.1 之后补充）
+
+`npm run e2e:mcode:long`（`scripts/e2e-mcode-long-turn.mjs`）用**真实 MiniMax Code CLI**、独立 daemon 与独立状态目录，
+让一个回合实际跑过旧的 120 秒控制 RPC 上限（实测 159,028 ms），用来保护 0.4.1 的长回合修复在真实运行时上不被再次退化。
+它与 `e2e:mcode` 一样默认把产物写到系统临时目录，显式设置 `MCODE_EVIDENCE_DIR` 才会落盘。
+
+自验轮次的完整记录（含该长回合的真实结果、发现的问题与修复）见
+[../mcode-selftest-261023.md](../mcode-selftest-261023.md)。
+
 ## 自动化测试覆盖
 
 - `test/unit/mcode-launch.test.ts`：启动入口解析（必须是 Node 入口而非 `.cmd` shim）、缺失入口报错、`extraArgs` 不得覆盖 supervisor 管理的参数、权限模式解析（默认 Ask）、会话句柄的读写与拒绝。

@@ -15,7 +15,7 @@ import type {
 } from "../../types.js";
 import { Deferred, withTimeout } from "../../util/async.js";
 import { ensureDir } from "../../util/fsx.js";
-import { redactText, safeText } from "../../util/redact.js";
+import { safeText } from "../../util/redact.js";
 import type { McodeLaunch } from "./launch.js";
 
 export interface McodeAcpSessionOptions {
@@ -70,6 +70,16 @@ interface QueuedMessage {
 
 const PERMISSION_TIMEOUT_MS = 300_000;
 const ACP_PROTOCOL_VERSION = 1;
+/**
+ * Upper bound for the permission context handed to the caller.
+ *
+ * The native `rawInput` is kept because it is the only source of truth for an
+ * approval decision, but it is the agent's own payload: a single tool call can
+ * carry a very large file body. Pi bounds its pending input at 2000 chars;
+ * this adapter keeps more room because the raw input is the decision context,
+ * while still refusing to let one request grow without limit.
+ */
+const PERMISSION_MESSAGE_MAX_CHARS = 8000;
 
 /**
  * Finds the offered option a client named exactly, either by its display
@@ -875,9 +885,15 @@ export class McodeAcpSession implements HarnessSession {
       method: "select",
       title: safeText(title, 300),
       // Approval needs the actual arguments, not just an agent-written title.
-      // Preserve the complete redacted input in pendingInput; event/notification
-      // storage keeps its own existing bounds independently.
-      message: redactText(message_),
+      // The native rawInput is the only source of truth for that decision, so
+      // it is included under a bound. A truncation marker means the arguments
+      // are incomplete and the caller must not approve from the prefix alone.
+      // The supervisor stores the
+      // pending input verbatim and hands it to the caller, so an unbounded
+      // payload would push an arbitrarily large tool input into the caller's
+      // context. The bound covers common short commands, and the
+      // visible truncation marker keeps the loss obvious instead of silent.
+      message: safeText(message_, PERMISSION_MESSAGE_MAX_CHARS),
       options: options.map((option) => option.name),
       timeoutMs: PERMISSION_TIMEOUT_MS,
     });

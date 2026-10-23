@@ -1,0 +1,138 @@
+{
+  "runtime": "MiniMax Code 0.6.12",
+  "longTurn": {
+    "run": {
+      "workerId": "w-mvkx80gp-5ac85d83",
+      "status": "completed",
+      "durationMs": 159028,
+      "resultText": "I'll run the ping command in the current directory now.The command moved to a managed background task. Waiting for it to complete.Still running — continuing to wait for completion.MCODE_LONG_TURN_OK",
+      "eventTypes": [
+        "worker.starting",
+        "worker.started",
+        "worker.session",
+        "run.started",
+        "run.accepted",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.completed",
+        "worker.exited"
+      ],
+      "errorEvents": [],
+      "permissions": 0
+    },
+    "startedAt": "2026-10-23T12:03:06.753Z",
+    "result": "passed",
+    "finishedAt": "2026-10-23T12:05:52.032Z"
+  },
+  "lifecycle": {
+    "result": "passed",
+    "runs": [
+      {
+        "phase": "first",
+        "workerId": "w-mvkx4uga-cb9221ef",
+        "status": "completed",
+        "resultText": "MCODE_E2E_OK",
+        "eventTypes": [
+          "worker.starting",
+          "worker.started",
+          "worker.session",
+          "run.started",
+          "run.accepted",
+          "run.progress",
+          "run.completed",
+          "worker.exited"
+        ]
+      },
+      {
+        "phase": "resumed",
+        "workerId": "w-mvkx4uga-cb9221ef",
+        "status": "completed",
+        "resultText": "MCODE_E2E_RESUMED",
+        "eventTypes": [
+          "worker.starting",
+          "worker.started",
+          "worker.session",
+          "run.started",
+          "run.accepted",
+          "run.progress",
+          "run.completed",
+          "worker.exited",
+          "worker.starting",
+          "run.progress",
+          "worker.started",
+          "worker.session",
+          "run.started",
+          "run.accepted",
+          "worker.resumed",
+          "run.progress",
+          "run.completed",
+          "worker.exited"
+        ]
+      }
+    ],
+    "finishedAt": "2026-10-23T12:01:24.889Z",
+    "permission": {
+      "workerId": "w-mvkx56cv-35079d29",
+      "options": [],
+      "outcome": "not_requested"
+    },
+    "cancel": {
+      "workerId": "w-mvkx5p2m-f90102d7",
+      "status": "cancelled",
+      "eventTypes": [
+        "worker.starting",
+        "worker.started",
+        "worker.session",
+        "run.started",
+        "run.accepted",
+        "worker.cancel_requested",
+        "run.cancelled",
+        "worker.exited"
+      ]
+    },
+    "startedAt": "2026-10-23T12:00:39.139Z"
+  },
+  "interaction": {
+    "permissionAnswers": 0,
+    "result": "passed",
+    "steer": {
+      "workerId": "w-mvkxcdet-5be33d33",
+      "agentMode": "steered",
+      "agentTurnId": "84fc50a4-bb25-4921-ada5-4e2e0a8a11fc",
+      "finalStatus": "completed",
+      "finalText": "I'll run that ping command now.MCODE_STEER_OK",
+      "error": null,
+      "actedOnSteer": true,
+      "agentMessages": "I'll run that ping command now. MCODE_STEER_OK"
+    },
+    "finishedAt": "2026-10-23T12:06:57.163Z",
+    "followUp": {
+      "agentStatus": "queued @1",
+      "itemId": "queue_1687c658-f16d-4693-933b-8e682c9a248e"
+    },
+    "startedAt": "2026-10-23T12:06:30.308Z"
+  }
+}

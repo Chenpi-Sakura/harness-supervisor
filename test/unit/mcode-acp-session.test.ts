@@ -100,6 +100,25 @@ test("permission context includes the complete actual arguments instead of only 
   await session.answer(pending.requestId, { value: "Deny" });
 });
 
+test("a huge native permission payload stays bounded instead of flooding the caller", async (t) => {
+  // The native rawInput is the decision context for an approval, so it is kept.
+  // It is also the agent's own payload: a single tool call can carry a very
+  // large file body. The supervisor hands the pending input to the caller
+  // verbatim, so the adapter must keep it bounded.
+  const { session, events } = await runAgainstStub(t, { STUB_PERMISSION_PAD: "20000" });
+  await session.prompt("inspect");
+  const pending = await pendingInput(events);
+  assert.ok(pending.message);
+  assert.ok(
+    pending.message.length <= 8200,
+    `the permission context must stay bounded, got ${pending.message.length} chars`,
+  );
+  assert.match(pending.message ?? "", /Input:/);
+  assert.match(pending.message ?? "", /echo x{100}/, "the real command must still be visible");
+  assert.match(pending.message ?? "", /\[truncated \d+ chars\]/, "missing arguments must be visible to the approver");
+  await session.answer(pending.requestId, { value: "Deny" });
+});
+
 test("the supervisor keeps its request ids apart from the agent's reverse requests", async (t) => {
   const { session, events, stderr } = await runAgainstStub(t);
 

@@ -29,3 +29,7 @@ MiniMax Code 按原生 messageId 提取最后一条消息；同消息分块完�
 本次减少重复通知正文和投递前已失效的提醒，不以通知字符数冒充实测 Token 节省。不同真实待办仍各自提醒，不能保证每个 Worker 永远只唤醒一次。通知窗口可通过 HARNESS_SUPERVISOR_NOTIFY_DELAY_MS 调整为 0—60000ms；不改变权限策略或通知绑定。
 
 生产实例升级前必须没有活动 Worker，备份 dist/config/state；升级后保留本机既有 Full access 配置。本轮新短消息的真实宿主投递烟测另行记录，自动化桩结果不代表桌面实际新回合唤醒。
+
+## 升级后真实 Pi 投递烟测
+
+生产 Daemon 已升级 0.4.3（升级前无活动 Worker，并备份 dist/config/state）。真实 Pi Worker `w-mvkz2f4o-9ca00bca` 不调用工具，实际完成结果为 `HS_NOTIFY_NOISE_OK`。仅生成一条 completed 通知，官方 Codex queue 接受成功（delivered、attempts=1）；正文只有 Worker、completed、seq 和读取提示，没有再次注入结果标记。快照见 [notify-live-pi-261023.json](notify-live-pi-261023.json)。这是原生 Pi + 真实投递证明；记录时当前主回合尚未结束，不将队列接受冒充新桌面回合唤醒。

@@ -1,0 +1,16 @@
+{
+  "version": "0.4.3",
+  "runtime": "pi",
+  "workerId": "w-mvkz2f4o-9ca00bca",
+  "status": "completed",
+  "result": "HS_NOTIFY_NOISE_OK",
+  "notificationId": "w-mvkz2f4o-9ca00bca#8",
+  "delivery": {
+    "state": "delivered",
+    "attempts": 1
+  },
+  "message": "[harness-supervisor] w-mvkz2f4o-9ca00bca completed seq=8 | read worker_status for result",
+  "hostWakeVerified": false,
+  "note": "真实 Pi 与生产 Daemon；官方 Codex queue 接受一次短指针。队列接受不等于桌面新回合唤醒证明。",
+  "at": "2026-10-23T12:55:38.357Z"
+}

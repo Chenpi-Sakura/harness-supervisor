@@ -229,6 +229,10 @@ node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-threa
 - **崩溃后不接管**：daemon 重启只做状态对账，不会重新接上原管道，也不会自动重跑。
 - **平台**：Windows 原生已验证；WSL / 其他 POSIX 需自行验证。
 
+## 后续工作
+
+当前以原型实际使用为主，扩展验收及已知问题跟踪见 [`docs/backlog.md`](docs/backlog.md)。其中暂缓事项不作为本阶段交付的前置条件。
+
 ## 文档与证据
 
 以下内容按时间归档，**不随代码更新**；实现以 `src/` 为准。

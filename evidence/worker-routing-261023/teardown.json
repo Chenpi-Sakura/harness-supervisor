@@ -1,0 +1,13 @@
+{
+  "testDaemons": "shutdown acknowledged; known daemon PIDs no longer present",
+  "testProcesses": "Win32_Process query found no node.exe referencing this iteration's isolated test paths",
+  "removedOwnedTemporaryDirectories": [
+    ".smoke-engineering-state",
+    ".smoke-routing-e2e-state",
+    ".smoke-test-tmp",
+    ".smoke-routing-dev/.smoke-test-tmp"
+  ],
+  "preserved": ["development worktree and branch", "sanitized evidence", "E2E proof files in development worktree", "original main worktree AGENTS.md and .pi/"],
+  "productionAction": "read-only inspection; no shutdown, upgrade or restart",
+  "codexQueuedMessages": "HS notifications acknowledged; no host-private database edits or unsupported message retraction"
+}

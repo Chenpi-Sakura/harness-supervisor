@@ -59,6 +59,13 @@ const RequestIdField = {
   requestId: z.string().min(1).max(200).optional(),
 };
 
+export const NotifyTargetSchema = z.discriminatedUnion("channel", [
+  z.object({ channel: z.literal("none") }).strict(),
+  z.object({ channel: z.literal("codex-queue"), codexThreadId: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{5,120}$/) }).strict(),
+]);
+
+const NotifyTargetField = { notifyTarget: NotifyTargetSchema.optional() };
+
 const SpawnSchema = z
   .object({
     runtime: z.string().min(1).max(50).optional(),
@@ -67,6 +74,7 @@ const SpawnSchema = z
     name: z.string().min(1).max(200).optional(),
     ...ConfigFields,
     ...RequestIdField,
+    ...NotifyTargetField,
   })
   .strict();
 
@@ -76,6 +84,7 @@ const ResumeSchema = z
     prompt: z.string().min(1).max(256 * 1024),
     ...ConfigFields,
     ...RequestIdField,
+    ...NotifyTargetField,
   })
   .strict();
 

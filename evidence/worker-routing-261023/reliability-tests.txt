@@ -1,0 +1,47 @@
+✔ 100k-event history: startup streams the file and keeps only 500 events cached (631.3631ms)
+ℹ init of 100000 events: 466.2 ms (13.5 MiB, cached=500, evicted=99500, heapUsed=27.2 MiB)
+✔ 100k-event history: full paginated read is ordered, complete and cursor-safe (1376.2912ms)
+ℹ paged full history: 100 pages in 701.3 ms (deep-page cache hits=0, complete=100000)
+✔ 100k-event history: scanEvents reads all history in one pass (1709.203ms)
+ℹ single-pass scan: 100000 events in 1024.6 ms
+✔ 100k-event history: restart, malformed tail recovery and continued appends (1305.818ms)
+ℹ restart: cached=500, total=100200, lastSeq=100200, warnings=1
+✔ parameter hashes ignore object key order but detect value changes (7.1646ms)
+✔ first request is new, an identical retry replays, different params conflict (10.0854ms)
+✔ begin() admits synchronously and only flush() makes the admission durable (4.2836ms)
+✔ concurrent duplicate admissions before flush create exactly one record (4.2179ms)
+✔ an admission write failure is reported by flush() and never becomes replayable (4.9907ms)
+✔ complete() and fail() confirm their write and reject when it fails (7.1282ms)
+✔ a record interrupted by a daemon restart is uncertain, never replayable (3.663ms)
+✔ failed records replay the failure instead of executing again (5.8652ms)
+✔ fail() never downgrades a completed record (4.169ms)
+✔ released keys are reusable (6.8586ms)
+✔ a release that cannot be written keeps the record and never re-executes it (7.8999ms)
+✔ concurrent completions are serialized and all durable (9.7744ms)
+✔ a request admitted and completed while compaction is queued is never forgotten (15.0959ms)
+✔ compaction never resurrects a key released while the rewrite is queued (12.5304ms)
+✔ compaction never drops uncertain or in-progress records (13.5038ms)
+✔ a torn trailing line cannot swallow the next admission marker after a restart (6.9008ms)
+✔ a failed compaction keeps records in memory so nothing is re-executed (12.4909ms)
+✔ a record updated during atomic compaction remains replayable in memory and on disk (12.1679ms)
+✔ compaction keeps the newest records and all in-progress records (14.5688ms)
+✔ persists records and events and reloads them with a valid cursor (30.491ms)
+✔ ignores a corrupt trailing event line on reload (15.9247ms)
+✔ event writes preserve ordering even when enqueued together (40.5781ms)
+✔ stderr tail keeps the newest content (12.1599ms)
+✔ in-memory cache is bounded to the newest 500 events (1040.9615ms)
+✔ readEvents pages through the complete history with cursor semantics (1569.844ms)
+✔ scanEvents streams the full history once, in order (914.0908ms)
+✔ appended events are readable before their write is flushed (730.3371ms)
+✔ recovers a truncated trailing line and keeps sequence continuity (19.8185ms)
+✔ restart recomputes lastSeq and eventCount from a full streamed scan (739.1112ms)
+✔ multibyte (CJK) events survive a cold read and the size cap is byte-based (66.7359ms)
+✔ event history reads fail closed when a queued write failed (818.8313ms)
+ℹ tests 35
+ℹ suites 0
+ℹ pass 35
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6182.0459

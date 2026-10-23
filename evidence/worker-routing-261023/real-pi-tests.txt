@@ -1,0 +1,20 @@
+
+> harness-supervisor@0.1.0 test:e2e
+> npm run build && node test/run.mjs e2e
+
+
+> harness-supervisor@0.1.0 build
+> tsc -p tsconfig.json
+
+✔ REAL Pi loads a persisted session through the adapter and retains its session id (834.215ms)
+REAL_PI worker=w-mvjuiw03-3c14a656 pid=25224 session=D:\Projects\Harness-Supervisor\.smoke-test-tmp\hs-real-pN9Wmj\sessions\w-mvjuiw03-3c14a656\2026-10-22T17-59-50-246Z_01a164c4-eee5-779f-8fd2-d5c6ae7262cf.jsonl
+REAL_PI result="WORKER_DONE" file=D:\Projects\Harness-Supervisor\.smoke-test-tmp\hs-real-work-k3kQzq\worker-output.txt
+✔ REAL Pi worker executes a task in its own working directory (8338.7492ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 17498.0394

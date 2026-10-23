@@ -4,7 +4,7 @@ import { runDaemon } from "./daemon.js";
 import { SupervisorError, errorMessage } from "./errors.js";
 import { SupervisorClient } from "./ipc/client.js";
 import { resolveStateDir } from "./ipc/protocol.js";
-import type { WorkerEvent, WorkerStatus, WorkerSummary } from "./types.js";
+import type { NotifyTarget, WorkerEvent, WorkerStatus, WorkerSummary } from "./types.js";
 import { VERSION } from "./version.js";
 import { silentLogger } from "./util/logger.js";
 
@@ -35,6 +35,7 @@ Workers:
   spawn --prompt <text> [--cwd <dir>] [--name <n>] [--model <m>] [--provider <p>]
         [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder]
         [--extra-args '["--no-extensions"]'] [--request-id <key>] [--wait] [--json]
+        [--notify-thread <verified-thread-id> | --notify-none]
   list [--status running,failed] [--limit 50] [--json]
   status <workerId> [--json]
   events <workerId> [--since <seq>] [--limit 100] [--json]
@@ -44,12 +45,14 @@ Workers:
   answer <workerId> --request-id <id> (--value <v> | --confirmed | --denied | --cancelled)
   cancel <workerId> [--timeout-ms 10000]
   resume <workerId> --prompt <text> [--model <m>] [--provider <p>] [--json]
+        [--notify-thread <verified-thread-id> | --notify-none]
+        Omit notification flags to preserve the original worker binding.
 
 Notifications:
   inbox [--state pending|delivered|failed|all] [--worker <id>] [--limit 50] [--json]
   ack --ids <id1,id2> [--by <name>]
   notify-target [--channel none|codex-queue] [--thread <codexThreadId>] [--json]
-        Register the Codex thread that should receive important events through the
+        Set the default destination for NEW workers (existing bindings are kept) through the
         official "codex queue" CLI. The Codex host only runs the message while that
         thread is loaded; delivery is at-least-once and is not a wake guarantee.
   retry-notifications [--states pending,failed]
@@ -67,8 +70,8 @@ Global:
 
 Prompt "-" reads the prompt from stdin. Worker spawn is asynchronous by default:
 it returns once the prompt is accepted, not when the task completes. Use
-"wait" or "status" to observe completion. MCP tools are pull-based; the
-supervisor cannot wake a host in the background.
+"wait" or "status" to observe completion. Unbound workers use the durable inbox.
+Queue delivery can start a new turn when the Codex host has the target loaded.
 `;
 
 interface CliValues {
@@ -90,6 +93,16 @@ function stringArg(value: unknown, name: string): string | undefined {
 
 function boolArg(value: unknown): boolean {
   return value === true;
+}
+
+function workerNotifyTarget(values: CliValues): NotifyTarget | undefined {
+  const thread = stringArg(values["notify-thread"], "notify-thread");
+  if (thread && boolArg(values["notify-none"])) {
+    throw new SupervisorError("BAD_REQUEST", "Use only one of --notify-thread or --notify-none");
+  }
+  if (thread) return { channel: "codex-queue", codexThreadId: thread };
+  if (boolArg(values["notify-none"])) return { channel: "none" };
+  return undefined;
 }
 
 function parseList(value: unknown): string[] | undefined {
@@ -263,6 +276,8 @@ async function main(): Promise<void> {
         by: { type: "string" },
         channel: { type: "string" },
         thread: { type: "string" },
+        "notify-thread": { type: "string" },
+        "notify-none": { type: "boolean" },
         "older-than-days": { type: "string" },
         keep: { type: "string" },
         "dry-run": { type: "boolean" },
@@ -354,6 +369,7 @@ async function main(): Promise<void> {
             thinking: stringArg(values.thinking, "thinking"),
             maxDurationMs: intArg(values["max-duration-ms"], "max-duration-ms"),
             extraArgs: parseExtraArgs(values["extra-args"]),
+            notifyTarget: workerNotifyTarget(values),
             requestId: stringArg(values["request-id"], "request-id"),
           },
           { timeoutMs: 90_000 },
@@ -563,6 +579,7 @@ async function main(): Promise<void> {
           {
             workerId,
             prompt,
+            notifyTarget: workerNotifyTarget(values),
             model: stringArg(values.model, "model"),
             provider: stringArg(values.provider, "provider"),
             tools: parseList(values.tools),

@@ -1,0 +1,20 @@
+✔ completed, failed, crashed, and cancelled are distinct terminal outcomes (1131.1291ms)
+✔ cancellation force-kills a harness that ignores abort (7295.7356ms)
+✔ a live PID whose command line is not this worker is reported as interrupted, not orphaned (1258.7115ms)
+✔ cancelling an orphaned worker whose PID was reused reports the truth instead of pretending (1386.1471ms)
+✔ concurrent spawn requests cannot exceed maxWorkers (694.9226ms)
+✔ send and duplicate answer are rejected once cancellation starts (649.5035ms)
+✔ duplicate concurrent answers to one dialog are rejected (737.3317ms)
+✔ cancel clears queued steering before aborting (696.644ms)
+✔ cancel during startup cancels before the prompt is accepted (5686.8103ms)
+✔ concurrent cancels are idempotent and record one cancellation (636.5575ms)
+✔ shutdown waits out an in-flight spawn and leaves no live worker (872.4036ms)
+✔ concurrent resumes produce one live runtime only (838.4393ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 46238.9173

@@ -1,0 +1,499 @@
+{
+  "date": "2026-10-23 Asia/Shanghai",
+  "capturedAt": "2026-10-22T18:02:05.954Z",
+  "daemon": {
+    "supervisorId": "f40d1d12-7570-4602-a732-db4fb60b9e3a",
+    "startedAt": "2026-10-22T17:59:24.790Z",
+    "wake": {
+      "proactive": false,
+      "channel": "none",
+      "workerRouting": true,
+      "note": "MCP event queries are pull-based. channel/proactive describe the default for NEW workers; explicit spawn.notifyTarget overrides it. Each worker persists its destination, and each important event snapshots that route. Resume preserves it unless explicitly rebound. Legacy unbound records use the inbox only. codex-queue uses the official CLI; whether a new turn starts depends on the host having that thread loaded. Delivery is at-least-once and does not itself prove wake-up."
+    }
+  },
+  "workers": [
+    {
+      "label": "A",
+      "files": {
+        "spawned.json": {
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "workerId": "w-mvju09o5-8b382647"
+        },
+        "route-proof.txt": "ROUTE_A_OK",
+        "wake-proof.txt": "ROUTE_A_WAKE_OK",
+        "wake.json": {
+          "notificationId": "w-mvju09o5-8b382647#17",
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "time": "2026-10-23T01:47:39.9935189+08:00"
+        }
+      },
+      "worker": {
+        "id": "w-mvju09o5-8b382647",
+        "runtime": "pi",
+        "status": "completed",
+        "notifyTarget": {
+          "channel": "codex-queue",
+          "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+        },
+        "createdAt": "2026-10-22T17:45:20.885Z",
+        "startedAt": "2026-10-22T17:45:24.973Z",
+        "endedAt": "2026-10-22T17:47:09.437Z",
+        "lastSeq": 18,
+        "result": {
+          "text": "Waited 90s, created `route-proof.txt` (10 bytes, no trailing newline) in the cwd.\n\nROUTE_A_DONE",
+          "truncated": false
+        },
+        "stats": {
+          "turns": 4,
+          "toolCalls": 3,
+          "toolErrors": 0
+        }
+      },
+      "notifications": [
+        {
+          "target": {
+            "channel": "codex-queue",
+            "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+          },
+          "id": "w-mvju09o5-8b382647#17",
+          "workerId": "w-mvju09o5-8b382647",
+          "runtime": "pi",
+          "seq": 17,
+          "eventType": "run.completed",
+          "kind": "completed",
+          "createdAt": "2026-10-22T17:47:09.437Z",
+          "summary": {
+            "status": "completed",
+            "text": "Waited 90s, created `route-proof.txt` (10 bytes, no trailing newline) in the cwd.\n\nROUTE_A_DONE"
+          },
+          "delivery": {
+            "state": "delivered",
+            "channel": "codex-queue",
+            "attempts": 1,
+            "lastAttemptAt": "2026-10-22T17:47:10.477Z",
+            "messageId": "01a164b9-5658-7191-a38d-754995010f32"
+          },
+          "ackAt": "2026-10-22T17:47:40.261Z",
+          "ackBy": "desktop-route-A"
+        }
+      ]
+    },
+    {
+      "label": "B",
+      "files": {
+        "spawned.json": {
+          "threadId": "01a164b6-e971-74c2-9e18-b0b298d2bf85",
+          "workerId": "w-mvju0y3y-ce8b0825",
+          "cwd": "D:/Projects/Harness-Supervisor/.smoke-routing-dev/.smoke-e2e-work/B",
+          "spawnedAt": "2026-10-22T17:45:57.2883516+00:00"
+        },
+        "route-proof.txt": "ROUTE_B_OK",
+        "wake-proof.txt": "ROUTE_B_WAKE_OK",
+        "wake.json": {
+          "notificationId": "w-mvju0y3y-ce8b0825#18",
+          "threadId": "01a164b6-e971-74c2-9e18-b0b298d2bf85",
+          "workerId": "w-mvju0y3y-ce8b0825",
+          "receivedAt": "2026-10-23T01:48:20.7837621+08:00"
+        }
+      },
+      "worker": {
+        "id": "w-mvju0y3y-ce8b0825",
+        "runtime": "pi",
+        "status": "completed",
+        "notifyTarget": {
+          "channel": "codex-queue",
+          "codexThreadId": "01a164b6-e971-74c2-9e18-b0b298d2bf85"
+        },
+        "createdAt": "2026-10-22T17:45:52.558Z",
+        "startedAt": "2026-10-22T17:45:57.171Z",
+        "endedAt": "2026-10-22T17:47:38.050Z",
+        "lastSeq": 19,
+        "result": {
+          "text": "已等待 90 秒后创建文件。\n\n- 路径：`D:/Projects/Harness-Supervisor/.smoke-routing-dev/.smoke-e2e-work/B/route-proof.txt`\n- 内容校验：10 字节，`od -c` 显示为 `R O U T E _ B _ O K`，无换行符\n\nROUTE_B_DONE",
+          "truncated": false
+        },
+        "stats": {
+          "turns": 4,
+          "toolCalls": 3,
+          "toolErrors": 0
+        }
+      },
+      "notifications": [
+        {
+          "target": {
+            "channel": "codex-queue",
+            "codexThreadId": "01a164b6-e971-74c2-9e18-b0b298d2bf85"
+          },
+          "id": "w-mvju0y3y-ce8b0825#18",
+          "workerId": "w-mvju0y3y-ce8b0825",
+          "runtime": "pi",
+          "seq": 18,
+          "eventType": "run.completed",
+          "kind": "completed",
+          "createdAt": "2026-10-22T17:47:38.050Z",
+          "summary": {
+            "status": "completed",
+            "text": "已等待 90 秒后创建文件。\n\n- 路径：`D:/Projects/Harness-Supervisor/.smoke-routing-dev/.smoke-e2e-work/B/route-proof.txt`\n- 内容校验：10 字节，`od -c` 显示为 `R O U T E _ B _ O K`，无换行符\n\nROUTE_B_DONE"
+          },
+          "delivery": {
+            "state": "delivered",
+            "channel": "codex-queue",
+            "attempts": 1,
+            "lastAttemptAt": "2026-10-22T17:47:38.663Z",
+            "messageId": "01a164b9-c4a7-7f33-897c-6e4094e5b73e"
+          },
+          "ackAt": "2026-10-22T17:48:21.078Z",
+          "ackBy": "01a164b6-e971-74c2-9e18-b0b298d2bf85"
+        }
+      ]
+    },
+    {
+      "label": "A-input",
+      "files": {
+        "spawned.json": {
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "workerId": "w-mvju5epx-8770f29a"
+        },
+        "wake-proof.txt": "HS_INPUT_WAKE_OK",
+        "input-proof.txt": "HS_INPUT_CONTINUED_OK",
+        "answer-proof.json": {
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "time": "2026-10-23T01:49:41.0898675+08:00",
+          "notificationId": "w-mvju5epx-8770f29a#5",
+          "workerId": "w-mvju5epx-8770f29a"
+        },
+        "completion-proof.json": {
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "workerId": "w-mvju5epx-8770f29a",
+          "notificationId": "w-mvju5epx-8770f29a#16",
+          "time": "2026-10-23T01:50:07.3632240+08:00"
+        }
+      },
+      "worker": {
+        "id": "w-mvju5epx-8770f29a",
+        "runtime": "pi",
+        "status": "completed",
+        "notifyTarget": {
+          "channel": "codex-queue",
+          "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+        },
+        "createdAt": "2026-10-22T17:49:20.709Z",
+        "startedAt": "2026-10-22T17:49:21.310Z",
+        "endedAt": "2026-10-22T17:49:49.800Z",
+        "lastSeq": 17,
+        "result": {
+          "text": "INPUT_DONE",
+          "truncated": false
+        },
+        "stats": {
+          "turns": 3,
+          "toolCalls": 2,
+          "toolErrors": 0
+        }
+      },
+      "notifications": [
+        {
+          "target": {
+            "channel": "codex-queue",
+            "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+          },
+          "id": "w-mvju5epx-8770f29a#5",
+          "workerId": "w-mvju5epx-8770f29a",
+          "runtime": "pi",
+          "seq": 5,
+          "eventType": "run.needs_input",
+          "kind": "needs_input",
+          "createdAt": "2026-10-22T17:49:21.310Z",
+          "summary": {
+            "status": "awaiting_input",
+            "requestId": "818232b9-0f11-48de-85e1-29329cdd1157",
+            "method": "input",
+            "text": "HS ordinary technical input test"
+          },
+          "delivery": {
+            "state": "delivered",
+            "channel": "codex-queue",
+            "attempts": 1,
+            "lastAttemptAt": "2026-10-22T17:49:21.965Z",
+            "messageId": "01a164bb-5826-73e1-9558-b0a9bbca353e"
+          },
+          "ackAt": "2026-10-22T17:49:41.390Z",
+          "ackBy": "native-input-roundtrip"
+        },
+        {
+          "target": {
+            "channel": "codex-queue",
+            "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+          },
+          "id": "w-mvju5epx-8770f29a#16",
+          "workerId": "w-mvju5epx-8770f29a",
+          "runtime": "pi",
+          "seq": 16,
+          "eventType": "run.completed",
+          "kind": "completed",
+          "createdAt": "2026-10-22T17:49:49.800Z",
+          "summary": {
+            "status": "completed",
+            "text": "INPUT_DONE"
+          },
+          "delivery": {
+            "state": "delivered",
+            "channel": "codex-queue",
+            "attempts": 1,
+            "lastAttemptAt": "2026-10-22T17:49:50.421Z",
+            "messageId": "01a164bb-c753-7501-8f05-fb5f6115ac39"
+          },
+          "ackAt": "2026-10-22T17:50:07.653Z",
+          "ackBy": "native-input-roundtrip"
+        }
+      ]
+    },
+    {
+      "label": "A-input-mcp",
+      "files": {
+        "spawned.json": {
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "workerId": "w-mvju83tx-ad08307c"
+        },
+        "wake-proof.txt": "HS_INPUT_WAKE_OK",
+        "input-proof.txt": "HS_INPUT_CONTINUED_OK",
+        "answer-proof.json": {
+          "tool": "worker_answer",
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "notificationId": "w-mvju83tx-ad08307c#5",
+          "time": "2026-10-23T01:52:14.1461917+08:00",
+          "workerId": "w-mvju83tx-ad08307c"
+        },
+        "completion-proof.json": {
+          "workerId": "w-mvju83tx-ad08307c",
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "time": "2026-10-23T01:52:37.2628891+08:00",
+          "notificationId": "w-mvju83tx-ad08307c#17"
+        }
+      },
+      "worker": {
+        "id": "w-mvju83tx-ad08307c",
+        "runtime": "pi",
+        "status": "completed",
+        "notifyTarget": {
+          "channel": "codex-queue",
+          "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+        },
+        "createdAt": "2026-10-22T17:51:26.565Z",
+        "startedAt": "2026-10-22T17:51:27.169Z",
+        "endedAt": "2026-10-22T17:52:17.662Z",
+        "lastSeq": 18,
+        "result": {
+          "text": "INPUT_DONE",
+          "truncated": false
+        },
+        "stats": {
+          "turns": 3,
+          "toolCalls": 2,
+          "toolErrors": 0
+        }
+      },
+      "notifications": [
+        {
+          "target": {
+            "channel": "codex-queue",
+            "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+          },
+          "id": "w-mvju83tx-ad08307c#5",
+          "workerId": "w-mvju83tx-ad08307c",
+          "runtime": "pi",
+          "seq": 5,
+          "eventType": "run.needs_input",
+          "kind": "needs_input",
+          "createdAt": "2026-10-22T17:51:27.170Z",
+          "summary": {
+            "status": "awaiting_input",
+            "requestId": "08fee2de-9633-4475-a045-5ed60f2d0dd9",
+            "method": "input",
+            "text": "HS ordinary technical input test"
+          },
+          "delivery": {
+            "state": "delivered",
+            "channel": "codex-queue",
+            "attempts": 1,
+            "lastAttemptAt": "2026-10-22T17:51:27.884Z",
+            "messageId": "01a164bd-4404-7c53-9d43-968484088cca"
+          },
+          "ackAt": "2026-10-22T17:52:14.082Z",
+          "ackBy": "native-input-roundtrip-mcp"
+        },
+        {
+          "target": {
+            "channel": "codex-queue",
+            "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+          },
+          "id": "w-mvju83tx-ad08307c#17",
+          "workerId": "w-mvju83tx-ad08307c",
+          "runtime": "pi",
+          "seq": 17,
+          "eventType": "run.completed",
+          "kind": "completed",
+          "createdAt": "2026-10-22T17:52:17.662Z",
+          "summary": {
+            "status": "completed",
+            "text": "INPUT_DONE"
+          },
+          "delivery": {
+            "state": "delivered",
+            "channel": "codex-queue",
+            "attempts": 1,
+            "lastAttemptAt": "2026-10-22T17:52:18.351Z",
+            "messageId": "01a164be-0913-7ef1-a276-0a6dcddb9f18"
+          },
+          "ackAt": "2026-10-22T17:52:37.532Z",
+          "ackBy": "native-input-roundtrip-mcp"
+        }
+      ]
+    },
+    {
+      "label": "A_FINAL",
+      "files": {
+        "spawned.json": {
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "workerId": "w-mvjuijvg-a55dd906",
+          "label": "A_FINAL",
+          "status": "running",
+          "at": "2026-10-22T17:59:34.517Z"
+        },
+        "route-proof.txt": "A_FINAL_OK",
+        "wake-proof.txt": "A_FINAL_WAKE_OK",
+        "wake.json": {
+          "notificationId": "w-mvjuijvg-a55dd906#18",
+          "threadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac",
+          "workerId": "w-mvjuijvg-a55dd906",
+          "time": "2026-10-23T02:00:58.5140516+08:00"
+        }
+      },
+      "worker": {
+        "id": "w-mvjuijvg-a55dd906",
+        "runtime": "pi",
+        "status": "completed",
+        "notifyTarget": {
+          "channel": "codex-queue",
+          "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+        },
+        "createdAt": "2026-10-22T17:59:33.916Z",
+        "startedAt": "2026-10-22T17:59:34.503Z",
+        "endedAt": "2026-10-22T18:00:32.820Z",
+        "lastSeq": 19,
+        "result": {
+          "text": "Created `route-proof.txt` in `D:/Projects/Harness-Supervisor/.smoke-routing-dev/.smoke-e2e-work/A_FINAL` containing exactly `A_FINAL_OK` with no trailing newline (verified via `od -c`).\n\nA_FINAL_DONE",
+          "truncated": false
+        },
+        "stats": {
+          "turns": 4,
+          "toolCalls": 3,
+          "toolErrors": 0
+        }
+      },
+      "notifications": [
+        {
+          "target": {
+            "channel": "codex-queue",
+            "codexThreadId": "01a164b6-bb26-74a3-bb57-bc6a2c48a8ac"
+          },
+          "id": "w-mvjuijvg-a55dd906#18",
+          "workerId": "w-mvjuijvg-a55dd906",
+          "runtime": "pi",
+          "seq": 18,
+          "eventType": "run.completed",
+          "kind": "completed",
+          "createdAt": "2026-10-22T18:00:32.820Z",
+          "summary": {
+            "status": "completed",
+            "text": "Created `route-proof.txt` in `D:/Projects/Harness-Supervisor/.smoke-routing-dev/.smoke-e2e-work/A_FINAL` containing exactly `A_FINAL_OK` with no trailing newline (verified via `od -c`).\n\nA_FINAL_DONE"
+          },
+          "delivery": {
+            "state": "delivered",
+            "channel": "codex-queue",
+            "attempts": 1,
+            "lastAttemptAt": "2026-10-22T18:00:33.448Z",
+            "messageId": "01a164c5-9720-7bd0-b2fa-786aa018cdd6"
+          },
+          "ackAt": "2026-10-22T18:00:58.787Z",
+          "ackBy": "A_FINAL"
+        }
+      ]
+    },
+    {
+      "label": "B_FINAL",
+      "files": {
+        "spawned.json": {
+          "threadId": "01a164b6-e971-74c2-9e18-b0b298d2bf85",
+          "workerId": "w-mvjuimrr-4d620982",
+          "label": "B_FINAL",
+          "status": "running",
+          "at": "2026-10-22T17:59:38.284Z"
+        },
+        "route-proof.txt": "B_FINAL_OK",
+        "wake-proof.txt": "B_FINAL_WAKE_OK",
+        "wake.json": {
+          "threadId": "01a164b6-e971-74c2-9e18-b0b298d2bf85",
+          "workerId": "w-mvjuimrr-4d620982",
+          "notificationId": "w-mvjuimrr-4d620982#18",
+          "time": "2026-10-23T02:00:52.1651099+08:00"
+        }
+      },
+      "worker": {
+        "id": "w-mvjuimrr-4d620982",
+        "runtime": "pi",
+        "status": "completed",
+        "notifyTarget": {
+          "channel": "codex-queue",
+          "codexThreadId": "01a164b6-e971-74c2-9e18-b0b298d2bf85"
+        },
+        "createdAt": "2026-10-22T17:59:37.671Z",
+        "startedAt": "2026-10-22T17:59:38.271Z",
+        "endedAt": "2026-10-22T18:00:36.129Z",
+        "lastSeq": 19,
+        "result": {
+          "text": "Created `route-proof.txt` (11 bytes, no trailing newline, verified with `od -c`).\n\nB_FINAL_DONE",
+          "truncated": false
+        },
+        "stats": {
+          "turns": 4,
+          "toolCalls": 3,
+          "toolErrors": 0
+        }
+      },
+      "notifications": [
+        {
+          "target": {
+            "channel": "codex-queue",
+            "codexThreadId": "01a164b6-e971-74c2-9e18-b0b298d2bf85"
+          },
+          "id": "w-mvjuimrr-4d620982#18",
+          "workerId": "w-mvjuimrr-4d620982",
+          "runtime": "pi",
+          "seq": 18,
+          "eventType": "run.completed",
+          "kind": "completed",
+          "createdAt": "2026-10-22T18:00:36.129Z",
+          "summary": {
+            "status": "completed",
+            "text": "Created `route-proof.txt` (11 bytes, no trailing newline, verified with `od -c`).\n\nB_FINAL_DONE"
+          },
+          "delivery": {
+            "state": "delivered",
+            "channel": "codex-queue",
+            "attempts": 1,
+            "lastAttemptAt": "2026-10-22T18:00:36.674Z",
+            "messageId": "01a164c5-a3bc-70d0-9713-6c8d44b5fd14"
+          },
+          "ackAt": "2026-10-22T18:00:52.454Z",
+          "ackBy": "01a164b6-e971-74c2-9e18-b0b298d2bf85"
+        }
+      ]
+    }
+  ],
+  "assertions": {
+    "finalConcurrentRouting": true,
+    "separateThreadIds": true,
+    "realMcpAnswer": true
+  }
+}

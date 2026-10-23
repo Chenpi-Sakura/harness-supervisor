@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { SupervisorError } from "../../src/errors.js";
 import type { WorkerSummary } from "../../src/types.js";
 import { sleep } from "../../src/util/async.js";
@@ -15,6 +17,55 @@ import {
 
 function code(error: unknown): string | undefined {
   return error instanceof SupervisorError ? error.code : undefined;
+}
+
+interface LoggedRecord {
+  key: string;
+  method?: string;
+  state?: string;
+  workerId?: string;
+  createdAt?: string;
+  uncertainAt?: string;
+  released?: boolean;
+}
+
+async function readIdempotencyLog(stateDir: string): Promise<LoggedRecord[]> {
+  let raw: string;
+  try {
+    raw = await readFile(path.join(stateDir, "idempotency.jsonl"), "utf8");
+  } catch {
+    return [];
+  }
+  const records: LoggedRecord[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      records.push(JSON.parse(line) as LoggedRecord);
+    } catch {
+      // A torn trailing line is expected when the previous daemon was killed.
+    }
+  }
+  return records;
+}
+
+/** Poll the on-disk idempotency log for the newest matching record. */
+async function waitForLog(
+  stateDir: string,
+  key: string,
+  predicate: (record: LoggedRecord) => boolean,
+  timeoutMs = 10_000,
+): Promise<LoggedRecord> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const matching = (await readIdempotencyLog(stateDir)).filter(
+      (record) => record.key === key && predicate(record),
+    );
+    const last = matching[matching.length - 1];
+    if (last) return last;
+    await sleep(25);
+  }
+  const dump = JSON.stringify(await readIdempotencyLog(stateDir));
+  throw new Error(`Timed out waiting for idempotency record ${key}. Log: ${dump}`);
 }
 
 test("a repeated spawn requestId replays the accepted worker instead of spawning again", async (t) => {
@@ -231,6 +282,82 @@ test("a repeated send requestId enqueues the message once", async (t) => {
   assert.equal(final.worker.status, "completed");
 });
 
+test("the requestId admission marker is durable before the worker starts", async (t) => {
+  const daemon = await TestDaemon.create();
+  const cwd = await makeWorkspace();
+  const client = await daemon.start({ env: { FAKE_PI_START_DELAY_MS: "4000" } });
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+
+  let settled = false;
+  const pending = client
+    .request<WorkerSummary>(
+      "spawn",
+      { runtime: "pi", cwd, prompt: "durable admission", requestId: "req-durable" },
+      { timeoutMs: 60_000 },
+    )
+    .finally(() => {
+      settled = true;
+    });
+
+  const admission = await waitForLog(
+    daemon.stateDir,
+    "spawn:req-durable",
+    (record) => record.state === "in_progress",
+  );
+  assert.equal(settled, false, "the in_progress marker is on disk while the request is in flight");
+  assert.ok(admission.createdAt);
+
+  const worker = await pending;
+  const terminal = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(terminal.worker.status, "completed");
+  const done = await waitForLog(
+    daemon.stateDir,
+    "spawn:req-durable",
+    (record) => record.state === "done",
+  );
+  assert.equal(done.workerId, worker.id);
+});
+
+test("a completed requestId replays after a daemon restart and never runs twice", async (t) => {
+  const daemon = await TestDaemon.create();
+  const cwd = await makeWorkspace();
+  let restarted: TestDaemon | null = null;
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+    await restarted?.stop().catch(() => undefined);
+  });
+  const client = await daemon.start();
+
+  const first = await client.request<WorkerSummary>(
+    "spawn",
+    { runtime: "pi", cwd, prompt: "restart replay", requestId: "req-restart" },
+    { timeoutMs: 60_000 },
+  );
+  const terminal = await waitTerminal(client, first.id, 20_000);
+  assert.equal(terminal.worker.status, "completed");
+  await waitForLog(
+    daemon.stateDir,
+    "spawn:req-restart",
+    (record) => record.state === "done" && record.workerId === first.id,
+  );
+  await daemon.stop();
+
+  restarted = new TestDaemon(daemon.stateDir);
+  const client2 = await restarted.start();
+  const replay = await client2.request<WorkerSummary>("spawn", {
+    runtime: "pi",
+    cwd,
+    prompt: "restart replay",
+    requestId: "req-restart",
+  });
+  assert.equal(replay.id, first.id, "a durable requestId replays the stored result");
+  assert.equal(replay.status, "completed");
+  const workers = await client2.request<WorkerSummary[]>("list", {});
+  assert.equal(workers.length, 1, "the restart replay must not spawn a second worker");
+});
+
 test("an interrupted requestId returns UNCERTAIN after a daemon restart and is never re-executed", async (t) => {
   const daemon = await TestDaemon.create();
   const cwd = await makeWorkspace();
@@ -248,7 +375,13 @@ test("an interrupted requestId returns UNCERTAIN after a daemon restart and is n
       { timeoutMs: 60_000 },
     )
     .catch((error: unknown) => error);
-  await sleep(800);
+  // Wait for the durable in_progress marker instead of guessing a delay.
+  const admission = await waitForLog(
+    daemon.stateDir,
+    "spawn:req-interrupted",
+    (record) => record.state === "in_progress",
+  );
+  assert.equal(admission.uncertainAt, undefined, "a live request is not yet uncertain");
   await daemon.kill();
   await inFlight;
 
@@ -274,4 +407,13 @@ test("an interrupted requestId returns UNCERTAIN after a daemon restart and is n
   assert.equal(workers.length, 1, "the retry must not start a second worker");
   assert.ok(["orphaned", "interrupted", "starting", "running"].includes(workers[0]!.status));
   client2.close();
+
+  const records = await readIdempotencyLog(daemon.stateDir);
+  const final = records.filter((record) => record.key === "spawn:req-interrupted").at(-1);
+  assert.equal(final?.state, "in_progress", "an interrupted request is never recorded as done");
+  assert.equal(
+    records.filter((record) => record.key === "spawn:req-interrupted").length,
+    1,
+    "no extra state was invented for the interrupted request",
+  );
 });

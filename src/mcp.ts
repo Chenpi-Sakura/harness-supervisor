@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { SupervisorError, errorMessage } from "./errors.js";
 import { SupervisorClient } from "./ipc/client.js";
-import { resolveStateDir } from "./ipc/protocol.js";
+import { resolveStateDir, NotifyTargetSchema } from "./ipc/protocol.js";
 import {
   isTerminal,
   type ExtensionUiResponse,
@@ -89,6 +89,12 @@ const ConfigShape = {
     .describe("Automatically cancel the worker after this duration"),
 };
 
+const NotifyTargetShape = {
+  notifyTarget: NotifyTargetSchema.optional().describe(
+    "Explicit notification destination. Pass {channel:'codex-queue',codexThreadId:<verified originating thread id>} or {channel:'none'} for inbox-only. Spawn snapshots the current daemon default if omitted; resume preserves its original binding if omitted. Never guess the most recent session. MCP does not automatically identify the caller's Codex thread. Explicit resume binding authorizes takeover and affects future events only.",
+  ),
+};
+
 const server = new McpServer(
   {
     name: "harness-supervisor",
@@ -96,7 +102,7 @@ const server = new McpServer(
   },
   {
     instructions:
-      "Harness Supervisor owns native Pi workers. worker_spawn returns after prompt acceptance, never completion. Use worker_wait without sinceSeq for condition waits (it checks current status and the latest events first), or pass a cursor for strict incremental reads. worker_wait omits noisy run.progress events by default (queue_cleared and tool-error progress are kept); pass includeProgress=true or use worker_events for the full history. worker_wait returns immediately when the worker needs input; answer with worker_answer. MCP tools are pull-based: nothing is pushed into this session. Important lifecycle events (completed/failed/cancelled/needs_input/crashed/detached) are also recorded once in a durable inbox: read them with supervisor_notifications and acknowledge with supervisor_notifications_ack. If a Codex thread id is registered with supervisor_wake_target(channel='codex-queue'), the supervisor enqueues a short notice into that Codex thread with the official `codex queue` CLI when an important event happens; the Codex host only runs it when that thread is loaded. Delivery is at-least-once and does not by itself prove the main agent woke. Reuse the worker id until terminal; do not spawn a duplicate for the same task.",
+      "Harness Supervisor manages native Pi/Qoder workers. worker_spawn returns prompt acceptance, never completion. Reuse the worker id; do not spawn duplicates. worker_wait is bounded, omits ordinary progress, and returns when input is needed; answer through worker_answer. MCP event reads are pull-based. Important events also enter a durable inbox; acknowledge processed notification ids. For multiple Codex conversations, pass worker_spawn.notifyTarget with a verified originating thread id. It is persisted per worker and per event. Omission snapshots the daemon default for new workers; worker_resume omission preserves binding, while an explicit target authorizes takeover for future events. supervisor_wake_target only changes the shared default for new workers. No per-request Codex identity is inferred from MCP or the most recent session. Without a known route use channel='none'. codex-queue can trigger a new turn while the host has that target loaded; delivery is at-least-once and never itself proves wake-up.",
   },
 );
 
@@ -113,6 +119,7 @@ server.registerTool(
       name: z.string().min(1).max(200).optional().describe("Human-readable worker label"),
       ...ConfigShape,
       ...RequestIdShape,
+      ...NotifyTargetShape,
     },
   },
   async (args) => {
@@ -130,6 +137,7 @@ server.registerTool(
           thinking: args.thinking,
           maxDurationMs: args.maxDurationMs,
           requestId: args.requestId,
+          notifyTarget: args.notifyTarget,
         },
         { timeoutMs: 90_000 },
       );
@@ -427,6 +435,7 @@ server.registerTool(
       prompt: z.string().min(1),
       ...ConfigShape,
       ...RequestIdShape,
+      ...NotifyTargetShape,
     },
   },
   async (args) => {
@@ -443,6 +452,7 @@ server.registerTool(
             thinking: args.thinking,
             maxDurationMs: args.maxDurationMs,
             requestId: args.requestId,
+            notifyTarget: args.notifyTarget,
           },
           { timeoutMs: 90_000 },
         ),
@@ -524,7 +534,7 @@ server.registerTool(
   {
     title: "Configure optional Codex thread notification delivery",
     description:
-      "Optionally deliver important notifications into a Codex thread by running the official `codex queue --thread <id> --message <text>` CLI. channel='none' (default) keeps the inbox only. channel='codex-queue' requires a real thread id of a loaded Codex session; the Codex host starts a new turn only while that thread is loaded, so this is a best-effort wake, at-least-once, and never a guarantee. Delivery results are visible in supervisor_notifications (delivery.state/lastError).",
+      "Set the default destination for NEW workers. Existing workers and notifications retain their persisted targets. For parallel Codex conversations, pass an explicit notifyTarget to worker_spawn instead of changing this shared default. channel='none' keeps the inbox only; channel='codex-queue' requires a verified Codex thread id. The official codex queue CLI accepts delivery, and the host starts a turn only while the target is loaded. Delivery is at-least-once and does not prove wake-up. Use worker_resume.notifyTarget only for explicitly authorized takeover; omission preserves binding.",
     annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: true },
     inputSchema: {
       channel: z.enum(["none", "codex-queue"]).optional(),

@@ -8,7 +8,7 @@ import {
   validateIdempotencyKey,
   type IdempotencyRecord,
 } from "./idempotency.js";
-import { Notifier, notificationId, notificationKindFor } from "./notify.js";
+import { Notifier, notificationId, notificationKindFor, validateNotifyTarget } from "./notify.js";
 import { Retention, type PruneOptions, type PruneResult } from "./retention.js";
 import { Store } from "./store.js";
 import {
@@ -163,6 +163,12 @@ export class Supervisor {
     const { workers, warnings } = await this.store.init();
     const now = new Date().toISOString();
     for (const record of workers) {
+      if (!record.notifyTarget) {
+        // Legacy records have no reliable origin. Do not guess from the current
+        // global default or the most recently used Codex session.
+        record.notifyTarget = { channel: "none" };
+        await this.store.saveWorker(record);
+      }
       if (!isTerminal(record.status)) {
         const previousStatus = record.status;
         const identity = await inspectProcess(record.pid, [
@@ -220,30 +226,27 @@ export class Supervisor {
   private async reconcileNotifications(): Promise<void> {
     let created = 0;
     for (const record of this.store.listWorkers()) {
-      let cursor = 0;
-      for (;;) {
-        const page = this.store.getEvents(record.id, cursor, 500);
-        for (const event of page.events) {
+      try {
+        for await (const event of this.store.scanEvents(record.id)) {
           if (notificationKindFor(event.type) && !this.notifier.has(notificationId(record.id, event.seq))) {
             created += 1;
           }
-          this.notifier.ingest(record, event);
+          this.notifier.ingest({ ...record, notifyTarget: { channel: "none" } }, event);
         }
-        if (!page.hasMore) break;
-        cursor = page.nextSeq;
+      } catch (error) {
+        // A damaged history must not prevent the daemon controlling other workers.
+        this.logger.warn(`Cannot fully rebuild notifications for ${record.id}`, { error: errorMessage(error) });
       }
     }
     if (created > 0) {
       this.logger.info("Reconciled notification inbox from persisted events", { created });
     }
     await this.notifier.flush();
-    if (this.notifier.getTarget().channel !== "none") {
-      void this.notifier.retryPending(["pending"]).catch((error: unknown) => {
-        this.logger.warn("Failed to retry pending notifications", {
-          error: errorMessage(error),
-        });
+    void this.notifier.retryPending(["pending"]).catch((error: unknown) => {
+      this.logger.warn("Failed to retry pending notifications", {
+        error: errorMessage(error),
       });
-    }
+    });
   }
 
   notifications(filter: {
@@ -304,8 +307,9 @@ export class Supervisor {
         proactive: this.notifier.getTarget().channel !== "none",
         channel: this.notifier.getTarget().channel,
         codexThreadId: this.notifier.getTarget().codexThreadId,
+        workerRouting: true,
         note:
-          "MCP tools are pull-based: events are persisted and the host must call worker_wait/worker_events/supervisor_notifications to observe them. Important lifecycle events (completed, failed, cancelled, needs_input, crashed, detached) are additionally recorded once in a durable notification inbox with stable ids. With channel=codex-queue the supervisor also enqueues a short message into the configured Codex thread through the official `codex queue` CLI. Whether the Codex host starts a new turn depends on the host having that thread loaded; delivery is at-least-once and never proves the main agent woke.",
+          "MCP event queries are pull-based. channel/proactive describe the default for NEW workers; explicit spawn.notifyTarget overrides it. Each worker persists its destination, and each important event snapshots that route. Resume preserves it unless explicitly rebound. Legacy unbound records use the inbox only. codex-queue uses the official CLI; whether a new turn starts depends on the host having that thread loaded. Delivery is at-least-once and does not itself prove wake-up.",
       },
       runtimes: [...this.adapters.values()].map((adapter) => adapter.capabilities),
     };
@@ -385,6 +389,9 @@ export class Supervisor {
     }
 
     const workerIdOut: { value?: string } = {};
+    // Fail closed before creating a process or sending a message if the request
+    // marker could not be written. Keep this outside the operation's catch path.
+    await this.idempotency.flush();
     try {
       const summary = await run(workerIdOut);
       await this.idempotency.complete(method, requestId, summary, summary.id);
@@ -450,6 +457,7 @@ export class Supervisor {
       config,
       resumeCount: 0,
       supervisorId: this.supervisorId,
+      notifyTarget: validateNotifyTarget(input.notifyTarget ?? this.notifier.getTarget()),
     };
     await this.store.createWorker(record);
     const runtime = this.createRuntime(record, adapter);
@@ -633,6 +641,12 @@ export class Supervisor {
       pid: record.pid,
     };
     const config = validateConfig(input, record.config);
+    if (input.notifyTarget !== undefined) {
+      record.notifyTarget = validateNotifyTarget(input.notifyTarget);
+      // Persist takeover before emitting any events or starting a new process.
+      await this.store.saveWorker(record);
+      await this.store.flush(workerId);
+    }
     record.status = "starting";
     record.statusReason = "resuming persisted session";
     record.pendingInput = undefined;
@@ -738,12 +752,12 @@ export class Supervisor {
     };
   }
 
-  events(workerId: string, options?: { sinceSeq?: number; limit?: number }): ReadEventsResult {
+  async events(workerId: string, options?: { sinceSeq?: number; limit?: number }): Promise<ReadEventsResult> {
     this.assertInitialized();
     const record = this.requireWorker(workerId);
     const sinceSeq = Math.max(0, Math.trunc(options?.sinceSeq ?? 0));
     const limit = clampInt(options?.limit ?? 100, 1, 500);
-    const result = this.store.getEvents(workerId, sinceSeq, limit);
+    const result = await this.store.readEvents(workerId, sinceSeq, limit);
     return {
       worker: this.summary(record),
       events: result.events,
@@ -764,17 +778,25 @@ export class Supervisor {
     const sinceSeq = Math.max(0, Math.trunc(options.sinceSeq ?? record.lastSeq));
     const typeFilter = options.types?.length ? new Set(options.types) : null;
 
-    return new Promise<WaitResult>((resolve) => {
+    return new Promise<WaitResult>((resolve, reject) => {
       let finished = false;
+      let evaluating = false;
+      let dirty = false;
       let timer: NodeJS.Timeout | undefined;
       let unsubscribe: (() => void) | undefined;
 
-      const finish = (timedOut: boolean) => {
+      const fail = (error: unknown) => {
+        finished = true;
+        if (timer) clearTimeout(timer);
+        unsubscribe?.();
+        reject(error);
+      };
+      const finish = async (timedOut: boolean) => {
         if (finished) return;
         finished = true;
         if (timer) clearTimeout(timer);
         unsubscribe?.();
-        const data = this.store.getEvents(workerId, sinceSeq, 500);
+        const data = await this.store.readEvents(workerId, sinceSeq, 500);
         resolve({
           worker: this.summary(this.requireWorker(workerId)),
           events: data.events,
@@ -785,37 +807,41 @@ export class Supervisor {
         });
       };
 
-      const evaluate = (): boolean => {
-        const current = this.requireWorker(workerId);
-        const data = this.store.getEvents(workerId, sinceSeq, 500);
-        const hasMatchingEvent = typeFilter
-          ? data.events.some((event) => typeFilter.has(event.type))
-          : data.events.length > 0;
-        // A run that needs input cannot reach a terminal state without the client.
-        // Returning immediately makes the authorization request observable instead
-        // of hiding it behind a wait timeout.
-        const needsInput = current.status === "awaiting_input";
-        if (
-          isTerminal(current.status) ||
-          needsInput ||
-          (until === "event" && hasMatchingEvent)
-        ) {
-          finish(false);
-          return true;
+      const evaluate = async (): Promise<void> => {
+        if (finished) return;
+        dirty = true;
+        if (evaluating) return;
+        evaluating = true;
+        try {
+          while (dirty && !finished) {
+            dirty = false;
+            const data = await this.store.readEvents(workerId, sinceSeq, 500);
+            if (finished) return;
+            const current = this.requireWorker(workerId);
+            const hasMatchingEvent = typeFilter
+              ? data.events.some((event) => typeFilter.has(event.type))
+              : data.events.length > 0;
+            // A run that needs input cannot finish without a consumer response.
+            if (isTerminal(current.status) || current.status === "awaiting_input" ||
+                (until === "event" && hasMatchingEvent)) {
+              await finish(false);
+              return;
+            }
+          }
+        } finally {
+          evaluating = false;
         }
-        return false;
+        if (timeoutMs === 0 && !finished) await finish(true);
       };
 
       unsubscribe = this.store.subscribe(workerId, () => {
-        if (!finished) evaluate();
+        if (!finished) void evaluate().catch(fail);
       });
-      if (evaluate()) return;
-      if (timeoutMs === 0) {
-        finish(true);
-        return;
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => { void finish(true).catch(fail); }, timeoutMs);
+        timer.unref?.();
       }
-      timer = setTimeout(() => finish(true), timeoutMs);
-      timer.unref?.();
+      void evaluate().catch(fail);
     });
   }
 

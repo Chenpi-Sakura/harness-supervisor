@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,77 @@ function fakeCodexCommand(): string {
 }
 
 const worker = { id: "w-test", runtime: "pi", status: "running" as const };
+
+test("invalid default changes are atomic and do not change the current route", async () => {
+  const { notifier } = await makeNotifier();
+  const before = notifier.getTarget();
+  await assert.rejects(notifier.setTarget({ channel: "codex-queue" }), /requires codexThreadId/);
+  assert.deepEqual(notifier.getTarget(), before);
+  await notifier.setTarget({ channel: "codex-queue", codexThreadId: "thread-original" });
+  const valid = notifier.getTarget();
+  await assert.rejects(notifier.setTarget({ codexThreadId: "invalid thread" }), /must look/);
+  assert.deepEqual(notifier.getTarget(), valid);
+});
+
+test("pending records never migrate when the global default changes", async () => {
+  const { notifier } = await makeNotifier();
+  const record = notifier.ingest(worker, makeEvent(1, "run.completed"))!;
+  await notifier.setTarget({ channel: "codex-queue", codexThreadId: "thread-new-default" });
+  assert.deepEqual(record.target, { channel: "none" });
+  assert.equal(await notifier.retryPending(), 0);
+  assert.equal(record.delivery.attempts, 0);
+});
+
+test("an inbox write failure prevents host invocation and is observable", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-notify-fail-"));
+  const log = path.join(dir, "calls.jsonl");
+  const previous = process.env.HS_FAKE_CODEX_LOG;
+  process.env.HS_FAKE_CODEX_LOG = log;
+  const notifier = new Notifier({ stateDir: dir, logger: silentLogger, codexBin: fakeCodexCommand() });
+  await notifier.init();
+  await mkdir(path.join(dir, "notifications.jsonl"));
+  try {
+    const record = notifier.ingest({ ...worker, notifyTarget: { channel: "codex-queue", codexThreadId: "thread-safe" } }, makeEvent(1, "run.completed"))!;
+    await assert.rejects(notifier.flush());
+    await assert.rejects(notifier.deliver(record.id));
+    assert.equal(await readFile(log, "utf8").catch(() => ""), "");
+    assert.equal(record.delivery.attempts, 0);
+  } finally {
+    notifier.stop();
+    if (previous === undefined) delete process.env.HS_FAKE_CODEX_LOG;
+    else process.env.HS_FAKE_CODEX_LOG = previous;
+  }
+});
+
+test("a legacy inbox record has no inferred route after restart", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-legacy-inbox-"));
+  const notifier = new Notifier({ stateDir: dir, logger: silentLogger });
+  await notifier.init();
+  const record = notifier.ingest(worker, makeEvent(1, "run.completed"))!;
+  await notifier.flush();
+  delete record.target;
+  await writeFile(path.join(dir, "notifications.jsonl"), JSON.stringify(record) + "\n");
+  const restarted = new Notifier({ stateDir: dir, logger: silentLogger, channel: "codex-queue", codexThreadId: "thread-unrelated" });
+  await restarted.init();
+  assert.equal(await restarted.retryPending(), 0);
+  assert.deepEqual(restarted.list()[0]!.target, { channel: "none" });
+});
+
+test("a torn inbox tail does not swallow a newly persisted notification", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-torn-inbox-"));
+  await writeFile(path.join(dir, "notifications.jsonl"), '{"id":"partial');
+  const notifier = new Notifier({ stateDir: dir, logger: silentLogger });
+  await notifier.init();
+  const record = notifier.ingest(worker, makeEvent(1, "run.completed"))!;
+  await notifier.flush();
+  const restarted = new Notifier({ stateDir: dir, logger: silentLogger });
+  await restarted.init();
+  assert.equal(restarted.list()[0]!.id, record.id);
+  await restarted.ack([record.id]);
+  const third = new Notifier({ stateDir: dir, logger: silentLogger });
+  await third.init();
+  assert.equal(third.counts().unacked, 0);
+});
 
 function makeEvent(seq: number, type: string, data?: Record<string, unknown>): WorkerEvent {
   return {
@@ -355,5 +426,35 @@ test("an explicitly retried failed delivery gets a fresh attempt budget", async 
     notifier.stop();
     if (previousFail === undefined) delete process.env.HS_FAKE_CODEX_FAIL;
     else process.env.HS_FAKE_CODEX_FAIL = previousFail;
+  }
+});
+
+test("a retry requested while an attempt is in flight still performs a real attempt", async () => {
+  const previousSleep = process.env.HS_FAKE_CODEX_SLEEP_MS;
+  // Slow host call so the concurrent-request window is deterministic, not timing luck.
+  process.env.HS_FAKE_CODEX_SLEEP_MS = "300";
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-notify-"));
+  const notifier = new Notifier({
+    stateDir: dir,
+    logger: silentLogger,
+    channel: "codex-queue",
+    codexThreadId: "01a1623d-d0a4-7493-b44d-5d1143efb6fe",
+    codexBin: fakeCodexCommand(),
+    maxAttempts: 3,
+    retryDelayMs: 10,
+  });
+  await notifier.init();
+  try {
+    notifier.ingest(worker, makeEvent(40, "run.completed", { text: "slow" }));
+    // ingest() starts the first attempt synchronously; this retry must not be
+    // silently dropped just because that attempt is still running.
+    assert.equal(await notifier.retryPending(["pending"]), 1);
+    const delivered = notifier.list({ state: "delivered" })[0];
+    assert.ok(delivered, "the explicit retry must end in a delivered record");
+    assert.equal(delivered.delivery.attempts, 1);
+  } finally {
+    notifier.stop();
+    if (previousSleep === undefined) delete process.env.HS_FAKE_CODEX_SLEEP_MS;
+    else process.env.HS_FAKE_CODEX_SLEEP_MS = previousSleep;
   }
 });

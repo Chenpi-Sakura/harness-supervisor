@@ -37,6 +37,20 @@ const MAX_DELIVERY_OUTPUT = 2000;
 
 const THREAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,120}$/;
 
+export function validateNotifyTarget(input: NotifyTarget): NotifyTarget {
+  if (!input || (input.channel !== "none" && input.channel !== "codex-queue")) {
+    throw new SupervisorError("BAD_REQUEST", "notification channel must be none or codex-queue");
+  }
+  const thread = input.codexThreadId?.trim();
+  if (thread !== undefined && !THREAD_ID_PATTERN.test(thread)) {
+    throw new SupervisorError("BAD_REQUEST", "codexThreadId must look like a Codex thread UUID or session name");
+  }
+  if (input.channel === "codex-queue" && !thread) {
+    throw new SupervisorError("BAD_REQUEST", "channel codex-queue requires codexThreadId");
+  }
+  return input.channel === "none" ? { channel: "none" } : { channel: "codex-queue", codexThreadId: thread };
+}
+
 /** Only these event types create notifications; ordinary progress never does. */
 const EVENT_KIND: Record<string, NotificationKind> = {
   "run.completed": "completed",
@@ -75,8 +89,13 @@ export class Notifier {
   private readonly records = new Map<string, NotificationRecord>();
   private readonly writeChain = { current: Promise.resolve() as Promise<void> };
   private readonly inFlight = new Set<string>();
+  /** Resolved when the current attempt for that id leaves `inFlight`. */
+  private readonly inFlightWait = new Map<string, Promise<void>>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private started = false;
+  private writeError?: Error;
+  private needsLineBreak = false;
+  private targetChanges: Promise<unknown> = Promise.resolve();
   private target: NotifyTarget;
   private readonly codexBin: string;
   private readonly maxAttempts: number;
@@ -113,50 +132,33 @@ export class Notifier {
   }
 
   async setTarget(input: { channel?: "none" | "codex-queue"; codexThreadId?: string | null }): Promise<NotifyTarget> {
-    if (input.channel !== undefined) this.target.channel = input.channel;
-    if (input.codexThreadId !== undefined) {
-      if (input.codexThreadId === null) {
-        this.target.codexThreadId = undefined;
-      } else {
-        const trimmed = input.codexThreadId.trim();
-        if (!THREAD_ID_PATTERN.test(trimmed)) {
-          throw new SupervisorError(
-            "BAD_REQUEST",
-            "codexThreadId must look like a Codex thread UUID or session name",
-          );
-        }
-        this.target.codexThreadId = trimmed;
-      }
-    }
-    if (this.target.channel === "codex-queue" && !this.target.codexThreadId) {
-      throw new SupervisorError(
-        "BAD_REQUEST",
-        "channel codex-queue requires codexThreadId (use notification_target to set it)",
-      );
-    }
-    this.target.updatedAt = new Date().toISOString();
-    await this.persistTarget();
-    if (this.target.channel === "codex-queue" && this.target.codexThreadId) {
-      void this.retryPending(["pending"]).catch((error: unknown) => {
-        this.logger.warn("Failed to retry pending notifications after target update", {
-          error: errorMessage(error),
-        });
+    const change = this.targetChanges.catch(() => undefined).then(async () => {
+      const target = validateNotifyTarget({
+        channel: input.channel ?? this.target.channel,
+        codexThreadId: input.codexThreadId === null ? undefined : input.codexThreadId ?? this.target.codexThreadId,
       });
-    }
-    return this.getTarget();
+      target.updatedAt = new Date().toISOString();
+      await this.persistTarget(target);
+      this.target = target;
+      return this.getTarget();
+    });
+    this.targetChanges = change;
+    return change;
   }
 
   /**
    * Create notifications for important events that do not have one yet.
    * Safe to call repeatedly; used both live and while reconciling after restart.
    */
-  ingest(worker: { id: string; runtime: string; status: WorkerStatus }, event: WorkerEvent): NotificationRecord | null {
+  ingest(worker: { id: string; runtime: string; status: WorkerStatus; notifyTarget?: NotifyTarget }, event: WorkerEvent): NotificationRecord | null {
     const kind = notificationKindFor(event.type);
     if (!kind) return null;
     const id = notificationId(worker.id, event.seq);
     const existing = this.records.get(id);
     if (existing) return existing;
+    const target = validateNotifyTarget(event.notifyTarget ?? worker.notifyTarget ?? this.getTarget());
     const record: NotificationRecord = {
+      target,
       id,
       workerId: worker.id,
       runtime: worker.runtime,
@@ -165,12 +167,12 @@ export class Notifier {
       kind,
       createdAt: event.ts,
       summary: summarize(event, kind, worker.status),
-      delivery: { state: "pending", channel: this.target.channel, attempts: 0 },
+      delivery: { state: "pending", channel: target.channel, attempts: 0 },
     };
     this.records.set(id, record);
     void this.persist(record);
     this.onNewNotification?.(record);
-    if (this.started && this.target.channel !== "none") {
+    if (this.started && target.channel !== "none") {
       void this.deliver(id).catch((error: unknown) => {
         this.logger.warn(`Notification delivery failed for ${id}`, {
           error: errorMessage(error),
@@ -261,6 +263,7 @@ export class Notifier {
       }
       if (record.ackAt) continue;
       record.ackAt = now;
+      this.clearRetryTimer(id);
       if (by) record.ackBy = safeText(by, 100);
       changed.push(record);
     }
@@ -281,11 +284,11 @@ export class Notifier {
     states: NotificationDeliveryState[] = ["pending"],
     options: { resetFailed?: boolean } = {},
   ): Promise<number> {
-    if (this.target.channel === "none") return 0;
     const wanted = new Set(states);
     const resetFailed = options.resetFailed ?? wanted.has("failed");
     const candidates = [...this.records.values()].filter((record) => {
       if (record.ackAt) return false;
+      if (record.target?.channel !== "codex-queue") return false;
       if (!wanted.has(record.delivery.state)) return false;
       if (record.delivery.state === "failed") return resetFailed;
       return record.delivery.attempts < this.maxAttempts;
@@ -308,23 +311,42 @@ export class Notifier {
 
   async deliver(id: string): Promise<NotificationRecord | null> {
     const record = this.records.get(id);
-    if (!record || this.inFlight.has(id)) return record ?? null;
+    if (!record) return null;
+    // An explicit retry can arrive while the previous attempt is still finishing
+    // (the record already shows `failed`, but the host call is not done). Waiting
+    // for that attempt keeps the request honest: reporting `retried` must mean a
+    // new attempt really happened, not that it was dropped as a concurrent call.
+    for (let wait = 0; this.inFlight.has(id) && wait < 2; wait += 1) {
+      await this.inFlightWait.get(id)?.catch(() => undefined);
+    }
+    if (this.inFlight.has(id)) return record;
     // Acknowledged notifications are finished work; never send them again.
     if (record.ackAt) return record;
     if (record.delivery.state === "delivered") return record;
-    if (this.target.channel === "none") return record;
-    if (this.target.channel === "codex-queue" && !this.target.codexThreadId) {
+    const target = record.target ?? { channel: "none" };
+    if (target.channel === "none") return record;
+    if (!target.codexThreadId) {
       record.delivery.lastError = "no codexThreadId configured";
       void this.persist(record);
       return record;
     }
     this.inFlight.add(id);
+    let release: () => void = () => undefined;
+    this.inFlightWait.set(
+      id,
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
     try {
+      // Confirm the route and inbox record are written before invoking the host.
+      await this.flush();
+      if (record.ackAt || !this.started) return record;
       const message = renderMessage(record);
-      const result = await this.runCodexQueue(this.target.codexThreadId!, message);
+      const result = await this.runCodexQueue(target.codexThreadId, message);
       record.delivery.attempts += 1;
       record.delivery.lastAttemptAt = new Date().toISOString();
-      record.delivery.channel = this.target.channel;
+      record.delivery.channel = target.channel;
       if (result.ok) {
         record.delivery.state = "delivered";
         record.delivery.lastError = undefined;
@@ -341,14 +363,18 @@ export class Notifier {
       return record;
     } finally {
       this.inFlight.delete(id);
+      this.inFlightWait.delete(id);
+      release();
     }
   }
 
   async flush(): Promise<void> {
     await this.writeChain.current;
+    if (this.writeError) throw this.writeError;
   }
 
   stop(): void {
+    this.started = false;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
   }
@@ -433,7 +459,9 @@ export class Notifier {
       .catch(() => undefined)
       .then(() => writeFileAtomic(this.file, content))
       .catch((error: unknown) => {
+        this.writeError = error instanceof Error ? error : new Error(String(error));
         this.logger.error("Failed to compact notification inbox", { error: errorMessage(error) });
+        throw error;
       });
     return this.writeChain.current;
   }
@@ -446,11 +474,15 @@ export class Notifier {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
     }
+    this.needsLineBreak = raw.length > 0 && !raw.endsWith("\n");
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       try {
         const record = JSON.parse(line) as NotificationRecord;
         if (!record || typeof record.id !== "string" || typeof record.workerId !== "string") continue;
+        // A historical record without a provable destination must never be sent
+        // to whoever happens to configure the daemon next.
+        record.target = record.target ? validateNotifyTarget(record.target) : { channel: "none" };
         this.records.set(record.id, record);
       } catch {
         // A partially written trailing line is expected after a crash.
@@ -480,8 +512,8 @@ export class Notifier {
     }
   }
 
-  private async persistTarget(): Promise<void> {
-    const snapshot = { ...this.target };
+  private async persistTarget(target: NotifyTarget): Promise<void> {
+    const snapshot = { ...target };
     this.writeChain.current = this.writeChain.current
       .catch(() => undefined)
       .then(() => writeFileAtomic(this.targetFile, `${JSON.stringify(snapshot, null, 2)}\n`));
@@ -492,8 +524,13 @@ export class Notifier {
     const line = `${JSON.stringify(record)}\n`;
     this.writeChain.current = this.writeChain.current
       .catch(() => undefined)
-      .then(() => appendFile(this.file, line, "utf8"))
+      .then(async () => {
+        await appendFile(this.file, `${this.needsLineBreak ? "\n" : ""}${line}`, "utf8");
+        this.needsLineBreak = false;
+      })
       .catch((error: unknown) => {
+        this.needsLineBreak = true;
+        this.writeError = error instanceof Error ? error : new Error(String(error));
         this.logger.error(`Failed to persist notification ${record.id}`, {
           error: errorMessage(error),
         });

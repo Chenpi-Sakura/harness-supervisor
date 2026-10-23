@@ -106,6 +106,8 @@ export interface WorkerRecord {
   config: WorkerConfig;
   resumeCount: number;
   supervisorId: string;
+  /** Persisted at spawn; global defaults never move an existing worker. */
+  notifyTarget?: NotifyTarget;
 }
 
 export interface WorkerSummary extends WorkerRecord {
@@ -141,9 +143,12 @@ export interface WorkerEvent {
   ts: string;
   type: WorkerEventType;
   data?: Record<string, unknown>;
+  /** Historical route, including across explicit resume rebinding. */
+  notifyTarget?: NotifyTarget;
 }
 
 export interface SpawnInput {
+  notifyTarget?: NotifyTarget;
   runtime?: string;
   cwd: string;
   prompt: string;
@@ -157,6 +162,8 @@ export interface SpawnInput {
 }
 
 export interface ResumeInput {
+  /** Omit to preserve the existing binding. Explicit value authorizes takeover. */
+  notifyTarget?: NotifyTarget;
   prompt: string;
   model?: string;
   provider?: string;
@@ -211,6 +218,8 @@ export interface SupervisorInfo {
     proactive: boolean;
     channel: "none" | "codex-queue";
     codexThreadId?: string;
+    /** channel/proactive describe the default, while workers can override it. */
+    workerRouting?: boolean;
     note: string;
   };
   runtimes: RuntimeCapabilities[];
@@ -233,6 +242,8 @@ export type NotificationKind =
 export type NotificationDeliveryState = "pending" | "delivered" | "failed";
 
 export interface NotificationRecord {
+  /** Immutable destination for this event; missing legacy routes are inbox-only. */
+  target?: NotifyTarget;
   /** Stable identity derived from worker + event seq, so one event yields one record. */
   id: string;
   workerId: string;

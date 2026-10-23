@@ -63,9 +63,11 @@ test("MCP wait without a cursor observes current state and returns incremental r
   const worker = parseTool(
     (await mcp.callTool({
       name: "worker_spawn",
-      arguments: { cwd, prompt: "[scenario:slow] MCP wait semantics" },
+      arguments: { cwd, prompt: "[scenario:slow] MCP wait semantics", notifyTarget: { channel: "none" } },
     })) as ToolResult,
   );
+
+  assert.deepEqual(worker.notifyTarget, { channel: "none" });
 
   let sawStarted = false;
   for (let attempt = 0; attempt < 50 && !sawStarted; attempt += 1) {

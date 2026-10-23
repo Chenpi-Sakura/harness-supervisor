@@ -90,11 +90,39 @@ node dist/src/cli.js down                    # 优雅关闭（会取消活动 Wo
 默认状态目录为 `~/.harness-supervisor`，可用 `--state-dir <dir>` 或 `HARNESS_SUPERVISOR_HOME` 隔离实例。
 完整命令见 `node dist/src/cli.js help`，示例见 [`examples/cli-walkthrough.sh`](examples/cli-walkthrough.sh)。
 
+### 全新 clone / 另一台机器接入
+
+仓库只包含源码、测试与文档；`dist/` 被 `.gitignore` 忽略，**必须在本机构建**。可复现流程：
+
+```bash
+git clone <repo-url> Harness-Supervisor
+cd Harness-Supervisor
+npm ci                 # 按 package-lock.json 安装，可复现
+npm run build          # 生成 dist/（tsc）
+npm run typecheck      # 可选：类型检查
+node dist/src/cli.js up          # 在本机启动 daemon
+node dist/src/cli.js info        # 核对 version=0.2.0 与 stateDir
+```
+
+依赖：Node.js >= 22.19（`node -v` 核对）；Pi >= 1.3；Qoder 可选。若 `npm ci` 因网络镜像失败，改用 `npm install` 后以 `git status` 确认 `package-lock.json` 未被意外改写。
+
+**不会随 Git 迁移的本机状态**（每台机器各自建立，不假定能从其他机器继承）：
+
+- **状态目录**（默认 `~/.harness-supervisor`）：Worker 记录、事件日志、session 文件、通知收件箱、幂等日志。复制源码不等于复制运行状态；其他机器上的 Worker 不能在本机 `resume`，也不应把旧状态目录硬搬到新版本上继续使用。
+- **daemon 进程与 IPC 端点**：由本机 `up` 自行启动；从其他机器/工作树启动的 daemon 与本机状态无关。
+- **宿主配置**：Codex 的 `~/.codex/config.toml`（MCP 注册）、其他 MCP 客户端的配置，都在本机手写，且**必须指向本机 clone 的绝对路径**。
+- **原生 Harness 凭据**：Pi 的 provider/model/凭据配置、Qoder 的 `qodercli login` 登录态均由本机原生工具管理，HS 不保存也不迁移它们。缺少凭据时 `spawn` 会失败，不属于 HS 的缺陷。
+
+因此“另一台机器可用”指的是：clone → `npm ci` → `npm run build` 后即可运行同一份代码；运行状态与凭据需要各机自行配置。
+
+历史证据与交付报告里可能提到开发工作树路径（如 `.smoke-routing-dev`），那只是当时的运行记录。正式配置、`scripts/` 与 `examples/` 不依赖任何开发工作树，全新 clone 不需要它，可以忽略或删除。
+
 ### MCP 接入（Codex 为例）
 
-先在 **Codex 之外**启动并保持 daemon（`codex exec` 退出会清理 MCP server 的进程树，自动拉起的 daemon 会被一起杀掉）：
+先在 **Codex 之外**启动并保持 daemon（`codex exec` 退出会清理 MCP server 的进程树，自动拉起的 daemon 会被一起杀掉）。下面的绝对路径要换成**本机 clone 的主目录**：
 
 ```powershell
+# 示例：本机主目录为 D:/Projects/Harness-Supervisor（换成你自己的 clone 路径）
 node D:/Projects/Harness-Supervisor/dist/src/cli.js up
 ```
 
@@ -134,6 +162,30 @@ default_tools_approval_mode = "approve"   # 只在可信工作区使用
 
 `up` `down` `daemon` `info` · `spawn` `list` `status` `events` `wait` `send` `answer` `cancel` `resume` · `inbox` `ack` `notify-target` `retry-notifications` · `prune`
 
+### Worker 通知绑定（多 Codex 对话）
+
+`spawn.notifyTarget` 显式指定发起会话；CLI 使用 `--notify-thread` 或 `--notify-none`，MCP 使用下面的对象：
+
+```json
+{"notifyTarget":{"channel":"codex-queue","codexThreadId":"<verified-origin-thread-id>"}}
+```
+
+每个 Worker 在创建时持久化绑定，每条重要事件和通知保存各自的目标快照。全局 `notify-target` / `supervisor_wake_target` 只作为**新 Worker 的默认值**。已有 Worker、已排队或失败待重试的通知都不会随默认值迁移。未配置目标时只写收件箱；旧版本无绑定的 Worker 和无目标的通知同样保留在收件箱，不推测原始会话。
+
+```powershell
+# 必须在发起 Worker 的那个 Codex 对话内执行；先检查变量确实存在
+if (-not $env:CODEX_THREAD_ID) { throw '请显式提供已核实的 Thread ID' }
+node dist/src/cli.js spawn --cwd D:/work/demo --prompt '执行任务' --notify-thread $env:CODEX_THREAD_ID --json
+
+# 默认保留原绑定；明确授权接管时才指定新目标（仅影响后续事件）
+node dist/src/cli.js resume <workerId> --prompt '继续任务'
+node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-thread <new-thread-id>
+```
+
+本机 shell 的 `CODEX_THREAD_ID` 已实测存在，但共享 MCP server 的进程环境不等于逐请求身份。本实现不自动读取 MCP 进程环境来替调用方绑定，不扫描“最近 Session”。调用方须传入已核实的 Thread ID；若宿主不提供，则明确使用收件箱降级。不要在并行会话中先改全局默认值再 spawn 来模拟绑定。
+
+旧客户端省略 `notifyTarget` 仍可调用；这是向后兼容的默认值快照，不保证它能识别发起会话。恢复历史通知时只信事件中的历史目标；无历史目标的旧事件不会投递给新接管者。通知 `delivered` 仅表示队列接受；`ack` 表示消费者已处理。崩溃窗口可能重复投递，消费者应按稳定通知 ID 去重。
+
 ### 关键语义
 
 - `spawn` 返回时任务尚未完成；终态以 `wait` / `status` 为准。
@@ -142,6 +194,14 @@ default_tools_approval_mode = "approve"   # 只在可信工作区使用
 - `resume` 不会续接原进程内存中的运行，也不会自动重跑中断任务。
 - `prune` 是显式维护操作：只清理终态且没有未确认通知的 Worker。
 - 未携带 `requestId` 时不具备幂等性；带 `requestId` 时也不会获得跨组件的 exactly-once。
+
+### 长期事件与请求持久化
+
+每个 Worker 的事件缓存最多保存最近 500 条，完整历史仍在追加日志中。启动流式扫描日志，历史查询按需异步分页，稀疏字节索引支持深页读取；通知重建使用单次流式扫描。已知的事件缺口或追加失败会明确报错，不将残缺历史伪装为完整结果；单个损坏日志不会阻止其他 Worker 继续受管。
+
+直接使用 TypeScript/JavaScript 库的调用方需注意：`Supervisor.events()` 现在返回 Promise，应使用 `await`；`Store.getEvents()` 只访问缓存，`truncated:true` 表示需调用 `await Store.readEvents()` 获取完整历史，`Store.scanEvents()` 用于全历史流式处理。CLI、IPC、MCP 的字段和调用方式保持兼容。
+
+带 `requestId` 的副作用操作会先等待准入记录写入，再启动进程或发送消息；持久化失败明确返回错误。通知也在收件箱记录写入确认后才调用宿主。上述承诺针对进程崩溃和写入失败，不提供断电 fsync、磁盘损坏或跨组件 exactly-once 保证。
 
 ### 状态与事件
 
@@ -176,6 +236,7 @@ default_tools_approval_mode = "approve"   # 只在可信工作区使用
 | 位置 | 内容 |
 | --- | --- |
 | [`docs/v0.2-report.md`](docs/v0.2-report.md) | v0.2 交付报告：通知、幂等、保留策略、Qoder 验证 |
+| [`docs/iteration-261023-report.md`](docs/iteration-261023-report.md) | 2026-10-23 迭代：Worker 通知路由、原生输入闭环、事件历史与幂等可靠性 |
 | [`docs/archive/project-status-2026-10-22.md`](docs/archive/project-status-2026-10-22.md) | 2026-10-22 项目现状审计 |
 | [`docs/archive/readme-detailed-2026-10-22.md`](docs/archive/readme-detailed-2026-10-22.md) | 旧版详细 README 快照（含实现细节与历史数据） |
 | [`evidence/`](evidence/) | 真实运行证据：Pi / Qoder / Codex / 唤醒实验，每个目录含 README |

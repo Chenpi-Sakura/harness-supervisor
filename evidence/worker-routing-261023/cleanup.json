@@ -1,0 +1,68 @@
+[
+  {
+    "stateDir": "D:/Projects/Harness-Supervisor/.smoke-engineering-state",
+    "workers": [
+      {
+        "id": "w-mvjtt53n-b08fdc27",
+        "status": "cancelled"
+      },
+      {
+        "id": "w-mvjtql6l-57f990a8",
+        "status": "cancelled"
+      },
+      {
+        "id": "w-mvjtp3a8-df327a4c",
+        "status": "failed"
+      }
+    ],
+    "ack": {
+      "acked": 3,
+      "missing": []
+    },
+    "shutdown": {
+      "stopped": true
+    }
+  },
+  {
+    "stateDir": "D:/Projects/Harness-Supervisor/.smoke-routing-e2e-state",
+    "workers": [
+      {
+        "id": "w-mvjuimrr-4d620982",
+        "status": "completed"
+      },
+      {
+        "id": "w-mvjuijvg-a55dd906",
+        "status": "completed"
+      },
+      {
+        "id": "w-mvju83tx-ad08307c",
+        "status": "completed"
+      },
+      {
+        "id": "w-mvju5epx-8770f29a",
+        "status": "completed"
+      },
+      {
+        "id": "w-mvju0y3y-ce8b0825",
+        "status": "completed"
+      },
+      {
+        "id": "w-mvju09o5-8b382647",
+        "status": "completed"
+      }
+    ],
+    "ack": {
+      "acked": 0,
+      "missing": []
+    },
+    "shutdown": {
+      "stopped": true
+    }
+  },
+  {
+    "production": {
+      "action": "read-only; no restart or upgrade",
+      "inspectionError": "SupervisorError: Cannot connect to supervisor daemon: connect ENOENT \\\\.\\pipe\\harness-supervisor-b149b4bf40a5007c32a0"
+    }
+  }
+]

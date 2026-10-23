@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { McodeAdapter } from "./adapters/mcode/adapter.js";
 import { PiAdapter } from "./adapters/pi/adapter.js";
 import { QoderAdapter } from "./adapters/qoder/adapter.js";
 import { SupervisorError, errorMessage } from "./errors.js";
@@ -44,7 +45,11 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   const endpoint = ipcEndpoint(stateDir);
   const supervisorId = randomUUID();
   const store = new Store(stateDir, logger);
+  // The harness adapters must agree with the supervisor on how long a cancel may
+  // take, otherwise the adapter waits on a different budget than the caller.
+  const abortTimeoutMs = intEnv("HARNESS_SUPERVISOR_ABORT_TIMEOUT_MS", 20_000, 500, 120_000);
   const piAdapter = new PiAdapter({
+    abortTimeoutMs,
     onStderr: (workerId, text) => {
       void store.appendStderr(workerId, text).catch((error: unknown) => {
         logger.warn(`Failed to persist stderr for ${workerId}`, { error: errorMessage(error) });
@@ -55,6 +60,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     },
   });
   const qoderAdapter = new QoderAdapter({
+    abortTimeoutMs,
     onStderr: (workerId, text) => {
       void store.appendStderr(workerId, text).catch((error: unknown) => {
         logger.warn(`Failed to persist stderr for ${workerId}`, { error: errorMessage(error) });
@@ -64,11 +70,23 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       logger.warn(`Qoder CLI diagnostic for ${workerId}`, { message });
     },
   });
+  const mcodeAdapter = new McodeAdapter({
+    abortTimeoutMs,
+    onStderr: (workerId, text) => {
+      void store.appendStderr(workerId, text).catch((error: unknown) => {
+        logger.warn(`Failed to persist stderr for ${workerId}`, { error: errorMessage(error) });
+      });
+    },
+    onDiagnostic: (workerId, message) => {
+      logger.warn(`MiniMax Code ACP diagnostic for ${workerId}`, { message });
+    },
+  });
   const supervisor = new Supervisor({
     store,
     adapters: new Map<string, HarnessAdapter>([
       ["pi", piAdapter],
       ["qoder", qoderAdapter],
+      ["mcode", mcodeAdapter],
     ]),
     logger,
     supervisorId,
@@ -78,7 +96,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       maxWaitMs: intEnv("HARNESS_SUPERVISOR_MAX_WAIT_MS", 120_000, 1000, 600_000),
       defaultWaitMs: intEnv("HARNESS_SUPERVISOR_DEFAULT_WAIT_MS", 30_000, 0, 600_000),
       closeGraceMs: intEnv("HARNESS_SUPERVISOR_CLOSE_GRACE_MS", 1500, 100, 30_000),
-      abortTimeoutMs: intEnv("HARNESS_SUPERVISOR_ABORT_TIMEOUT_MS", 20_000, 500, 120_000),
+      abortTimeoutMs,
     },
     notify: {
       channel: process.env.HARNESS_SUPERVISOR_NOTIFY_CHANNEL === "codex-queue" ? "codex-queue" : "none",

@@ -422,9 +422,13 @@ export class Supervisor {
     const runtimeName = input.runtime ?? "pi";
     const adapter = this.adapters.get(runtimeName);
     if (!adapter) {
-      throw new SupervisorError("UNSUPPORTED", `Unknown runtime: ${runtimeName}`, {
-        available: [...this.adapters.keys()],
-      });
+      throw new SupervisorError(
+        "UNSUPPORTED",
+        `Unknown runtime: ${runtimeName}. The daemon may predate this runtime.`,
+        {
+          available: [...this.adapters.keys()],
+        },
+      );
     }
     if (typeof input.prompt !== "string" || input.prompt.trim().length === 0) {
       throw new SupervisorError("BAD_REQUEST", "prompt must be a non-empty string");
@@ -902,7 +906,11 @@ export class Supervisor {
       if (mode === "steer") await runtime.session.steer(message);
       else await runtime.session.followUp(message);
     } catch (error) {
-      throw new SupervisorError("HARNESS_ERROR", safeText(errorMessage(error), 2000), {
+      // An adapter can report that the runtime build does not support the
+      // requested mode. That is a capability fact, not a harness malfunction,
+      // so it must not be flattened into HARNESS_ERROR.
+      const code = classifyErrorCode(error);
+      throw new SupervisorError(code === "UNSUPPORTED" ? "UNSUPPORTED" : "HARNESS_ERROR", safeText(errorMessage(error), 2000), {
         workerId,
         mode,
       });

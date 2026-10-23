@@ -33,7 +33,7 @@ Daemon:
 
 Workers:
   spawn --prompt <text> [--cwd <dir>] [--name <n>] [--model <m>] [--provider <p>]
-        [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder]
+        [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder|mcode]
         [--extra-args '["--no-extensions"]'] [--request-id <key>] [--wait] [--json]
         [--notify-thread <verified-thread-id> | --notify-none]
   list [--status running,failed] [--limit 50] [--json]

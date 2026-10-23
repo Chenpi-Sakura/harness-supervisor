@@ -133,7 +133,7 @@ test("MCP mode comes from CLI/env, defaults to production, and rejects invalid v
   const production = await connectMcp(t, stateDir, {});
   const productionInfo = parseTool(await call(production, "supervisor_info", {}));
   assert.equal(productionInfo.mcpMode, "production");
-  assert.equal(productionInfo.version, "0.3.0");
+  assert.equal(productionInfo.version, "0.4.0");
   assert.ok(productionInfo.limits.maxWorkers > 0);
   const qoder = productionInfo.runtimes.find((runtime: { runtime: string }) => runtime.runtime === "qoder");
   assert.ok(qoder, "Qoder must remain visible");
@@ -142,7 +142,7 @@ test("MCP mode comes from CLI/env, defaults to production, and rejects invalid v
 
   const development = await connectMcp(t, stateDir, { modeEnv: "development" });
   const developmentInfo = parseTool(await call(development, "supervisor_info", {}));
-  assert.equal(developmentInfo.version, "0.3.0");
+  assert.equal(developmentInfo.version, "0.4.0");
   assert.equal("stateDir" in developmentInfo, true, "development keeps the legacy daemon payload");
   assert.equal("pid" in developmentInfo, true);
   assert.equal("mcpMode" in developmentInfo, false);
@@ -730,7 +730,7 @@ test("new MCP refuses production on a 0.2 daemon but development uses the legacy
     baseEnv,
   );
   assert.equal(incompatible.code, 1);
-  assert.match(incompatible.stderr, /daemon 0\.2\.0 is older than 0\.3\.0/i);
+  assert.match(incompatible.stderr, /daemon 0\.2\.0 is older than 0\.4\.0/i);
   assert.match(incompatible.stderr, /Back up/i);
   assert.match(incompatible.stderr, /no active workers/i);
   assert.match(incompatible.stderr, /never restarts or replaces/i);

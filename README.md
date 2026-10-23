@@ -5,6 +5,7 @@ Harness Supervisor（HS）是一个本地、轻量、运行时无关的 **Agent 
 当前接入：
 
 - **Pi Agent**（Pi v1.3+ 原生 RPC）：完整支持。
+- **MiniMax Code**（ACP / ndJSON stdio）：实验性，spawn / 完成 / 取消 / resume 已真实验证。
 - **Qoder CLI**（stream-json / stdio 控制协议）：实验性。
 
 HS 管理的是 **进程、会话、事件**，不是新的多智能体框架：
@@ -43,12 +44,16 @@ SupervisorClient ─── 本地 IPC（named pipe / Unix socket + token）
               ▼                     ▼
         Pi 原生 RPC           Qoder stream-json
         Pi 子进程              qodercli 子进程
+
+        MiniMax Code ACP（ndJSON）
+        mcode acp 子进程
 ```
 
 | 模块 | 职责 |
 | --- | --- |
 | `src/adapters/pi/` | Pi 原生 RPC、启动参数、session 定位 |
 | `src/adapters/qoder/` | Qoder stream-json、权限/提问、session 定位 |
+| `src/adapters/mcode/` | MiniMax Code ACP（ndJSON）、权限请求、session 句柄 |
 | `src/supervisor.ts` | 状态机、wait、send/answer、cancel、resume、重启对账 |
 | `src/store.ts` | Worker 记录、追加式事件日志、游标、持久化 |
 | `src/notify.ts` | 通知收件箱、确认、可选投递与重试 |
@@ -66,7 +71,7 @@ SupervisorClient ─── 本地 IPC（named pipe / Unix socket + token）
 
 ## 快速开始
 
-要求：Node.js >= 22.19；Pi >= 1.3 并已配置 provider/凭据；Qoder 可选（需 `qodercli login`）。
+要求：Node.js >= 22.19；Pi >= 1.3 并已配置 provider/凭据。
 
 ```bash
 npm install
@@ -101,17 +106,17 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up          # 在本机启动 daemon
-node dist/src/cli.js info        # 核对 version=0.3.0 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.4.0 与 stateDir
 ```
 
-依赖：Node.js >= 22.19（`node -v` 核对）；Pi >= 1.3；Qoder 可选。若 `npm ci` 因网络镜像失败，改用 `npm install` 后以 `git status` 确认 `package-lock.json` 未被意外改写。
+依赖：Node.js >= 22.19（`node -v` 核对）；Pi >= 1.3。若 `npm ci` 因网络镜像失败，改用 `npm install` 后以 `git status` 确认 `package-lock.json` 未被意外改写。
 
 **不会随 Git 迁移的本机状态**（每台机器各自建立，不假定能从其他机器继承）：
 
 - **状态目录**（默认 `~/.harness-supervisor`）：Worker 记录、事件日志、session 文件、通知收件箱、幂等日志。复制源码不等于复制运行状态；其他机器上的 Worker 不能在本机 `resume`，也不应把旧状态目录硬搬到新版本上继续使用。
 - **daemon 进程与 IPC 端点**：由本机 `up` 启动。其他机器不会共享本机 daemon；同一机器上的不同工作树若使用相同状态目录，则连接的是同一个 daemon，开发测试须显式指定独立状态目录。
 - **宿主配置**：Codex 的 `~/.codex/config.toml`（MCP 注册）、其他 MCP 客户端的配置，都在本机手写，且**必须指向本机 clone 的绝对路径**。
-- **原生 Harness 凭据**：Pi 的 provider/model/凭据配置、Qoder 的 `qodercli login` 登录态均由本机原生工具管理，HS 不保存也不迁移它们。缺少凭据时 `spawn` 会失败，不属于 HS 的缺陷。
+- **原生 Harness 凭据**：Pi 的 provider/model/凭据配置、Qoder 的 `qodercli login` 登录态、MiniMax Code 自身的安装与登录（`npm install -g @minimax-ai/code`）均由本机原生工具管理，HS 不保存也不迁移它们。缺少凭据时 `spawn` 会失败，不属于 HS 的缺陷。
 
 因此“另一台机器可用”指的是：clone → `npm ci` → `npm run build` 后即可运行同一份代码；运行状态与凭据需要各机自行配置。
 
@@ -138,7 +143,7 @@ default_tools_approval_mode = "approve"   # 只在可信工作区使用
 
 若 daemon 使用 `--state-dir`，MCP 的 args 也要用 `--state-dir` 指向同一目录。其他客户端可使用 [`examples/mcp.json`](examples/mcp.json)。
 
-### MCP 输出模式（0.3.0）
+### MCP 输出模式（0.3.0 起）
 
 MCP server 有两种**呈现模式**，只影响当前 MCP 进程如何返回结果，不改变 daemon、Worker 状态、持久化事件、通知路由或权限边界：
 
@@ -147,7 +152,7 @@ MCP server 有两种**呈现模式**，只影响当前 MCP 进程如何返回结
 
 配置优先级：命令行 `--mode` > 环境变量 `HARNESS_SUPERVISOR_MCP_MODE` > 默认 `production`。非法值会在 MCP 启动时明确报错退出，不会静默降级，也不使用 `NODE_ENV`。
 
-`production` 还要求共享 daemon 为 **0.3.0 或更高**；新 MCP 连接后会检查 daemon 版本，旧 daemon 必须先备份状态、确认无活动 Worker，再由人工升级并重启（见“从 0.2.x 升级”），不能只改 MCP 配置。
+`production` 还要求共享 daemon 为 **0.4.0 或更高**；新 MCP 连接后会检查 daemon 版本，旧 daemon 必须先备份状态、确认无活动 Worker，再由人工升级并重启（见“从 0.3.x 升级”），不能只改 MCP 配置。
 
 ```toml
 # ~/.codex/config.toml（示例：本机 clone 主目录为 D:/Projects/Harness-Supervisor）
@@ -194,12 +199,17 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 {"notifications":[{"id":"w-xxx#10","workerId":"w-xxx","kind":"completed","summary":{"status":"completed","text":"FAKE_PI_OK"},"acked":false}],"counts":{"pending":1,"delivered":0,"failed":0,"unacked":1}}
 ```
 
-`supervisor_info` 在 production 下包含 `version`、`mcpMode`、必要限制、`runtimes`（含 Qoder 未经真实验证的 steer/follow-up 限制）和通知投递边界；不包含 daemon PID/stateDir 等诊断字段。
+`supervisor_info` 在 production 下包含 `version`、`mcpMode`、必要限制、`runtimes`（各 runtime 的精简能力说明：Qoder 未经真实验证的 steer/follow-up 限制、MiniMax Code 的 steer 边界）和通知投递边界；不包含 daemon PID/stateDir 等诊断字段。
+
+#### 从 0.3.x 升级
+
+- 0.4.0 新增 **MiniMax Code** runtime（ACP over ndJSON，`mcode acp`），并把 MCP 的 daemon 版本闸门提到 **0.4.0**。新 MCP 连上 0.3.x 的旧 daemon 时，production 会在启动时明确报错并退出（旧 daemon 里没有 mcode 这个 runtime）。处理顺序同样是：备份状态目录、确认没有活动 Worker、升级代码，然后由人工停止并重新启动 daemon。
+- 不需要迁移状态目录、Worker 记录、通知或 session 文件；新增 runtime 只是多一个可选的 `spawn --runtime mcode`，不改变其他 runtime 的行为。
 
 #### 从 0.2.x 升级
 
 - 升级到 0.3.0 后 MCP 默认变为 `production`。依赖旧完整字段的客户端请加 `--mode development` 或设置 `HARNESS_SUPERVISOR_MCP_MODE=development`。
-- **必须同时升级 Daemon，不能只改 MCP 配置。** 0.3.0 的 production 需要新的 IPC 能力（`unacknowledgedOnly` 与只读 `notification_target_get`）。新 MCP 在连接后检查 daemon 版本；若 daemon 低于 0.3.0，production 会在启动时明确报错并退出，不会自动重启或替换 daemon。正确处理顺序是：备份状态目录（默认 `~/.harness-supervisor`）、确认没有活动 Worker、升级代码，然后由人工停止并重新启动 daemon。
+- **必须同时升级 Daemon，不能只改 MCP 配置。** 0.3.0 的 production 需要新的 IPC 能力（`unacknowledgedOnly` 与只读 `notification_target_get`）。新 MCP 在连接后检查 daemon 版本；若 daemon 低于 0.4.0，production 会在启动时明确报错并退出，不会自动重启或替换 daemon。正确处理顺序是：备份状态目录（默认 `~/.harness-supervisor`）、确认没有活动 Worker、升级代码，然后由人工停止并重新启动 daemon。
 - **旧 daemon 的 development 兼容入口仍然可以连接，但只有旧语义。** 旧 daemon 不支持跨状态“未确认”收件箱过滤，development 默认仍是 `pending`；`supervisor_wake_target` 无参读取会改用旧 `notifications` 返回的 `target`，只返回默认目标，不外露收件箱记录。此时不能获得 production 的新过滤与诊断边界保证，应尽快安排升级 daemon。
 - 不需要迁移状态目录、Worker 记录、通知或 session 文件；模式只改变本进程的返回，不改变已持久化的路由和事件。这里的“无状态迁移”不等于“无需升级 daemon”。
 - `supervisor_wake_target` 无参调用现在只返回实际默认目标，不再附带收件箱内容（两种模式一致）。
@@ -284,7 +294,30 @@ node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-threa
 | Runtime | 状态 | 说明 |
 | --- | --- | --- |
 | Pi | 完整 | 原生 RPC；steer / follow-up / cancel / resume / 扩展对话框均可映射 |
+| MiniMax Code | 实验性 | ACP over ndJSON（`mcode acp`）。spawn / 完成 / 取消 / resume 已对真实 0.6.12 进程验证；权限问答在 Ask 模式下对真实进程验证过（是否触发询问由运行时风险分类决定，并非每次都出现）。steer 与 follow-up 依赖 `mcode/session/steer`、`mcode/session/queue/enqueue` 扩展，未声明该扩展的构建会明确报 `UNSUPPORTED`；真实进程上 `queue/enqueue` 可用，steer 在**活跃 turn 内**已验证有效（agent 照做，事件记为 `mode=steered`），turn 结束后再发会被拒，因此 steer 的送达依赖 turn 是否还活着。ACP 的 `session/prompt` 会阻塞到 turn 结束且拒绝并发第二个 prompt |
 | Qoder CLI | 实验性 | 单轮、取消、AskUserQuestion、resume 已真实验证；steer / follow-up 在当前版本被接受但未生效，权限 allow/deny 仅部分验证 |
+
+### MiniMax Code 接入
+
+MiniMax Code 的 CLI 以 **Agent Client Protocol（ACP）** 暴露原生会话能力，HS 通过 `mcode acp` 子进程接入：
+
+```bash
+npm install -g @minimax-ai/code   # 提供 mcode CLI
+# 若 mcode 不在 PATH，可显式指定包入口
+export HARNESS_SUPERVISOR_MCODE_ENTRY="C:/Users/<you>/AppData/Roaming/npm/node_modules/@minimax-ai/code/cli.js"
+
+node dist/src/cli.js spawn --runtime mcode --cwd ./repo --prompt "..."
+```
+
+几个与实现相关的事实：
+
+- **传输是 ndJSON，不是 LSP 帧**：每行一个 JSON-RPC 2.0 消息；`session/cancel` 是 notification，`session/prompt` 是 request 并阻塞到 turn 结束。
+- **Windows 上不能用 npm 的 `.cmd` shim**：Node 拒绝直接 spawn `.cmd`/`.bat`，HS 因此一律以 `node <cli.js> acp` 启动。
+- **会话句柄**：MiniMax Code 把对话存在自己的 SQLite 里，没有逐会话文件；HS 在 worker 的 session 目录写一份 `mcode-session.json` 句柄（首行含 `{type:"session",id}`），用于满足 resume 契约并校验会话身份。
+- **权限模式**：MiniMax Code 默认 `bypassPermissions`，工具调用不会询问。HS 默认把会话切到 Ask（`default`），让权限请求表现为 `awaiting_input` 并可通过 `worker_answer` 回答；可用 `HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=auto|bypassPermissions|default` 覆盖。注意该设置在 MiniMax Code 侧是**进程级**的。
+- **能力声明是真实的**：`initialize` 返回的 `_meta["minimax-code/extensions"].methods` 决定 steer / follow-up 是否可用，缺失时报 `UNSUPPORTED` 而不是假装成功。
+- **id 空间是分离的**：MiniMax Code 的反向请求（权限确认）从 0 开始编号，HS 自己的请求用 `hs-<n>` 字符串 id，因此双方 id 不会互相撞号 —— 否则一次权限请求可能被误当成对 HS 请求的回答，让 turn 被静默判定为已结束。
+- **哪些命令会被拦不是读写之分**：Ask 模式下实测 `ls` 与 `echo x > f.txt` 都没有触发许可，而后续的 `Get-Content` 验证命令才触发。真实规则由 MiniMax Code 运行时的风险分类决定，HS 侧无法预先断言某个动作会被拦。
 
 详细的能力差异与验证记录见归档文档与 `evidence/`。
 
@@ -319,7 +352,7 @@ node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-threa
 ```text
 src/            daemon、supervisor、store、notify、IPC、CLI、MCP、adapters
 test/           unit / integration / e2e 与脚本化 Harness fixtures
-scripts/        真实 E2E 脚本（Pi / Qoder / Codex）
+scripts/        真实 E2E 脚本（Pi / Qoder / MiniMax Code / Codex）
 examples/       MCP 配置与 CLI 示例
 evidence/       实际运行产物与断言（归档）
 docs/           交付报告、审计与归档快照

@@ -1,0 +1,91 @@
+{
+  "startedAt": "2026-10-23T09:44:14.545Z",
+  "entry": "C:\\Users\\cmlcj\\AppData\\Roaming\\npm\\node_modules\\@minimax-ai\\code\\cli.js",
+  "workspace": "C:\\Users\\cmlcj\\AppData\\Local\\Temp\\hs-mcode-e2e-work-tNHysD",
+  "runs": [
+    {
+      "phase": "first",
+      "workerId": "w-mvks9f6l-24205758",
+      "status": "completed",
+      "resultText": "MCODE_E2E_OK",
+      "sessionId": "mvs_9d6c8362004d476d97ed86dad296bc2c",
+      "sessionFile": "C:\\Users\\cmlcj\\AppData\\Local\\Temp\\hs-mcode-e2e-4yPTT2\\sessions\\w-mvks9f6l-24205758\\mcode-session.json",
+      "sessionHandle": {
+        "type": "session",
+        "id": "mvs_9d6c8362004d476d97ed86dad296bc2c",
+        "runtime": "mcode",
+        "cwd": "C:\\Users\\cmlcj\\AppData\\Local\\Temp\\hs-mcode-e2e-work-tNHysD",
+        "updatedAt": "2026-10-23T09:44:19.917Z"
+      },
+      "eventTypes": [
+        "worker.starting",
+        "worker.started",
+        "worker.session",
+        "run.started",
+        "run.accepted",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.completed",
+        "worker.exited"
+      ]
+    },
+    {
+      "phase": "resumed",
+      "workerId": "w-mvks9f6l-24205758",
+      "status": "completed",
+      "resultText": "MCODE_E2E_RESUMED",
+      "eventTypes": [
+        "worker.starting",
+        "worker.started",
+        "worker.session",
+        "run.started",
+        "run.accepted",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.progress",
+        "run.completed",
+        "worker.exited",
+        "worker.starting",
+        "run.progress",
+        "run.progress",
+        "worker.started",
+        "worker.session",
+        "run.started",
+        "run.accepted",
+        "worker.resumed",
+        "run.progress",
+        "run.completed",
+        "worker.exited"
+      ]
+    }
+  ],
+  "permission": {
+    "workerId": "w-mvks9r39-51e91884",
+    "options": [
+      "Allow once",
+      "Always allow",
+      "Deny"
+    ],
+    "title": "Allow Verify file exists and print its contents?",
+    "outcome": "completed"
+  },
+  "cancel": {
+    "workerId": "w-mvksa3g2-fbdb52d6",
+    "status": "cancelled",
+    "eventTypes": [
+      "worker.starting",
+      "worker.started",
+      "worker.session",
+      "run.started",
+      "run.accepted",
+      "worker.cancel_requested",
+      "run.cancelled",
+      "worker.exited"
+    ]
+  },
+  "finishedAt": "2026-10-23T09:44:51.525Z",
+  "result": "passed"
+}

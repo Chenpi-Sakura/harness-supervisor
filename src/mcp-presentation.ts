@@ -289,7 +289,18 @@ const PRODUCTION_RUNTIME_NOTES: Record<string, string> = {
   pi: "Native Pi RPC. Steering/follow-ups use Pi queues. Cancel uses abort. Resume loads a persisted session.",
   qoder:
     "Qoder CLI stream-json. Steer/follow-up messages are accepted by the stream, but a real 1.1.76 run did not apply an accepted steer to the running turn: unverified effect. Cancel was validated (interrupt + process termination). Permission prompts surface as awaiting_input; AskUserQuestion was validated, allow/deny for Bash calls was not exercised end to end. Resume uses --resume and verifies the returned session id.",
+  mcode:
+    "MiniMax Code ACP over ndJSON stdio. Steering is verified inside an active turn (the agent acted on it); a steer sent after the turn ended is dropped, so the turn must still be alive. Follow-ups are queued through the agent's queue extension. Cancel was validated on a real run. Permission prompts surface as awaiting_input and are answered with the offered option. Resume loads the recorded ACP session id.",
 };
+
+/**
+ * A runtime the production table does not know about must not fall back to the
+ * adapter's own note: those run to over a thousand characters, and the
+ * production mode exists to keep the response small. The full notes stay
+ * available in development mode and through the CLI.
+ */
+const UNREGISTERED_RUNTIME_NOTE =
+  "Runtime adapter; its capability details are available in development mode and through the CLI.";
 
 export function presentInfo(
   info: SupervisorInfo,
@@ -324,7 +335,7 @@ export function presentInfo(
       resume: runtime.resume,
       pause: runtime.pause,
       interactiveInput: runtime.interactiveInput,
-      notes: PRODUCTION_RUNTIME_NOTES[runtime.runtime] ?? runtime.notes,
+      notes: PRODUCTION_RUNTIME_NOTES[runtime.runtime] ?? UNREGISTERED_RUNTIME_NOTE,
     })),
   };
 }

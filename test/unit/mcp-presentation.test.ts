@@ -5,11 +5,18 @@ import {
   MCP_MODE_ENV,
   formatToolError,
   presentEvents,
+  presentInfo,
   presentStatus,
   presentWait,
   resolveMcpMode,
 } from "../../src/mcp-presentation.js";
-import type { ReadEventsResult, WaitResult, WorkerEvent, WorkerSummary } from "../../src/types.js";
+import type {
+  ReadEventsResult,
+  SupervisorInfo,
+  WaitResult,
+  WorkerEvent,
+  WorkerSummary,
+} from "../../src/types.js";
 
 test("resolveMcpMode defaults to production and rejects invalid CLI/env values", () => {
   const previous = process.env[MCP_MODE_ENV];
@@ -277,4 +284,95 @@ END`;
   assert.equal(view.worker.result.text.length, text.length);
   assert.deepEqual(view.worker.pendingInput, pendingInput);
   assert.equal("stderrTail" in view, false);
+});
+
+test("production info keeps every advertised runtime on a terse note", () => {
+  // The adapter's own notes are written for a human reading the full runtime
+  // contract. The production presentation has to replace them, otherwise a
+  // runtime that nobody registered (a new adapter, say) leaks its whole note
+  // into the trimmed output.
+  const longNote =
+    "MiniMax Code Agent Client Protocol (ACP) over ndJSON stdio. The protocol version was verified against a real 0.6.12 process: initialize, session/new, session/prompt, session/cancel and session/load all answered on the wire, and agent_message_chunk updates arrived during a live turn. session/prompt blocks until the turn ends and the agent rejects a second concurrent prompt. Steering goes through the mcode/session/steer extension and queued follow-ups through mcode/session/queue/enqueue; both require a build that advertises those extensions and are otherwise reported as unsupported. Permission requests arrive as client-side session/request_permission calls and are surfaced as awaiting_input; the reply must reuse the request id and one of the offered option ids. MiniMax Code itself defaults to bypassPermissions, so the worker asks the session to use the Ask mode unless HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE says otherwise. There is no sandbox: cwd is not a file-isolation boundary.";
+  const info = {
+    name: "harness-supervisor",
+    version: "0.4.0",
+    pid: 1,
+    stateDir: "C:/state",
+    supervisorId: "s-1",
+    startedAt: "2026-10-23T00:00:00.000Z",
+    uptimeMs: 1000,
+    limits: {
+      maxWorkers: 8,
+      maxWaitMs: 120000,
+      defaultWaitMs: 30000,
+      closeGraceMs: 1500,
+      abortTimeoutMs: 20000,
+      maxResultBytes: 65536,
+      maxEventStringBytes: 8192,
+    },
+    wake: { proactive: false, channel: "none", note: "pull-based" },
+    runtimes: [
+      {
+        runtime: "pi",
+        steer: true,
+        followUp: true,
+        cancel: true,
+        resume: true,
+        pause: false,
+        interactiveInput: true,
+        notes: longNote,
+      },
+      {
+        runtime: "qoder",
+        steer: true,
+        followUp: true,
+        cancel: true,
+        resume: true,
+        pause: false,
+        interactiveInput: true,
+        notes: longNote,
+      },
+      {
+        runtime: "mcode",
+        steer: true,
+        followUp: true,
+        cancel: true,
+        resume: true,
+        pause: false,
+        interactiveInput: true,
+        notes: longNote,
+      },
+      {
+        // A runtime nobody registered yet. The production table cannot know it,
+        // so the fallback must still stay short.
+        runtime: "future-runtime",
+        steer: true,
+        followUp: true,
+        cancel: true,
+        resume: true,
+        pause: false,
+        interactiveInput: true,
+        notes: longNote,
+      },
+    ],
+  } as unknown as SupervisorInfo;
+
+  const view = presentInfo(info, "production", "production") as {
+    runtimes: { runtime: string; notes: string }[];
+  };
+  assert.equal(view.runtimes.length, 4);
+  for (const runtime of view.runtimes) {
+    assert.notEqual(
+      runtime.notes,
+      longNote,
+      `${runtime.runtime} must not fall back to the adapter's full note in production mode`,
+    );
+    assert.ok(
+      runtime.notes.length < longNote.length / 2,
+      `${runtime.runtime} production note must stay short, got ${runtime.notes.length} chars`,
+    );
+  }
+  const mcode = view.runtimes.find((runtime) => runtime.runtime === "mcode");
+  assert.ok(mcode, "the mcode runtime must be advertised");
+  assert.match(mcode.notes, /steer/i);
 });

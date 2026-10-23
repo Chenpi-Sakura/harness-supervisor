@@ -78,7 +78,7 @@ const client = new SupervisorClient({
   connectTimeoutMs: 20_000,
 });
 
-const REQUIRED_DAEMON_VERSION = "0.3.0";
+const REQUIRED_DAEMON_VERSION = "0.4.0";
 let daemonSupportsNewIpc = false;
 let daemonVersion = "unknown";
 
@@ -100,7 +100,7 @@ function daemonAtLeast(value: unknown, minimum: string): boolean {
 }
 
 function upgradeAdvice(version: string): string {
-  return `Supervisor daemon ${version} is older than ${REQUIRED_DAEMON_VERSION}. Production MCP output needs the 0.3.0 IPC (unacknowledged inbox view and read-only wake target). Back up ${stateDir}, confirm there are no active workers, then upgrade and restart the daemon manually. Changing only the MCP configuration is not enough; this MCP server never restarts or replaces a running daemon. Development mode can still connect to the old daemon with legacy semantics, but cannot provide the production filtering guarantees.`;
+  return `Supervisor daemon ${version} is older than ${REQUIRED_DAEMON_VERSION}. Production MCP output needs the 0.4.0 IPC (unacknowledged inbox view, read-only wake target and the MiniMax Code runtime). Back up ${stateDir}, confirm there are no active workers, then upgrade and restart the daemon manually. Changing only the MCP configuration is not enough; this MCP server never restarts or replaces a running daemon. Development mode can still connect to the old daemon with legacy semantics, but cannot provide the production filtering guarantees.`;
 }
 
 async function assessDaemonCompatibility(): Promise<void> {
@@ -192,10 +192,10 @@ const NotifyTargetShape = {
 };
 
 const DEVELOPMENT_INSTRUCTIONS =
-  "Harness Supervisor manages native Pi/Qoder workers. worker_spawn returns prompt acceptance, never completion. Reuse the worker id; do not spawn duplicates. worker_wait is bounded, omits ordinary progress, and returns when input is needed; answer through worker_answer. MCP event reads are pull-based. Important events also enter a durable inbox; acknowledge processed notification ids. For multiple Codex conversations, pass worker_spawn.notifyTarget with a verified originating thread id. It is persisted per worker and per event. Omission snapshots the daemon default for new workers; worker_resume omission preserves binding, while an explicit target authorizes takeover for future events. supervisor_wake_target only changes the shared default for new workers. No per-request Codex identity is inferred from MCP or the most recent session. Without a known route use channel='none'. codex-queue can trigger a new turn while the host has that target loaded; delivery is at-least-once and never itself proves wake-up.";
+  "Harness Supervisor manages native Pi/Qoder/MiniMax Code workers. worker_spawn returns prompt acceptance, never completion. Reuse the worker id; do not spawn duplicates. worker_wait is bounded, omits ordinary progress, and returns when input is needed; answer through worker_answer. MCP event reads are pull-based. Important events also enter a durable inbox; acknowledge processed notification ids. For multiple Codex conversations, pass worker_spawn.notifyTarget with a verified originating thread id. It is persisted per worker and per event. Omission snapshots the daemon default for new workers; worker_resume omission preserves binding, while an explicit target authorizes takeover for future events. supervisor_wake_target only changes the shared default for new workers. No per-request Codex identity is inferred from MCP or the most recent session. Without a known route use channel='none'. codex-queue can trigger a new turn while the host has that target loaded; delivery is at-least-once and never itself proves wake-up.";
 
 const PRODUCTION_INSTRUCTIONS =
-  "Harness Supervisor manages independent native Pi/Qoder workers and is pull-based: it never wakes this conversation by itself. worker_spawn/worker_resume return acceptance, not completion; keep the returned id and lastSeq, reuse the worker, and use worker_wait or worker_status for the final state. When a run needs input, answer it with worker_answer using pendingInput.requestId; worker_send only queues steering/follow-up. Pass requestId on side-effecting calls: an identical retry replays, different parameters CONFLICT, and an interrupted request reports UNCERTAIN and is not re-executed. Durable notifications are read with supervisor_notifications (default: all unacknowledged) and acknowledged after processing. Omit notifyTarget to snapshot the daemon default for new workers; resume omission preserves the binding; for parallel conversations pass an explicit verified thread id. codex-queue delivery can start a turn only while the host has that thread loaded; delivery is at-least-once and is not proof of wake-up. MCP does not infer the caller's thread.";
+  "Harness Supervisor manages independent native Pi/Qoder/MiniMax Code workers and is pull-based: it never wakes this conversation by itself. worker_spawn/worker_resume return acceptance, not completion; keep the returned id and lastSeq, reuse the worker, and use worker_wait or worker_status for the final state. When a run needs input, answer it with worker_answer using pendingInput.requestId; worker_send only queues steering/follow-up. Pass requestId on side-effecting calls: an identical retry replays, different parameters CONFLICT, and an interrupted request reports UNCERTAIN and is not re-executed. Durable notifications are read with supervisor_notifications (default: all unacknowledged) and acknowledged after processing. Omit notifyTarget to snapshot the daemon default for new workers; resume omission preserves the binding; for parallel conversations pass an explicit verified thread id. codex-queue delivery can start a turn only while the host has that thread loaded; delivery is at-least-once and is not proof of wake-up. MCP does not infer the caller's thread.";
 
 interface ToolDescriptions {
   spawn: string;
@@ -225,7 +225,7 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   wait:
     "Bounded long-poll (default 20s, maximum 120s). MCP is pull-based: the supervisor never wakes the main agent by itself, although optional codex-queue notifications can start a turn when the host has that thread loaded. Without sinceSeq it checks current state and the latest events first, then waits from the current tail. Returns early when terminal, awaiting_input, or a requested types event appears. Ordinary run.progress is omitted unless includeProgress=true or types includes run.progress. Pass sinceSeq for strict cursor delivery. Timeout is not failure.",
   send:
-    "Queue a steering message (before the next model turn) or follow-up (after the current run) through the native harness. Valid only while running; it returns acceptance, not completion. Pi applies both natively. Qoder 1.1.76 accepts the stream message without a verified effect on the running turn. This does not answer extension dialogs; use worker_answer.",
+    "Queue a steering message (before the next model turn) or follow-up (after the current run) through the native harness. Valid only while running; it returns acceptance, not completion. Pi applies both natively. Qoder 1.1.76 accepts the stream message without a verified effect on the running turn. MiniMax Code steers an active turn through its steer extension and was verified to act on it; a steer sent after the turn ended is rejected by the agent. This does not answer extension dialogs; use worker_answer.",
   answer:
     "Answer a pending run.needs_input request (Pi extension select/confirm/input/editor). Provide exactly one of value, confirmed, or cancelled=true, with the returned requestId. The worker must still have that matching pending request.",
   cancel:
@@ -254,7 +254,7 @@ const DEVELOPMENT_DESCRIPTIONS: ToolDescriptions = {
   wait:
     "Bounded long-poll. MCP tools are pull-based: this call returns only when the host invokes it; the supervisor never wakes the main agent by itself (optional codex-queue notifications can start a turn only while the host has that thread loaded). Default 20s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. Normal run.progress events are omitted by default to keep context small; queue_cleared and tool-error progress are retained. Pass includeProgress=true (or request types=['run.progress']) for full progress, or use worker_events for complete history. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
   send:
-    "Queue a steering message (delivered before the next model turn) or a follow-up (delivered after the current run) through the native harness. Only valid while the worker is running; if it already reached a terminal state this returns INVALID_STATE, and you should not spawn a replacement automatically. This does not answer extension dialogs; use worker_answer for run.needs_input events. Delivery differs per runtime: Pi applies steering/follow-ups natively, while Qoder 1.1.76 accepts the stream message (run.message_sent) without a verified effect on the running turn, so do not assume the model acted on it. Pass requestId to make a retry after a timeout replay the recorded outcome instead of enqueueing the same text twice; if the daemon crashed mid-send the outcome is reported as UNCERTAIN, because the harness may already have received the message.",
+    "Queue a steering message (delivered before the next model turn) or a follow-up (delivered after the current run) through the native harness. Only valid while the worker is running; if it already reached a terminal state this returns INVALID_STATE, and you should not spawn a replacement automatically. This does not answer extension dialogs; use worker_answer for run.needs_input events. Delivery differs per runtime: Pi applies steering/follow-ups natively, while Qoder 1.1.76 accepts the stream message (run.message_sent) without a verified effect on the running turn, so do not assume the model acted on it. MiniMax Code applies steering through its mcode/session/steer extension and queues follow-ups through mcode/session/queue/enqueue, both of which require a build that advertises them. A real 0.6.12 process accepted a steer sent during an active turn and the agent acted on it (mode 'steered'), but the same call outside an admitted turn is rejected ('Steering requires an admitted, active ACP prompt Turn'), so a steering message can reach a running turn and still be dropped when the turn has ended; check the worker state before assuming it was delivered. Pass requestId to make a retry after a timeout replay the recorded outcome instead of enqueueing the same text twice; if the daemon crashed mid-send the outcome is reported as UNCERTAIN, because the harness may already have received the message.",
   answer:
     "Respond to a run.needs_input event (Pi extension select/confirm/input/editor). Provide exactly one of value, confirmed, or cancelled. The worker must currently have a matching pending request.",
   cancel:
@@ -292,7 +292,13 @@ server.registerTool(
     inputSchema: {
       cwd: z.string().min(1).describe("Working directory for the harness process"),
       prompt: z.string().min(1).describe("Task/instruction sent to the native harness"),
-      runtime: z.string().min(1).optional().describe("Runtime adapter name (default: pi; qoder uses the Qoder CLI)"),
+      runtime: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Runtime adapter name (default: pi; qoder uses the Qoder CLI; mcode uses MiniMax Code over ACP)",
+        ),
       name: z.string().min(1).max(200).optional().describe("Human-readable worker label"),
       ...ConfigShape,
       ...RequestIdShape,

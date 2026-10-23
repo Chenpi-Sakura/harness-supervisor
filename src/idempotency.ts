@@ -51,6 +51,22 @@ export interface IdempotencyRecord {
   state: IdempotencyState;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Write rank: the position of this record's last line in the log.
+   *
+   * It counts writes, not admissions, and it is deliberately independent of the
+   * wall clock. `updatedAt` only has millisecond resolution, so records written
+   * in the same millisecond tie and "newest" cannot be decided from the
+   * timestamp alone; worse, a clock step backwards would make a later write
+   * look older. The write rank says exactly when the record was last touched:
+   * a request that was admitted early but finished late is the most recent
+   * one, and dropping it would let its side effect run twice.
+   *
+   * The value is recomputed from the log on load, so a log written by an
+   * older build (whose counter meant "admission order") is repaired instead
+   * of being trusted.
+   */
+  seq: number;
   workerId?: string;
   result?: unknown;
   error?: { code: string; message: string };
@@ -117,6 +133,11 @@ export class IdempotencyStore {
    * would make the request re-executable).
    */
   private needsLineBreak = false;
+  /**
+   * Next write rank to hand out. It is monotonic for the lifetime of the
+   * store, so the order of two records never depends on the wall clock.
+   */
+  private nextSeq = 1;
 
   constructor(stateDir: string, logger: Logger, options: { maxRecords?: number } = {}) {
     this.stateDir = path.resolve(stateDir);
@@ -134,8 +155,13 @@ export class IdempotencyStore {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     let skipped = 0;
+    let maxSeq = 0;
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
+      // Every line takes a position, so the position of a record's last line
+      // is its write rank. Release markers and torn lines consume a position
+      // too, which only leaves gaps — the order stays exact.
+      const position = ++maxSeq;
       try {
         const record = JSON.parse(line) as IdempotencyRecord & { released?: boolean };
         if (!record || typeof record.key !== "string") {
@@ -150,12 +176,18 @@ export class IdempotencyStore {
           skipped += 1;
           continue;
         }
+        // The stored `seq` is not trusted: an older build wrote "admission
+        // order" there, which mis-ranks a request that was admitted early and
+        // finished late. The file position is the write order, so it is used
+        // instead.
+        record.seq = position;
         this.records.set(record.key, record);
       } catch {
         // Ignore a torn trailing line from a crash.
         skipped += 1;
       }
     }
+    this.nextSeq = maxSeq + 1;
     if (skipped > 0) {
       this.logger.warn("Ignored unreadable idempotency log lines", { lines: skipped });
     }
@@ -203,6 +235,7 @@ export class IdempotencyStore {
         state: "in_progress",
         createdAt: now,
         updatedAt: now,
+        seq: this.nextSeq++,
       };
       this.records.set(id, record);
       void this.append(id, record);
@@ -234,6 +267,7 @@ export class IdempotencyStore {
     if (workerId) record.workerId = workerId;
     record.error = undefined;
     record.updatedAt = new Date().toISOString();
+    record.seq = this.nextSeq++;
     await this.awaitAppend(id, record);
   }
 
@@ -257,6 +291,7 @@ export class IdempotencyStore {
     record.result = undefined;
     if (workerId) record.workerId = workerId;
     record.updatedAt = new Date().toISOString();
+    record.seq = this.nextSeq++;
     await this.awaitAppend(id, record);
   }
 
@@ -311,8 +346,15 @@ export class IdempotencyStore {
       // Taking it outside the queue would drop requests admitted while the rewrite
       // is in flight (their in_progress line would survive on disk, but memory would
       // forget them and admit the same key twice).
-      const ordered = [...this.records.values()].sort((a, b) =>
-        b.updatedAt.localeCompare(a.updatedAt),
+      //
+      // The order is the write rank, not the wall clock. `updatedAt` only has
+      // millisecond resolution, so records written in the same millisecond tie
+      // and the newest one could be dropped instead of kept; a clock step
+      // backwards would make a later write look older still. The write rank
+      // counts writes, so the record that finished last has the highest one
+      // and survives.
+      const ordered = [...this.records.values()].sort(
+        (a, b) => b.seq - a.seq || b.updatedAt.localeCompare(a.updatedAt),
       );
       const survivors = new Map<string, IdempotencyRecord>();
       for (const record of ordered.slice(0, keep)) survivors.set(record.key, record);
@@ -330,7 +372,11 @@ export class IdempotencyStore {
         outcome = { kept: this.records.size, dropped: 0 };
         return;
       }
+      // The survivors are written oldest first, so the file order stays the
+      // write order. That is what makes the write rank recoverable from the
+      // file position on the next load.
       const content = `${[...survivors.values()]
+        .sort((a, b) => a.seq - b.seq)
         .map((record) => JSON.stringify(record))
         .join("\n")}\n`;
       await writeFileAtomic(this.file, content);

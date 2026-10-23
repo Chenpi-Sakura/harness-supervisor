@@ -339,6 +339,167 @@ test("compaction never drops uncertain or in-progress records", async () => {
   );
 });
 
+test("compaction keeps the newest record even when timestamps are identical", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-idem-"));
+  // Timestamps only have millisecond resolution, so records admitted in the
+  // same millisecond tie. A log written that way must still compact by
+  // admission order, otherwise the newest record is the one that gets dropped.
+  const stamp = "2026-10-23T00:00:00.000Z";
+  const lines = ["old", "middle", "newest"].map((name, index) => ({
+    key: `spawn:req-${name}`,
+    method: "spawn",
+    paramsHash: "deadbeef",
+    state: "done",
+    createdAt: stamp,
+    updatedAt: stamp,
+    seq: index + 1,
+    result: { id: `w-${name}` },
+  }));
+  await writeFile(logFile(dir), `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+
+  const store = new IdempotencyStore(dir, silentLogger);
+  await store.init();
+
+  const result = await store.compact({ keep: 1 });
+  assert.equal(result.dropped, 2, "the two older records are compacted away");
+  assert.equal(result.kept, 1);
+
+  assert.equal(
+    store.begin("spawn", "req-newest", "deadbeef").kind,
+    "replay",
+    "the newest record must survive the compaction",
+  );
+  assert.equal(store.begin("spawn", "req-old", "deadbeef").kind, "new");
+});
+
+test("compaction keeps a request that finished last even when it was admitted first", async () => {
+  const { store } = await makeStore();
+  // A long request is admitted early and finishes late. It is still the most
+  // recent record, so compaction must keep it: dropping it would let its side
+  // effect run a second time.
+  const longHash = hashParams({ key: "long" });
+  store.begin("spawn", "req-long", longHash);
+  for (const key of ["a", "b", "c"]) {
+    store.begin("spawn", `req-${key}`, hashParams({ key }));
+    await store.complete("spawn", `req-${key}`, { id: `w-${key}` }, `w-${key}`);
+  }
+  await store.complete("spawn", "req-long", { id: "w-long" }, "w-long");
+  await store.flush();
+
+  const result = await store.compact({ keep: 1 });
+  assert.ok(result.dropped >= 1, "older records are compacted away");
+
+  const replay = store.begin("spawn", "req-long", longHash);
+  assert.equal(
+    replay.kind,
+    "replay",
+    "a request that finished last must survive the compaction",
+  );
+  assert.equal(replay.record.workerId, "w-long");
+});
+
+test("a request that finished last wins even when every timestamp is identical", async () => {
+  const { store } = await makeStore();
+  // The clock is frozen, so `updatedAt` cannot break the tie. The order must
+  // then come from the write counter: a request that was admitted first but
+  // finished last is the most recent record, and dropping it would let its
+  // side effect run a second time.
+  const realDate = globalThis.Date;
+  const frozen = new realDate("2026-10-23T00:00:00.000Z").getTime();
+  class FrozenDate extends realDate {
+    constructor(value?: number | string | Date) {
+      super(value === undefined ? frozen : value);
+    }
+    static override now(): number {
+      return frozen;
+    }
+  }
+  globalThis.Date = FrozenDate as unknown as DateConstructor;
+  try {
+    const longHash = hashParams({ key: "long" });
+    store.begin("spawn", "req-long", longHash);
+    for (const key of ["a", "b", "c"]) {
+      store.begin("spawn", `req-${key}`, hashParams({ key }));
+      await store.complete("spawn", `req-${key}`, { id: `w-${key}` }, `w-${key}`);
+    }
+    await store.complete("spawn", "req-long", { id: "w-long" }, "w-long");
+    await store.flush();
+
+    const result = await store.compact({ keep: 1 });
+    assert.ok(result.dropped >= 1, "older records are compacted away");
+
+    const replay = store.begin("spawn", "req-long", longHash);
+    assert.equal(
+      replay.kind,
+      "replay",
+      "the record that was written last must survive the compaction",
+    );
+    assert.equal(replay.record.workerId, "w-long");
+  } finally {
+    globalThis.Date = realDate;
+  }
+});
+
+test("a log written with admission-order counters is repaired on load", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-idem-"));
+  // An older build stored the admission counter and never advanced it on
+  // completion, so the record that finished last carries the *smallest*
+  // number. Trusting that number would drop the most recent record.
+  const stamp = "2026-10-23T00:00:00.000Z";
+  const lines = [
+    {
+      key: "spawn:req-long",
+      method: "spawn",
+      paramsHash: "hash-long",
+      state: "in_progress",
+      createdAt: stamp,
+      updatedAt: stamp,
+      seq: 1,
+    },
+    {
+      key: "spawn:req-a",
+      method: "spawn",
+      paramsHash: "hash-a",
+      state: "done",
+      createdAt: stamp,
+      updatedAt: stamp,
+      seq: 2,
+      result: { id: "w-a" },
+      workerId: "w-a",
+    },
+    {
+      key: "spawn:req-long",
+      method: "spawn",
+      paramsHash: "hash-long",
+      state: "done",
+      createdAt: stamp,
+      updatedAt: stamp,
+      seq: 1,
+      result: { id: "w-long" },
+      workerId: "w-long",
+    },
+  ];
+  await writeFile(
+    logFile(dir),
+    `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+    "utf8",
+  );
+
+  const store = new IdempotencyStore(dir, silentLogger);
+  await store.init();
+
+  const result = await store.compact({ keep: 1 });
+  assert.ok(result.dropped >= 1, "older records are compacted away");
+
+  const replay = store.begin("spawn", "req-long", "hash-long");
+  assert.equal(
+    replay.kind,
+    "replay",
+    "the record that was written last must survive, whatever the stored counter said",
+  );
+  assert.equal(replay.record.workerId, "w-long");
+});
+
 test("a torn trailing line cannot swallow the next admission marker after a restart", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hs-idem-"));
   // A crash during append leaves the last line unterminated.

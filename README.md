@@ -95,7 +95,7 @@ node dist/src/cli.js down                    # 优雅关闭（会取消活动 Wo
 仓库只包含源码、测试与文档；`dist/` 被 `.gitignore` 忽略，**必须在本机构建**。可复现流程：
 
 ```bash
-git clone <repo-url> Harness-Supervisor
+git clone --branch main https://gitcode.com/chenpi_1/harness-supervisor.git Harness-Supervisor
 cd Harness-Supervisor
 npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
@@ -109,7 +109,7 @@ node dist/src/cli.js info        # 核对 version=0.2.0 与 stateDir
 **不会随 Git 迁移的本机状态**（每台机器各自建立，不假定能从其他机器继承）：
 
 - **状态目录**（默认 `~/.harness-supervisor`）：Worker 记录、事件日志、session 文件、通知收件箱、幂等日志。复制源码不等于复制运行状态；其他机器上的 Worker 不能在本机 `resume`，也不应把旧状态目录硬搬到新版本上继续使用。
-- **daemon 进程与 IPC 端点**：由本机 `up` 自行启动；从其他机器/工作树启动的 daemon 与本机状态无关。
+- **daemon 进程与 IPC 端点**：由本机 `up` 启动。其他机器不会共享本机 daemon；同一机器上的不同工作树若使用相同状态目录，则连接的是同一个 daemon，开发测试须显式指定独立状态目录。
 - **宿主配置**：Codex 的 `~/.codex/config.toml`（MCP 注册）、其他 MCP 客户端的配置，都在本机手写，且**必须指向本机 clone 的绝对路径**。
 - **原生 Harness 凭据**：Pi 的 provider/model/凭据配置、Qoder 的 `qodercli login` 登录态均由本机原生工具管理，HS 不保存也不迁移它们。缺少凭据时 `spawn` 会失败，不属于 HS 的缺陷。
 
@@ -237,6 +237,7 @@ node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-threa
 | --- | --- |
 | [`docs/v0.2-report.md`](docs/v0.2-report.md) | v0.2 交付报告：通知、幂等、保留策略、Qoder 验证 |
 | [`docs/iteration-261023-report.md`](docs/iteration-261023-report.md) | 2026-10-23 迭代：Worker 通知路由、原生输入闭环、事件历史与幂等可靠性 |
+| [`evidence/release-v0.2.0-261023/README.md`](evidence/release-v0.2.0-261023/README.md) | 主目录发布验收、Windows 原子替换修复及部署限制 |
 | [`docs/archive/project-status-2026-10-22.md`](docs/archive/project-status-2026-10-22.md) | 2026-10-22 项目现状审计 |
 | [`docs/archive/readme-detailed-2026-10-22.md`](docs/archive/readme-detailed-2026-10-22.md) | 旧版详细 README 快照（含实现细节与历史数据） |
 | [`evidence/`](evidence/) | 真实运行证据：Pi / Qoder / Codex / 唤醒实验，每个目录含 README |

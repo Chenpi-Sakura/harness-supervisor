@@ -1,0 +1,15 @@
+{
+  "date": "2026-10-23",
+  "source": "main checkout dist/src/mcp.js",
+  "mcpVersion": "0.2.0",
+  "daemonVersion": "0.2.0",
+  "workerRouting": true,
+  "workerId": "w-mvkg25pg-9e08b6c6",
+  "runtime": "pi",
+  "status": "completed",
+  "actualFileContent": "HS_V020_MAIN_OK",
+  "notificationId": "w-mvkg25pg-9e08b6c6#11",
+  "notificationAcked": true,
+  "notifyTarget": { "channel": "none" },
+  "note": "This installation smoke test verifies native execution and inbox acknowledgement, not desktop wake-up."
+}

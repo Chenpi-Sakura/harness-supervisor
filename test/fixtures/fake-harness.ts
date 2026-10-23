@@ -156,6 +156,11 @@ function respond(id, command, success, data, error) {
 }
 
 function finalText(scenario, prompt) {
+  if (scenario === "report") {
+    const requested = Number(process.env.FAKE_PI_REPORT_CHARS || 20_000);
+    const size = Math.max(1_000, Math.min(Number.isFinite(requested) ? requested : 20_000, 60 * 1024));
+    return `FAKE_PI_REPORT_BEGIN\n${"R".repeat(size)}\nFAKE_PI_REPORT_END`;
+  }
   if (process.env.FAKE_PI_LONG_TEXT === "1") {
     // ~200 KB final answer: exercises result truncation end to end.
     return `FAKE_PI_LONG ${"x".repeat(200 * 1024)}`;

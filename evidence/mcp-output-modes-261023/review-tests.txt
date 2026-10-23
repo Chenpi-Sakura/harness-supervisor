@@ -1,0 +1,24 @@
+✔ MCP mode comes from CLI/env, defaults to production, and rejects invalid values (3870.9324ms)
+✔ production hides diagnostics while development keeps the legacy status payload (1901.292ms)
+✔ production returns a complete report once, answers native input, and preserves failure/idempotency semantics (2288.1198ms)
+ℹ same report wait: production=20593 bytes, development=32350 bytes
+✔ production event pagination stays lossless and explicit progress still works (2598.1816ms)
+✔ production notification defaults filter unacked before the limit and never hide new records (1816.4014ms)
+✔ production surfaces UNCERTAIN over MCP and never re-executes an interrupted requestId (1960.7483ms)
+✔ production wait keeps historical completion reports across resume (1409.2825ms)
+✔ new MCP refuses production on a 0.2 daemon but development uses the legacy target read (1033.9677ms)
+✔ MCP wait without a cursor observes current state and returns incremental results (4833.2163ms)
+✔ MCP client can spawn, observe, steer, cancel, and outlive its own disconnect (6788.1895ms)
+✔ resolveMcpMode defaults to production and rejects invalid CLI/env values (2.246ms)
+✔ production errors keep CONFLICT/UNCERTAIN identifiers but not diagnostics (0.3404ms)
+✔ production events remove management keys without touching user report content (0.3294ms)
+✔ production wait dedupes only a completion text already returned in the current result (0.6473ms)
+✔ production presentation adds no report length limit and keeps every pendingInput field (0.2916ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 24333.3748

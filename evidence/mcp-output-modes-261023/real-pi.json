@@ -1,0 +1,15 @@
+{
+  "at": "2026-10-23T09:14:04.323Z",
+  "runtime": "real Pi",
+  "workerId": "w-mvkr6j9z-b4256a84",
+  "nativeInputAnswered": true,
+  "status": "completed",
+  "actualFileContent": "HS_MODE_NATIVE_OK",
+  "sameCompleteReport": true,
+  "productionStatusBytes": 509,
+  "developmentStatusBytes": 7441,
+  "productionToolSchemaBytes": 14008,
+  "developmentToolSchemaBytes": 15967,
+  "notificationCountAcknowledged": 2,
+  "notes": "Real native Pi and MCP stdio; isolated state. Does not test Codex desktop wake-up. Byte counts are not model tokens or billing."
+}

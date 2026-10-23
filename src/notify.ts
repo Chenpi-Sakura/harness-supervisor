@@ -218,11 +218,20 @@ export class Notifier {
     return { kept: this.records.size, dropped };
   }
 
-  list(filter: { state?: "pending" | "delivered" | "failed" | "all"; workerId?: string; limit?: number } = {}): NotificationRecord[] {
+  list(filter: {
+    state?: "pending" | "delivered" | "failed" | "all";
+    workerId?: string;
+    limit?: number;
+    /** Optional cross-state view used by the production MCP presentation. */
+    unacknowledgedOnly?: boolean;
+  } = {}): NotificationRecord[] {
     const state = filter.state ?? "pending";
     const limit = Math.max(1, Math.min(filter.limit ?? 100, 500));
     return [...this.records.values()]
       .filter((record) => {
+        // Filtering happens before the limit so old acknowledged records can
+        // never crowd out a newer unacknowledged one.
+        if (filter.unacknowledgedOnly && record.ackAt) return false;
         // The default view is the *actionable* inbox: acknowledged records must
         // never show up again, otherwise a reconnecting consumer would process
         // them forever. Acknowledged records stay readable for diagnostics via

@@ -239,12 +239,13 @@ export class IpcServer {
       case "info":
         return supervisor.info();
       case "notifications": {
-        const { state, workerId, limit } = params as {
+        const { state, workerId, limit, unacknowledgedOnly } = params as {
           state?: "pending" | "delivered" | "failed" | "all";
           workerId?: string;
           limit?: number;
+          unacknowledgedOnly?: boolean;
         };
-        return supervisor.notifications({ state, workerId, limit });
+        return supervisor.notifications({ state, workerId, limit, unacknowledgedOnly });
       }
       case "notification_ack": {
         const { ids, by } = params as { ids: string[]; by?: string };
@@ -254,6 +255,9 @@ export class IpcServer {
         return supervisor.setNotifyTarget(
           params as { channel?: "none" | "codex-queue"; codexThreadId?: string | null },
         );
+      }
+      case "notification_target_get": {
+        return supervisor.getNotifyTarget();
       }
       case "prune": {
         const { olderThanDays, keep, dryRun, includeSessions } = params as {

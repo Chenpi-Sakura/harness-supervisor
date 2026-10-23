@@ -101,7 +101,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up          # 在本机启动 daemon
-node dist/src/cli.js info        # 核对 version=0.2.0 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.3.0 与 stateDir
 ```
 
 依赖：Node.js >= 22.19（`node -v` 核对）；Pi >= 1.3；Qoder 可选。若 `npm ci` 因网络镜像失败，改用 `npm install` 后以 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -138,6 +138,74 @@ default_tools_approval_mode = "approve"   # 只在可信工作区使用
 
 若 daemon 使用 `--state-dir`，MCP 的 args 也要用 `--state-dir` 指向同一目录。其他客户端可使用 [`examples/mcp.json`](examples/mcp.json)。
 
+### MCP 输出模式（0.3.0）
+
+MCP server 有两种**呈现模式**，只影响当前 MCP 进程如何返回结果，不改变 daemon、Worker 状态、持久化事件、通知路由或权限边界：
+
+- `production`（默认）：只返回主 Agent 执行任务所需字段；`spawn`/`resume` 返回接受状态，`status` 显式请求才带最近事件，`wait` 不重复完整报告。适合日常使用，占用上下文更少。
+- `development`：保留 0.3.0 之前的完整 JSON 结构（例如 `recentEvents` 默认 20、`stderrTail`、PID/session 诊断字段、通知默认 `pending`），用于兼容现有脚本和排查问题。
+
+配置优先级：命令行 `--mode` > 环境变量 `HARNESS_SUPERVISOR_MCP_MODE` > 默认 `production`。非法值会在 MCP 启动时明确报错退出，不会静默降级，也不使用 `NODE_ENV`。
+
+`production` 还要求共享 daemon 为 **0.3.0 或更高**；新 MCP 连接后会检查 daemon 版本，旧 daemon 必须先备份状态、确认无活动 Worker，再由人工升级并重启（见“从 0.2.x 升级”），不能只改 MCP 配置。
+
+```toml
+# ~/.codex/config.toml（示例：本机 clone 主目录为 D:/Projects/Harness-Supervisor）
+[mcp_servers.harness_supervisor]
+command = "node"
+args = ["D:/Projects/Harness-Supervisor/dist/src/mcp.js"]
+
+# 需要旧版完整返回时才显式切换；默认无需写 --mode
+# args = ["D:/Projects/Harness-Supervisor/dist/src/mcp.js", "--mode", "development"]
+```
+
+所有 MCP 客户端也可以统一用环境变量切换：
+
+```powershell
+$env:HARNESS_SUPERVISOR_MCP_MODE = 'development'   # 或 production
+node D:/Projects/Harness-Supervisor/dist/src/mcp.js
+```
+
+模式不改变真实能力或限制。`production` 的字段精简不是安全沙箱，也不是权限隔离；完整诊断仍可在 `development` 或 CLI/IPC 中获取。
+
+#### production 返回样例
+
+`worker_spawn`（接受任务，不代表完成；`notifyTarget` 是实际持久化目标）：
+
+```json
+{"id":"w-xxx","runtime":"pi","status":"running","lastSeq":5,"notifyTarget":{"channel":"none"}}
+```
+
+`worker_wait`（完整结果只出现在 `worker.result`；`run.completed.data.text` 不再重复；游标语义保持）：
+
+```json
+{"worker":{"id":"w-xxx","runtime":"pi","cwd":"D:/work/demo","status":"completed","lastSeq":11,"result":{"text":"最终报告全文","truncated":false},"resumeAvailable":true},"events":[{"seq":10,"ts":"2026-10-23T08:37:41.210Z","type":"run.completed","data":{"aborted":false,"stopReason":"stop","forcedCleanup":false}}],"eventsOmitted":3,"nextSeq":11,"hasMore":false,"timedOut":false,"terminal":true}
+```
+
+`worker_status`（未显式传 `recentEvents` 时不带事件和 `stderrTail`；`pendingInput` 保留回答所需全部字段）：
+
+```json
+{"worker":{"id":"w-xxx","runtime":"pi","cwd":"D:/work/demo","status":"awaiting_input","lastSeq":8,"pendingInput":{"requestId":"ui-123","method":"confirm","title":"Approve?","message":"Continue?","createdAt":"2026-10-23T08:37:41.210Z"},"resumeAvailable":false}}
+```
+
+`supervisor_notifications`（默认返回所有未确认记录，先过滤未确认再应用 `limit`，不会被旧已确认记录遮挡）：
+
+```json
+{"notifications":[{"id":"w-xxx#10","workerId":"w-xxx","kind":"completed","summary":{"status":"completed","text":"FAKE_PI_OK"},"acked":false}],"counts":{"pending":1,"delivered":0,"failed":0,"unacked":1}}
+```
+
+`supervisor_info` 在 production 下包含 `version`、`mcpMode`、必要限制、`runtimes`（含 Qoder 未经真实验证的 steer/follow-up 限制）和通知投递边界；不包含 daemon PID/stateDir 等诊断字段。
+
+#### 从 0.2.x 升级
+
+- 升级到 0.3.0 后 MCP 默认变为 `production`。依赖旧完整字段的客户端请加 `--mode development` 或设置 `HARNESS_SUPERVISOR_MCP_MODE=development`。
+- **必须同时升级 Daemon，不能只改 MCP 配置。** 0.3.0 的 production 需要新的 IPC 能力（`unacknowledgedOnly` 与只读 `notification_target_get`）。新 MCP 在连接后检查 daemon 版本；若 daemon 低于 0.3.0，production 会在启动时明确报错并退出，不会自动重启或替换 daemon。正确处理顺序是：备份状态目录（默认 `~/.harness-supervisor`）、确认没有活动 Worker、升级代码，然后由人工停止并重新启动 daemon。
+- **旧 daemon 的 development 兼容入口仍然可以连接，但只有旧语义。** 旧 daemon 不支持跨状态“未确认”收件箱过滤，development 默认仍是 `pending`；`supervisor_wake_target` 无参读取会改用旧 `notifications` 返回的 `target`，只返回默认目标，不外露收件箱记录。此时不能获得 production 的新过滤与诊断边界保证，应尽快安排升级 daemon。
+- 不需要迁移状态目录、Worker 记录、通知或 session 文件；模式只改变本进程的返回，不改变已持久化的路由和事件。这里的“无状态迁移”不等于“无需升级 daemon”。
+- `supervisor_wake_target` 无参调用现在只返回实际默认目标，不再附带收件箱内容（两种模式一致）。
+- 两模式共用同一套 daemon 与 IPC 行为；切换模式不会改变 `accepted != completed`、原生输入回答、`requestId` 重试语义或通知投递限制。
+
+
 ## 接口
 
 ### MCP 工具
@@ -145,7 +213,7 @@ default_tools_approval_mode = "approve"   # 只在可信工作区使用
 | 工具 | 用途 |
 | --- | --- |
 | `worker_spawn` | 启动 Worker；prompt 被接受即返回，不等待完成 |
-| `worker_status` | 状态、最近事件、pending input、结果/错误 |
+| `worker_status` | 状态、pending input、结果/错误；production 默认不带最近事件/诊断 |
 | `worker_list` | 列出 Worker（持久化，跨重启） |
 | `worker_events` | 按 `sinceSeq` 增量读取事件 |
 | `worker_wait` | 有界等待（默认 20s，最大 120s）；默认省略普通进度 |
@@ -154,7 +222,7 @@ default_tools_approval_mode = "approve"   # 只在可信工作区使用
 | `worker_cancel` | 取消并确认终态；不影响其他 Worker |
 | `worker_resume` | 用新指令恢复已有 session |
 | `supervisor_info` | 版本、限制、runtime 能力、通知通道 |
-| `supervisor_notifications` | 读取通知收件箱（默认只看待处理） |
+| `supervisor_notifications` | 读取通知收件箱（production 默认全部未确认；development 默认 pending） |
 | `supervisor_notifications_ack` | 确认通知（幂等） |
 | `supervisor_wake_target` | 可选：登记 Codex thread 以启用队列投递 |
 
@@ -199,7 +267,7 @@ node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-threa
 
 每个 Worker 的事件缓存最多保存最近 500 条，完整历史仍在追加日志中。启动流式扫描日志，历史查询按需异步分页，稀疏字节索引支持深页读取；通知重建使用单次流式扫描。已知的事件缺口或追加失败会明确报错，不将残缺历史伪装为完整结果；单个损坏日志不会阻止其他 Worker 继续受管。
 
-直接使用 TypeScript/JavaScript 库的调用方需注意：`Supervisor.events()` 现在返回 Promise，应使用 `await`；`Store.getEvents()` 只访问缓存，`truncated:true` 表示需调用 `await Store.readEvents()` 获取完整历史，`Store.scanEvents()` 用于全历史流式处理。CLI、IPC、MCP 的字段和调用方式保持兼容。
+直接使用 TypeScript/JavaScript 库的调用方需注意：`Supervisor.events()` 现在返回 Promise，应使用 `await`；`Store.getEvents()` 只访问缓存，`truncated:true` 表示需调用 `await Store.readEvents()` 获取完整历史，`Store.scanEvents()` 用于全历史流式处理。CLI、IPC、MCP 的字段和调用方式保持兼容；MCP 的 production 呈现是 0.3.0 新增的默认行为，旧完整结构可通过 `--mode development` 继续使用。
 
 带 `requestId` 的副作用操作会先等待准入记录写入，再启动进程或发送消息；持久化失败明确返回错误。通知也在收件箱记录写入确认后才调用宿主。上述承诺针对进程崩溃和写入失败，不提供断电 fsync、磁盘损坏或跨组件 exactly-once 保证。
 

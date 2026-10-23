@@ -253,6 +253,7 @@ export class Supervisor {
     state?: "pending" | "delivered" | "failed" | "all";
     workerId?: string;
     limit?: number;
+    unacknowledgedOnly?: boolean;
   } = {}): NotificationsResult {
     this.assertInitialized();
     return {
@@ -260,6 +261,11 @@ export class Supervisor {
       counts: this.notifier.counts(),
       target: this.notifier.getTarget(),
     };
+  }
+
+  getNotifyTarget(): NotifyTarget {
+    this.assertInitialized();
+    return this.notifier.getTarget();
   }
 
   async ackNotifications(ids: string[], by?: string): Promise<{ acked: number; missing: string[] }> {

@@ -151,6 +151,8 @@ export const METHOD_SCHEMAS = {
       state: z.enum(["pending", "delivered", "failed", "all"]).optional(),
       workerId: WorkerIdSchema.optional(),
       limit: z.number().int().min(1).max(500).optional(),
+      /** Optional view across pending/delivered/failed; legacy default stays unchanged. */
+      unacknowledgedOnly: z.boolean().optional(),
     })
     .strict(),
   notification_ack: z
@@ -165,6 +167,7 @@ export const METHOD_SCHEMAS = {
       codexThreadId: z.string().min(1).max(200).nullable().optional(),
     })
     .strict(),
+  notification_target_get: z.object({}).strict(),
   notification_retry: z
     .object({
       states: z.array(z.enum(["pending", "delivered", "failed"])).min(1).max(3).optional(),

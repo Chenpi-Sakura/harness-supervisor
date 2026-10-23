@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile, appendFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { redactText, safeText, truncateText } from "./redact.js";
 
 export async function ensureDir(dir: string): Promise<void> {
@@ -11,7 +12,20 @@ export async function atomicWriteJson(file: string, value: unknown): Promise<voi
   await ensureDir(path.dirname(file));
   const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await rename(temp, file);
+  // Windows scanners/readers can briefly deny replacement even after the temp
+  // file is closed. Retry only that rename; never unlink the existing record.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(temp, file);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(code ?? "") || attempt >= 8) {
+        throw error;
+      }
+      await delay(Math.min(20 * 2 ** attempt, 200));
+    }
+  }
 }
 
 export async function writeJsonExclusive(file: string, value: unknown): Promise<boolean> {

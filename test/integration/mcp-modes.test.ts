@@ -9,6 +9,7 @@ import { sleep } from "../../src/util/async.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SupervisorClient } from "../../src/ipc/client.js";
+import { VERSION } from "../../src/version.js";
 import { OldDaemonFixture } from "../fixtures/old-daemon.js";
 import {
   FAKE_ENTRY,
@@ -133,7 +134,7 @@ test("MCP mode comes from CLI/env, defaults to production, and rejects invalid v
   const production = await connectMcp(t, stateDir, {});
   const productionInfo = parseTool(await call(production, "supervisor_info", {}));
   assert.equal(productionInfo.mcpMode, "production");
-  assert.equal(productionInfo.version, "0.4.0");
+  assert.equal(productionInfo.version, VERSION);
   assert.ok(productionInfo.limits.maxWorkers > 0);
   const qoder = productionInfo.runtimes.find((runtime: { runtime: string }) => runtime.runtime === "qoder");
   assert.ok(qoder, "Qoder must remain visible");
@@ -142,7 +143,7 @@ test("MCP mode comes from CLI/env, defaults to production, and rejects invalid v
 
   const development = await connectMcp(t, stateDir, { modeEnv: "development" });
   const developmentInfo = parseTool(await call(development, "supervisor_info", {}));
-  assert.equal(developmentInfo.version, "0.4.0");
+  assert.equal(developmentInfo.version, VERSION);
   assert.equal("stateDir" in developmentInfo, true, "development keeps the legacy daemon payload");
   assert.equal("pid" in developmentInfo, true);
   assert.equal("mcpMode" in developmentInfo, false);

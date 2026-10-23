@@ -157,6 +157,8 @@ export class McodeAcpSession implements HarnessSession {
   private agentVersion: string | undefined;
   private extensions = new Set<string>();
   private assistantText = "";
+  private assistantMessageId: string | undefined;
+  private readonly seenAssistantMessageIds = new Set<string>();
   private lastToolName: string | undefined;
   private queued: QueuedMessage[] = [];
   private readonly cwd: string;
@@ -304,6 +306,8 @@ export class McodeAcpSession implements HarnessSession {
     }
     this.promptActive = true;
     this.assistantText = "";
+    this.assistantMessageId = undefined;
+    this.seenAssistantMessageIds.clear();
     // A new turn on the same session must be able to settle again.
     this.settledSeen = false;
     this.runSeen = true;
@@ -750,6 +754,7 @@ export class McodeAcpSession implements HarnessSession {
     this.emit({
       type: "progress",
       kind: "permission_withdrawn",
+      detail: key,
       tool: pending.toolName,
     });
   }
@@ -766,7 +771,26 @@ export class McodeAcpSession implements HarnessSession {
       const content = record.content as { type?: string; text?: string } | undefined;
       const text = typeof content?.text === "string" ? content.text : "";
       if (text) {
-        this.assistantText += text;
+        // MiniMax 0.6.12 projects native assistant ids into ACP messageId.
+        // Chunks of one message form one answer; a later message replaces
+        // earlier commentary. Keep progress events for every chunk, including
+        // late chunks from older messages, without mixing them into the result.
+        const messageId = typeof record.messageId === "string" && record.messageId
+          ? record.messageId : undefined;
+        let current = true;
+        if (messageId && messageId !== this.assistantMessageId) {
+          if (this.seenAssistantMessageIds.has(messageId)) {
+            current = false;
+          } else {
+            this.seenAssistantMessageIds.add(messageId);
+            this.assistantMessageId = messageId;
+            this.assistantText = "";
+          }
+        }
+        if (current) {
+          // agent_message is a whole-message snapshot, not another delta.
+          this.assistantText = kind === "agent_message" ? text : this.assistantText + text;
+        }
         this.emit({ type: "progress", kind: "assistant_message", preview: safeText(text, 400) });
       }
       return;
@@ -780,6 +804,10 @@ export class McodeAcpSession implements HarnessSession {
       return;
     }
     if (kind === "tool_call") {
+      // Text before native tool execution is commentary, not a final reply.
+      // Also gives older ACP builds without messageId a structural boundary.
+      this.assistantText = "";
+      this.assistantMessageId = undefined;
       const name = typeof record.name === "string" ? record.name : "unknown";
       this.lastToolName = name;
       this.emit({

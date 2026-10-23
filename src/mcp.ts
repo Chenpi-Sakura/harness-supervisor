@@ -227,7 +227,7 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   send:
     "Queue a steering message (before the next model turn) or follow-up (after the current run) through the native harness. Valid only while running; it returns acceptance, not completion. Pi applies both natively. Qoder 1.1.76 accepts the stream message without a verified effect on the running turn. MiniMax Code steers an active turn through its steer extension and was verified to act on it; a steer sent after the turn ended is rejected by the agent. This does not answer extension dialogs; use worker_answer.",
   answer:
-    "Answer a pending run.needs_input request (Pi extension select/confirm/input/editor). Provide exactly one of value, confirmed, or cancelled=true, with the returned requestId. The worker must still have that matching pending request.",
+    "Answer a current pending input request. Read worker_status first: wake messages may be old, and request ids may be reused after resume. Provide exactly one of value, confirmed, or cancelled=true using pendingInput.requestId. Native permission options are answered by their offered value.",
   cancel:
     "Clear queued messages, abort the run, stop the harness process tree and return the final cancelled state. Other workers are unaffected. An orphaned process left by a supervisor restart returns UNSUPPORTED because its control channel is gone; verify and terminate it out-of-band. Cancellation cannot be undone.",
   resume:
@@ -235,7 +235,7 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   info:
     "Show the supervisor version, this MCP process mode, limits, runtimes and the explicit notification-delivery boundary. Delivery is at-least-once and is not proof of wake-up.",
   notifications:
-    "Read durable notifications for important lifecycle events (completed, failed, cancelled, needs_input, crashed, detached). By default returns all unacknowledged records regardless of delivery state, so old acknowledged records never hide new ones. Filter by workerId; use state only for an explicit delivery-state view. Acknowledge processed ids afterwards.",
+    "Read actionable unacknowledged notifications for important lifecycle events. Superseded requests are omitted by default; state='all' includes history with actionable=false. Wake messages carry a cursor, not the report or current question: read worker_status for full result or pendingInput before acting. Filter by workerId and acknowledge processed ids afterwards.",
   ack:
     "Mark notification ids as processed. Idempotent; unknown ids are reported rather than treated as errors.",
   wakeTarget:
@@ -264,7 +264,7 @@ const DEVELOPMENT_DESCRIPTIONS: ToolDescriptions = {
   info:
     "Show daemon information, limits, runtimes, and the explicit event-delivery boundary: events are persisted and pull-based; the supervisor does not claim background wake-up of the main agent.",
   notifications:
-    "List durable notifications for important lifecycle events (completed, failed, cancelled, needs_input, crashed, detached). Each notification has a stable id, worker id, runtime, event seq, kind, a short summary and delivery state. Ordinary run.progress events are never included. Use it after a reconnect or daemon restart instead of polling worker status. Acknowledge processed ids with supervisor_notifications_ack so repeated sessions do not reprocess them; unacknowledged records are never dropped.",
+    "List durable notifications for important lifecycle events. Ordinary progress never creates notifications. Pending requests are checked before host delivery; resolved undelivered requests become superseded, not delivered. Default pending view excludes them; state='all' retains diagnostic history. Read worker_status for current input/result before acting and acknowledge processed ids. Codex queue messages already accepted by the host cannot be withdrawn.",
   ack:
     "Mark notification ids as processed. Idempotent: acknowledging the same id twice is a no-op. Unknown ids are reported, not treated as errors.",
   wakeTarget:

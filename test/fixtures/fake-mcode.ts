@@ -162,6 +162,12 @@ function handlePrompt(id: number | string, params: Record<string, unknown>): voi
           options: pendingPermission.options,
         },
       });
+      if (process.env.FAKE_MCODE_WITHDRAW_PERMISSION === "1") {
+        later(350, () => {
+          pendingPermission = null;
+          notify("$/cancel_request", { requestId });
+        });
+      }
     });
     return;
   }

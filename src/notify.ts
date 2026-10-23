@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { SupervisorError, errorMessage } from "./errors.js";
+import { isTerminal } from "./types.js";
 import type {
   NotificationDeliveryState,
   NotificationKind,
@@ -27,13 +28,60 @@ export interface NotifierOptions {
   codexBin?: string;
   maxAttempts?: number;
   retryDelayMs?: number;
+  /**
+   * Short bounded delay before a *new* notification is handed to the host.
+   * It only exists to coalesce/absorb events that stop being true within the
+   * window (e.g. a maintenance cancel immediately followed by a resume).
+   * `0` delivers on the next macrotask; repair paths (`retryPending`) ignore it.
+   */
+  deliveryDelayMs?: number;
+  /**
+   * Returns a reason when the record no longer describes current state and must
+   * not be delivered. Optional so the notifier stays independent of the
+   * supervisor; the supervisor injects the real freshness check.
+   */
+  staleReason?: (record: NotificationRecord) => string | undefined;
   onNewNotification?: (notification: NotificationRecord) => void;
+}
+
+/**
+ * The subset of a worker record the delivery gate needs.
+ * `pendingInput.seq` is the seq of the `run.needs_input` event that produced the
+ * request, which is what makes a reused requestId detectable.
+ */
+export interface NotifyFreshnessSubject {
+  status: WorkerStatus;
+  pendingInput?: {
+    requestId: string;
+    seq?: number;
+    createdAt: string;
+    expiresAt?: string;
+  };
+  startedAt?: string;
+  /**
+   * A cancellation has been requested and the supervisor is still draining the
+   * run. The worker record may still say `awaiting_input` with a pending input,
+   * but `answer` already refuses, so a reminder would be for nothing.
+   */
+  cancelRequested?: boolean;
+  /**
+   * Seq of the newest run-start marker (`worker.starting`/`worker.resumed`/
+   * `run.accepted`). Lazy so the cost is only paid when a check needs it.
+   */
+  lastRunStartSeq?: () => number | undefined;
 }
 
 const MAX_SUMMARY_CHARS = 600;
 const MAX_ATTEMPTS = 3;
 const MAX_RETRY_DELAY_MS = 60_000;
 const MAX_DELIVERY_OUTPUT = 2000;
+const DEFAULT_DELIVERY_DELAY_MS = 1_000;
+const MAX_DELIVERY_DELAY_MS = 60_000;
+/**
+ * Legacy pending inputs have no event seq. They are created a few ms before the
+ * event is appended, so anything further apart than this is a different request.
+ */
+const LEGACY_PENDING_TOLERANCE_MS = 2_000;
 
 const THREAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,120}$/;
 
@@ -71,6 +119,82 @@ export function notificationId(workerId: string, seq: number): string {
 }
 
 /**
+ * Decide whether a recorded notification still describes current truth.
+ *
+ * This is the delivery gate: a record that fails it is marked `superseded` and
+ * never handed to the host. Its event and inbox record stay readable, so a
+ * consumer can still see that the request existed — it just is not news.
+ *
+ * `needs_input` is checked against the *live* pending input, not against the
+ * notification's own fields, because harnesses can reuse a requestId for a new
+ * request after a resume:
+ * - no pending input at all -> answered, cancelled, expired or the run ended;
+ * - requestId mismatch -> a different request is current;
+ * - event-seq mismatch -> same requestId, different request (cross-resume reuse);
+ * - already expired -> the harness can no longer accept an answer.
+ *
+ * Only `cancelled` terminal records get the resume check: an explicit cancel
+ * followed by a resume is maintenance, not a result worth waking anyone.
+ * `completed`, `failed`, `crashed` and `detached` are never suppressed this way.
+ *
+ * The resume check keys off *evidence that a newer run started after this event*
+ * (a later run-start event seq, or a `startedAt` later than the event), never off
+ * the worker's current status. A fast resume that already finished must still
+ * suppress the old cancel, while the new run's own cancel must stay deliverable.
+ */
+export function staleNotificationReason(
+  subject: NotifyFreshnessSubject | undefined,
+  record: NotificationRecord,
+): string | undefined {
+  if (!subject) return "the worker record no longer exists";
+  if (record.kind === "needs_input") {
+    // Cancellation wins before any pending-input reasoning: `cancel()` marks the
+    // runtime first and only later rewrites the record, and in that window
+    // `answer` already refuses. Reading the flag (not a status reason string) is
+    // the only reliable signal.
+    if (subject.cancelRequested) {
+      return "a cancellation is in progress; the input request can no longer be answered";
+    }
+    const pending = subject.pendingInput;
+    if (!pending) {
+      return "the input request is no longer pending (answered, expired, cancelled or the run ended) before delivery";
+    }
+    if (isTerminal(subject.status)) {
+      return `the worker is ${subject.status}; this input request cannot be answered any more`;
+    }
+    if (pending.requestId !== record.summary.requestId) {
+      return `request ${record.summary.requestId ?? "unknown"} is no longer pending (current: ${pending.requestId})`;
+    }
+    if (pending.seq !== undefined && pending.seq !== record.seq) {
+      return `requestId ${pending.requestId} now belongs to a newer request (pending event seq ${pending.seq}, notification seq ${record.seq})`;
+    }
+    if (pending.expiresAt && Date.parse(pending.expiresAt) < Date.now()) {
+      return `request ${pending.requestId} expired at ${pending.expiresAt}`;
+    }
+    if (pending.seq === undefined) {
+      const gap = Math.abs(Date.parse(pending.createdAt) - Date.parse(record.createdAt));
+      if (Number.isFinite(gap) && gap > LEGACY_PENDING_TOLERANCE_MS) {
+        return `legacy pending input (no event seq) was created ${gap}ms away from this event; treating it as a different request`;
+      }
+    }
+    return undefined;
+  }
+  if (record.kind === "cancelled") {
+    const runStart = subject.lastRunStartSeq?.();
+    if (runStart !== undefined && runStart > record.seq) {
+      return `a new run started after this cancellation (run-start seq ${runStart}, current status ${subject.status})`;
+    }
+    if (
+      subject.startedAt !== undefined &&
+      Date.parse(subject.startedAt) > Date.parse(record.createdAt)
+    ) {
+      return `the worker was resumed after this cancellation (startedAt ${subject.startedAt})`;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Durable inbox of important worker events plus an optional delivery channel.
  *
  * Delivery semantics are explicit and not stronger than reality:
@@ -92,6 +216,8 @@ export class Notifier {
   /** Resolved when the current attempt for that id leaves `inFlight`. */
   private readonly inFlightWait = new Map<string, Promise<void>>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  /** One coalescing timer per worker: batched, never global, never per-record. */
+  private readonly dispatchTimers = new Map<string, NodeJS.Timeout>();
   private started = false;
   private writeError?: Error;
   private needsLineBreak = false;
@@ -100,6 +226,8 @@ export class Notifier {
   private readonly codexBin: string;
   private readonly maxAttempts: number;
   private readonly retryDelayMs: number;
+  private readonly deliveryDelayMs: number;
+  private readonly staleReason?: (record: NotificationRecord) => string | undefined;
   private readonly onNewNotification?: (notification: NotificationRecord) => void;
 
   constructor(options: NotifierOptions) {
@@ -117,6 +245,15 @@ export class Notifier {
     this.retryDelayMs =
       options.retryDelayMs ??
       intEnv("HARNESS_SUPERVISOR_NOTIFY_RETRY_MS", 5_000, 200, MAX_RETRY_DELAY_MS);
+    this.deliveryDelayMs =
+      options.deliveryDelayMs ??
+      intEnv(
+        "HARNESS_SUPERVISOR_NOTIFY_DELAY_MS",
+        DEFAULT_DELIVERY_DELAY_MS,
+        0,
+        MAX_DELIVERY_DELAY_MS,
+      );
+    this.staleReason = options.staleReason;
     this.onNewNotification = options.onNewNotification;
   }
 
@@ -173,11 +310,9 @@ export class Notifier {
     void this.persist(record);
     this.onNewNotification?.(record);
     if (this.started && target.channel !== "none") {
-      void this.deliver(id).catch((error: unknown) => {
-        this.logger.warn(`Notification delivery failed for ${id}`, {
-          error: errorMessage(error),
-        });
-      });
+      // Not delivered yet: a short per-worker window lets a burst (e.g. cancel
+      // then immediate resume) collapse before anything reaches the host.
+      this.scheduleDispatch(worker.id);
     }
     return record;
   }
@@ -186,25 +321,28 @@ export class Notifier {
     return this.records.has(id);
   }
 
-  /** Workers that still have an unacknowledged notification. */
+  /** Workers that still have an unacknowledged, actionable notification. */
   unackedWorkerIds(): Set<string> {
     return new Set(
-      [...this.records.values()].filter((record) => !record.ackAt).map((record) => record.workerId),
+      [...this.records.values()]
+        .filter((record) => !record.ackAt && record.delivery.state !== "superseded")
+        .map((record) => record.workerId),
     );
   }
 
   /**
-   * Rewrite the inbox file, dropping only old *acknowledged* records.
-   * Unacknowledged records are never removed, regardless of age.
+   * Rewrite the inbox file, dropping only old *resolved* records (acknowledged
+   * or superseded). Actionable records are never removed, regardless of age.
    */
   async compact(options: { olderThanDays?: number } = {}): Promise<{ kept: number; dropped: number }> {
     const olderThanDays = Math.max(0, options.olderThanDays ?? 30);
     const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
     let dropped = 0;
     for (const [id, record] of [...this.records.entries()]) {
-      if (!record.ackAt) continue;
-      const ackMs = Date.parse(record.ackAt);
-      if (!Number.isNaN(ackMs) && ackMs < cutoff) {
+      const resolvedAt = record.ackAt ?? record.delivery.supersededAt;
+      if (!resolvedAt) continue;
+      const resolvedMs = Date.parse(resolvedAt);
+      if (!Number.isNaN(resolvedMs) && resolvedMs < cutoff) {
         this.records.delete(id);
         dropped += 1;
       }
@@ -227,11 +365,17 @@ export class Notifier {
   } = {}): NotificationRecord[] {
     const state = filter.state ?? "pending";
     const limit = Math.max(1, Math.min(filter.limit ?? 100, 500));
+    // Actionable views re-verify freshness before answering. Inbox-only workers
+    // (`channel: "none"`) never pass through delivery, so a request that was
+    // answered or withdrawn would otherwise stay in the default inbox forever.
+    // Only *undelivered* records are re-classified: nothing is acknowledged here
+    // and `state: "all"` keeps the full evidence untouched.
+    if (state === "pending" || filter.unacknowledgedOnly) this.supersedeStaleOnRead();
     return [...this.records.values()]
       .filter((record) => {
         // Filtering happens before the limit so old acknowledged records can
         // never crowd out a newer unacknowledged one.
-        if (filter.unacknowledgedOnly && record.ackAt) return false;
+        if (filter.unacknowledgedOnly && (record.ackAt || record.delivery.state === "superseded")) return false;
         // The default view is the *actionable* inbox: acknowledged records must
         // never show up again, otherwise a reconnecting consumer would process
         // them forever. Acknowledged records stay readable for diagnostics via
@@ -246,18 +390,23 @@ export class Notifier {
       .map((record) => structuredClone(record));
   }
 
-  counts(): { pending: number; delivered: number; failed: number; unacked: number } {
+  counts(): { pending: number; delivered: number; failed: number; superseded: number; unacked: number } {
     let pending = 0;
     let delivered = 0;
     let failed = 0;
+    let superseded = 0;
     let unacked = 0;
     for (const record of this.records.values()) {
       if (record.delivery.state === "delivered") delivered += 1;
       else if (record.delivery.state === "failed") failed += 1;
+      else if (record.delivery.state === "superseded") superseded += 1;
       else if (!record.ackAt) pending += 1;
-      if (!record.ackAt) unacked += 1;
+      // Superseded records are resolved, not actionable: they never block a
+      // consumer that waits for "everything is acknowledged" and never protect
+      // an old worker from retention.
+      if (!record.ackAt && record.delivery.state !== "superseded") unacked += 1;
     }
-    return { pending, delivered, failed, unacked };
+    return { pending, delivered, failed, superseded, unacked };
   }
 
   async ack(ids: string[], by?: string): Promise<{ acked: number; missing: string[] }> {
@@ -297,6 +446,9 @@ export class Notifier {
     const resetFailed = options.resetFailed ?? wanted.has("failed");
     const candidates = [...this.records.values()].filter((record) => {
       if (record.ackAt) return false;
+      // Superseded records are resolved: retrying them would deliver something
+      // that is no longer true.
+      if (record.delivery.state === "superseded") return false;
       if (record.target?.channel !== "codex-queue") return false;
       if (!wanted.has(record.delivery.state)) return false;
       if (record.delivery.state === "failed") return resetFailed;
@@ -332,6 +484,9 @@ export class Notifier {
     // Acknowledged notifications are finished work; never send them again.
     if (record.ackAt) return record;
     if (record.delivery.state === "delivered") return record;
+    // Superseded records are terminal: the event is kept for audit, but it must
+    // never be retried, because nothing about it is still current.
+    if (record.delivery.state === "superseded") return record;
     const target = record.target ?? { channel: "none" };
     if (target.channel === "none") return record;
     if (!target.codexThreadId) {
@@ -351,6 +506,17 @@ export class Notifier {
       // Confirm the route and inbox record are written before invoking the host.
       await this.flush();
       if (record.ackAt || !this.started) return record;
+      // Last-moment freshness gate. Everything that is about to reach the host
+      // passes through here, including retries and restart repair. Once the
+      // Codex CLI accepted a message it cannot be recalled, so this check has to
+      // happen *before* the call; the delivered text also tells the agent to
+      // read the current pendingInput instead of trusting the message.
+      const staleReason = this.checkStale(record);
+      if (staleReason) {
+        this.markSuperseded(record, staleReason);
+        await this.flush().catch(() => undefined);
+        return record;
+      }
       const message = renderMessage(record);
       const result = await this.runCodexQueue(target.codexThreadId, message);
       record.delivery.attempts += 1;
@@ -386,6 +552,110 @@ export class Notifier {
     this.started = false;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+    for (const timer of this.dispatchTimers.values()) clearTimeout(timer);
+    this.dispatchTimers.clear();
+  }
+
+  /**
+   * Re-check undelivered records when a consumer reads an actionable view.
+   *
+   * Inbox-only workers (`channel: "none"`) never pass through `deliver()`, so this
+   * is the only place their answered/withdrawn requests can be retired; without it
+   * a dead request would sit in the default inbox forever. Only records that were
+   * never handed to the host are touched:
+   * - a host call in flight is left alone, because the CLI may already have
+   *   accepted the message and flipping it to `superseded` would then be a lie;
+   * - `delivered` history is immutable (the host cannot be un-told);
+   * - a record whose delivery had already failed keeps its attempt history and
+   *   error, but stops being actionable since retrying it would deliver something
+   *   that is no longer true.
+   */
+  private supersedeStaleOnRead(): void {
+    if (!this.staleReason) return;
+    for (const record of this.records.values()) {
+      if (record.ackAt) continue;
+      if (this.inFlight.has(record.id)) continue;
+      const state = record.delivery.state;
+      if (state !== "pending" && state !== "failed") continue;
+      const reason = this.checkStale(record);
+      if (!reason) continue;
+      this.markSuperseded(
+        record,
+        state === "failed"
+          ? `delivery had failed (${record.delivery.lastError ?? "unknown error"}) and the notification is no longer current: ${reason}`
+          : reason,
+      );
+    }
+  }
+
+  private checkStale(record: NotificationRecord): string | undefined {    if (!this.staleReason) return undefined;
+    try {
+      return this.staleReason(record);
+    } catch (error) {
+      // Fail open: a broken freshness check must not silently swallow a real
+      // reminder. The event stays in the inbox either way.
+      this.logger.warn(`Notification freshness check failed for ${record.id}`, {
+        error: errorMessage(error),
+      });
+      return undefined;
+    }
+  }
+
+  private markSuperseded(record: NotificationRecord, reason: string): void {
+    record.delivery.state = "superseded";
+    // One line: the reason is surfaced in CLI/inbox output and may quote a
+    // multi-line host error.
+    record.delivery.supersededReason = safeText(oneLine(reason), 400);
+    record.delivery.supersededAt = new Date().toISOString();
+    this.clearRetryTimer(record.id);
+    void this.persist(record);
+    this.logger.info(`Notification ${record.id} superseded before delivery`, {
+      workerId: record.workerId,
+      kind: record.kind,
+      reason: record.delivery.supersededReason,
+    });
+  }
+
+  /**
+   * One short timer per worker. Records for *other* workers keep their own
+   * timers, so batching can never delay or swallow a different worker's event.
+   */
+  private scheduleDispatch(workerId: string): void {
+    if (this.dispatchTimers.has(workerId)) return;
+    const timer = setTimeout(() => {
+      this.dispatchTimers.delete(workerId);
+      void this.dispatchWorker(workerId).catch((error: unknown) => {
+        this.logger.warn(`Notification dispatch failed for ${workerId}`, {
+          error: errorMessage(error),
+        });
+      });
+    }, this.deliveryDelayMs);
+    timer.unref?.();
+    this.dispatchTimers.set(workerId, timer);
+  }
+
+  /**
+   * Deliver the worker's pending records in seq order. Nothing is filtered out
+   * by "a previous record was delivered but not acknowledged": the only reason
+   * to drop a record here is that it stopped being true (see checkStale).
+   */
+  private async dispatchWorker(workerId: string): Promise<void> {
+    const queued = [...this.records.values()]
+      .filter(
+        (record) =>
+          record.workerId === workerId &&
+          !record.ackAt &&
+          record.delivery.state === "pending" &&
+          (record.target?.channel ?? "none") !== "none",
+      )
+      .sort((a, b) => a.seq - b.seq || a.id.localeCompare(b.id));
+    for (const record of queued) {
+      await this.deliver(record.id).catch((error: unknown) => {
+        this.logger.warn(`Notification delivery failed for ${record.id}`, {
+          error: errorMessage(error),
+        });
+      });
+    }
   }
 
   private scheduleRetry(id: string, attempt: number): void {
@@ -578,15 +848,24 @@ function pickText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? safeText(value, MAX_SUMMARY_CHARS) : undefined;
 }
 
+/**
+ * The production wake message is deliberately a pointer, not a report.
+ *
+ * It carries only the worker id, the event and its seq plus what to read next:
+ * re-injecting the command or the report duplicated the inbox in the main agent
+ * context, and echoing the old requestId invited answers to a request that may
+ * already be gone. The agent must read the live status/pendingInput first.
+ *
+ * This only shrinks the wake message: the inbox record keeps its existing summary
+ * (MAX_SUMMARY_CHARS) and worker results keep their existing maxResultBytes.
+ * No storage or result-size policy is changed here; the wake message is a pointer.
+ */
 export function renderMessage(record: NotificationRecord): string {
-  const label = `${record.workerId} (${record.runtime})`;
-  const head = `[harness-supervisor] ${label} ${record.kind} at ${record.createdAt} (seq ${record.seq})`;
-  const detail = record.summary.text ? `: ${oneLine(record.summary.text)}` : "";
-  const hint =
+  const next =
     record.kind === "needs_input"
-      ? ` | answer with worker_answer (requestId ${record.summary.requestId ?? "unknown"})`
-      : ` | read with worker_status/worker_events`;
-  return `${head}${detail}${hint}`;
+      ? "read worker_status; answer current pendingInput"
+      : "read worker_status for result";
+  return `[harness-supervisor] ${record.workerId} ${record.kind} seq=${record.seq} | ${next}`;
 }
 
 /** cmd.exe does not escape arguments for us, so quote what needs quoting. */

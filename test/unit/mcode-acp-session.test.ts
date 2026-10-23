@@ -26,6 +26,26 @@ async function pendingInput(events: HarnessEvent[]) {
   assert.fail("the native permission request was not surfaced");
 }
 
+for (const scenario of ["ids", "anonymous", "snapshot", "late", "long", "no-final"]) {
+  test(`final report follows native message boundaries (${scenario})`, async (t) => {
+    const { session, events } = await runAgainstStub(t, { STUB_MESSAGES: scenario });
+    for (let turn = 0; turn < 2; turn += 1) {
+      const offset = events.length;
+      await session.prompt("report");
+      const deadline = Date.now() + 3000;
+      while (!events.slice(offset).some(event => event.type === "settled") && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      const current = events.slice(offset);
+      const settled = current.find(event => event.type === "settled");
+      assert.ok(settled?.type === "settled");
+      const expected = scenario === "no-final" ? "" : `Final report${scenario === "long" ? "x".repeat(20000) : ""}`;
+      assert.equal(settled.finalText, expected);
+      assert.ok(current.some(event => event.type === "progress" && event.preview === "Earlier progress."));
+    }
+  });
+}
+
 /**
  * Drives the real adapter against a stub agent that numbers its reverse
  * requests from zero, like the real MiniMax Code agent does.

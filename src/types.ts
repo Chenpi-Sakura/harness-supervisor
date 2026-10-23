@@ -58,6 +58,13 @@ export interface WorkerStats {
 
 export interface PendingInput {
   requestId: string;
+  /**
+   * Seq of the `run.needs_input` event that produced this request.
+   * Harnesses may reuse a requestId across resumed runs, so the seq (not the id)
+   * is what proves a notification still describes the *current* request.
+   * Missing on legacy records; consumers then fall back to a weaker check.
+   */
+  seq?: number;
   method: "select" | "confirm" | "input" | "editor";
   title?: string;
   message?: string;
@@ -239,7 +246,13 @@ export type NotificationKind =
   | "needs_input"
   | "detached";
 
-export type NotificationDeliveryState = "pending" | "delivered" | "failed";
+/**
+ * `superseded` is terminal and never delivered: the event is real and stays in
+ * the inbox/event log, but it stopped describing current state before any host
+ * delivery happened (request answered, run resumed, worker gone). It must never
+ * be reported as `delivered`, because nothing reached the host.
+ */
+export type NotificationDeliveryState = "pending" | "delivered" | "failed" | "superseded";
 
 export interface NotificationRecord {
   /** Immutable destination for this event; missing legacy routes are inbox-only. */
@@ -266,6 +279,9 @@ export interface NotificationRecord {
     lastAttemptAt?: string;
     lastError?: string;
     messageId?: string;
+    /** Why the supervisor decided not to deliver this record (state=superseded). */
+    supersededReason?: string;
+    supersededAt?: string;
   };
   ackAt?: string;
   ackBy?: string;
@@ -275,6 +291,9 @@ export interface NotificationCounts {
   pending: number;
   delivered: number;
   failed: number;
+  /** Resolved without delivery; absent on older daemons. */
+  superseded?: number;
+  /** Actionable records the consumer has not acknowledged. */
   unacked: number;
 }
 

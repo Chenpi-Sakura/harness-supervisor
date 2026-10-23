@@ -8,7 +8,13 @@ import {
   validateIdempotencyKey,
   type IdempotencyRecord,
 } from "./idempotency.js";
-import { Notifier, notificationId, notificationKindFor, validateNotifyTarget } from "./notify.js";
+import {
+  Notifier,
+  notificationId,
+  notificationKindFor,
+  staleNotificationReason,
+  validateNotifyTarget,
+} from "./notify.js";
 import { Retention, type PruneOptions, type PruneResult } from "./retention.js";
 import { Store } from "./store.js";
 import {
@@ -33,6 +39,7 @@ import {
   type SupervisorLimits,
   type WaitResult,
   type WorkerConfig,
+  type WorkerEvent,
   type WorkerEventType,
   type WorkerRecord,
   type WorkerStatus,
@@ -59,6 +66,38 @@ const DEFAULT_LIMITS: SupervisorLimits = {
 
 const MAX_PROMPT_CHARS = 256 * 1024;
 const MAX_MESSAGE_CHARS = 64 * 1024;
+/**
+ * Progress kinds that mean "the harness no longer wants that answer".
+ * They are the only progress kinds allowed to clear a pending input request.
+ */
+const INPUT_WITHDRAWAL_KINDS = new Set(["permission_withdrawn", "input_withdrawn"]);
+
+/**
+ * Whether a progress event means "clear this pending input request".
+ *
+ * Matching is strict: the kind must be a withdrawal and `detail` must carry the
+ * *current* requestId. Nothing is inferred from timing, from the newest session or
+ * from "the most recent request" — a wrong guess either hides a real blocking
+ * request or leaves a dead one looking actionable. An answer already in flight
+ * wins over a withdrawal, and a worker that is terminal or being cancelled keeps
+ * its own transition.
+ */
+export function shouldClearPendingInput(input: {
+  kind: string;
+  detail?: string;
+  pendingRequestId?: string;
+  answeringRequestId?: string;
+  cancelRequested: boolean;
+  finalizing: boolean;
+  terminal: boolean;
+}): boolean {
+  if (!INPUT_WITHDRAWAL_KINDS.has(input.kind)) return false;
+  if (input.answeringRequestId !== undefined) return false;
+  if (input.cancelRequested || input.finalizing || input.terminal) return false;
+  if (!input.pendingRequestId) return false;
+  const withdrawn = typeof input.detail === "string" ? input.detail.trim() : "";
+  return withdrawn.length > 0 && withdrawn === input.pendingRequestId;
+}
 
 interface Runtime {
   record: WorkerRecord;
@@ -107,6 +146,8 @@ export interface SupervisorOptions {
     channel?: "none" | "codex-queue";
     codexThreadId?: string;
     codexBin?: string;
+    /** Short coalescing window before host delivery; 0 delivers immediately. */
+    deliveryDelayMs?: number;
   };
 }
 
@@ -142,6 +183,26 @@ export class Supervisor {
       channel: options.notify?.channel ?? "none",
       codexThreadId: options.notify?.codexThreadId,
       codexBin: options.notify?.codexBin,
+      deliveryDelayMs: options.notify?.deliveryDelayMs,
+      // The gate asks the *current* worker record, not the notification payload:
+      // a request that was answered, replaced or invalidated by a resume must
+      // not wake anyone, and must not be reported as delivered either.
+      staleReason: (record) => {
+        const worker = this.store.getWorker(record.workerId);
+        if (!worker) return staleNotificationReason(undefined, record);
+        return staleNotificationReason(
+          {
+            status: worker.status,
+            pendingInput: worker.pendingInput,
+            startedAt: worker.startedAt,
+            // `cancel()` flags the runtime before it rewrites the record, so this
+            // is the only honest signal for the in-between window.
+            cancelRequested: this.runtimes.get(record.workerId)?.cancelRequested === true,
+            lastRunStartSeq: () => this.lastRunStartSeq(record.workerId),
+          },
+          record,
+        );
+      },
     });
     this.retention = new Retention({
       store: this.store,
@@ -1484,6 +1545,16 @@ export class Supervisor {
         if (event.kind === "assistant_message" && event.preview) {
           runtime.lastAssistantText = event.preview;
         }
+        // A withdrawal is a decision, not progress: the harness no longer needs
+        // an answer, so the worker must stop reporting awaiting_input. Without
+        // this the request would stay "current" for the notification gate and a
+        // reminder would be delivered for something nobody can answer.
+        if (
+          INPUT_WITHDRAWAL_KINDS.has(event.kind) &&
+          this.applyInputWithdrawal(runtime, event.kind, event.detail)
+        ) {
+          data.pendingInputCleared = true;
+        }
         this.store.appendEvent(record.id, "run.progress", data);
         await this.store.saveWorker(record);
         break;
@@ -1509,7 +1580,7 @@ export class Supervisor {
           record.statusReason = "harness requested input";
         }
         this.schedulePendingInputExpiry(runtime, pending);
-        this.store.appendEvent(record.id, "run.needs_input", {
+        const needsInputEvent = this.store.appendEvent(record.id, "run.needs_input", {
           requestId: pending.requestId,
           method: pending.method,
           title: safeText(pending.title ?? "", 300),
@@ -1517,6 +1588,10 @@ export class Supervisor {
           options: pending.options,
           expiresAt: pending.expiresAt,
         });
+        // Provenance, not just the (reusable) requestId: the delivery gate can
+        // then tell "the request this notification is about" apart from a later
+        // request that happens to reuse the same id after a resume.
+        pending.seq = needsInputEvent.seq;
         await this.store.saveWorker(record);
         break;
       }
@@ -1735,6 +1810,39 @@ export class Supervisor {
     runtime.maxDurationTimer.unref?.();
   }
 
+  /**
+   * Clear a pending input request that the harness itself withdrew.
+   *
+   * The decision (kind + current requestId + answer/cancel races) lives in
+   * `shouldClearPendingInput` so it can be tested without a harness. Clearing
+   * also stops the expiry timer and restores `running`, which is what stops the
+   * notification freshness gate from treating the withdrawal as still current.
+   */
+  private applyInputWithdrawal(runtime: Runtime, kind: string, detail: string | undefined): boolean {
+    const record = runtime.record;
+    if (
+      !shouldClearPendingInput({
+        kind,
+        detail,
+        pendingRequestId: record.pendingInput?.requestId,
+        answeringRequestId: runtime.answeringRequestId,
+        cancelRequested: runtime.cancelRequested,
+        finalizing: runtime.finalizing,
+        terminal: isTerminal(record.status),
+      })
+    ) {
+      return false;
+    }
+    record.pendingInput = undefined;
+    if (runtime.pendingUiTimer) {
+      clearTimeout(runtime.pendingUiTimer);
+      runtime.pendingUiTimer = undefined;
+    }
+    record.status = "running";
+    record.statusReason = undefined;
+    return true;
+  }
+
   private schedulePendingInputExpiry(runtime: Runtime, pending: PendingInput): void {
     if (runtime.pendingUiTimer) clearTimeout(runtime.pendingUiTimer);
     const timeoutMs = pending.expiresAt
@@ -1797,6 +1905,33 @@ export class Supervisor {
       pidAlive,
       resumeAvailable,
     };
+  }
+
+  /**
+   * Seq of the newest run-start marker for a worker, from the in-memory event
+   * cache. This is the evidence that decides whether a cancellation belongs to a
+   * run that has already been superseded; the current status alone is not enough,
+   * because a fast resume may already be terminal (completed/failed) again.
+   */
+  private lastRunStartSeq(workerId: string): number | undefined {
+    let events: WorkerEvent[] = [];
+    try {
+      events = this.store.getRecentEvents(workerId, 60);
+    } catch {
+      return undefined;
+    }
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (!event) continue;
+      if (
+        event.type === "worker.starting" ||
+        event.type === "worker.resumed" ||
+        event.type === "run.accepted"
+      ) {
+        return event.seq;
+      }
+    }
+    return undefined;
   }
 
   private requireWorker(workerId: string): WorkerRecord {

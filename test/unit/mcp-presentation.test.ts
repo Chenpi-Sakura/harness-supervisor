@@ -6,17 +6,33 @@ import {
   formatToolError,
   presentEvents,
   presentInfo,
+  presentNotifications,
   presentStatus,
   presentWait,
   resolveMcpMode,
 } from "../../src/mcp-presentation.js";
 import type {
+  NotificationsResult,
   ReadEventsResult,
   SupervisorInfo,
   WaitResult,
   WorkerEvent,
   WorkerSummary,
 } from "../../src/types.js";
+
+test("explicit history marks superseded input as non-actionable in production", () => {
+  const result: NotificationsResult = {
+    notifications: [{id: "w#4", workerId: "w", runtime: "mcode", seq: 4,
+      eventType: "run.needs_input", kind: "needs_input", createdAt: "2026-10-23T00:00:00Z",
+      summary: {requestId: "0", text: "old question"},
+      delivery: {state: "superseded", channel: "codex-queue", attempts: 0}}],
+    counts: {pending: 0, delivered: 0, failed: 0, superseded: 1, unacked: 0},
+    target: {channel: "none"},
+  };
+  const view = presentNotifications(result, "production") as {notifications: {actionable?: boolean; acked: boolean}[]};
+  assert.equal(view.notifications[0]?.actionable, false);
+  assert.equal(view.notifications[0]?.acked, false, "superseding is not a consumer acknowledgement");
+});
 
 test("resolveMcpMode defaults to production and rejects invalid CLI/env values", () => {
   const previous = process.env[MCP_MODE_ENV];

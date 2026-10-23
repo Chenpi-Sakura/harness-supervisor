@@ -1,0 +1,20 @@
+✔ a completed worker produces exactly one inbox record and progress never does (711.9518ms)
+✔ failed runs and input requests are recorded with actionable summaries (918.8069ms)
+✔ two workers finishing produce two independent records (715.7739ms)
+✔ an offline consumer reconnects without losing or duplicating records (869.3921ms)
+✔ a daemon restart keeps records stable and adds no duplicates (1151.9305ms)
+✔ workers lost in a daemon crash are recorded as detached (990.9838ms)
+✔ codex-queue delivery calls the Codex CLI once per important event (1969.5413ms)
+✔ a burst of progress events creates no notifications and stays queryable (2176.0361ms)
+✔ a worker with a lost notification file is repaired from persisted events (1181.4081ms)
+✔ a daemon killed mid-delivery re-delivers after restart with one inbox record (1789.5687ms)
+✔ an answered input request is never delivered, but stays readable as superseded (4847.7952ms)
+✔ a maintenance cancel followed by a resume does not wake the host for the intermediate state (9232.0084ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 34710.0318

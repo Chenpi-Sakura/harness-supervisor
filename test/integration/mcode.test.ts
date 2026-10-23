@@ -217,6 +217,25 @@ test("MiniMax Code permission request becomes awaiting_input and is answerable",
   assert.equal(final.worker.result?.text, "FAKE_MCODE_OK");
 });
 
+test("native permission withdrawal clears the live input and suppresses its inbox reminder", async (t) => {
+  const { client, cwd } = await startMcodeHarness(t, {
+    FAKE_MCODE_SCENARIO: "permission", FAKE_MCODE_WITHDRAW_PERMISSION: "1",
+  });
+  const worker = await spawnMcode(client, cwd, "withdraw this approval");
+  const awaiting = await waitForStatus(client, worker.id, ["awaiting_input"], 10000);
+  assert.ok(awaiting.pendingInput);
+  const running = await waitForStatus(client, worker.id, ["running"], 10000);
+  assert.equal(running.pendingInput, undefined);
+  const current = await client.request<{notifications: {kind: string}[]}>("notifications", {workerId: worker.id});
+  assert.equal(current.notifications.some(n => n.kind === "needs_input"), false);
+  const history = await client.request<{notifications: {kind: string; delivery: {state: string}}[]}>("notifications", {workerId: worker.id, state: "all"});
+  assert.ok(history.notifications.some(n => n.kind === "needs_input" && n.delivery.state === "superseded"));
+  await assert.rejects(client.request("answer", {workerId: worker.id, requestId: awaiting.pendingInput.requestId, response: {value: "Allow once"}}));
+  const events = await eventsOf(client, worker.id, 0);
+  assert.ok(events.events.some(e => e.type === "run.progress" && e.data?.kind === "permission_withdrawn" && e.data?.pendingInputCleared === true));
+  await client.request("cancel", {workerId: worker.id});
+});
+
 test("MiniMax Code permission request can be denied by option label", async (t) => {
   const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission" });
   const worker = await spawnMcode(client, cwd, "needs approval");

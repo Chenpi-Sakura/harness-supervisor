@@ -355,6 +355,7 @@ function notificationForProduction(record: NotificationRecord) {
       ...(record.summary.options !== undefined ? { options: [...record.summary.options] } : {}),
     },
     acked: Boolean(record.ackAt),
+    ...(record.delivery.state === "superseded" ? { actionable: false } : {}),
   };
 }
 

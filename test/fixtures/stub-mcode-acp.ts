@@ -53,6 +53,12 @@ function stubPermissionCommand(): string {
   return process.env.STUB_PERMISSION_COMMAND ?? "echo hi";
 }
 
+function messageUpdate(text: string, messageId?: string, kind = "agent_message_chunk"): void {
+  notify("session/update", { sessionId, update: {
+    sessionUpdate: kind, ...(messageId ? { messageId } : {}), content: { type: "text", text },
+  } });
+}
+
 function handleMessage(message: JsonRpcMessage): void {
   const { id, method, params } = message;
 
@@ -129,6 +135,25 @@ function handleMessage(message: JsonRpcMessage): void {
       if (id === undefined) return;
       promptId = id;
       promptActive = true;
+      const scenario = process.env.STUB_MESSAGES;
+      if (scenario) {
+        messageUpdate("Earlier progress.", scenario === "anonymous" ? undefined : "progress");
+        if (scenario === "anonymous" || scenario === "no-final") {
+          notify("session/update", { sessionId, update: { sessionUpdate: "tool_call", name: "read", toolCallId: "t1" } });
+        }
+        if (scenario !== "no-final") {
+          const finalId = scenario === "anonymous" ? undefined : "final";
+          messageUpdate("Final ", finalId);
+          messageUpdate("report", finalId);
+          if (scenario === "long") messageUpdate("x".repeat(20000), finalId);
+          if (scenario === "snapshot") messageUpdate("Final report", finalId, "agent_message");
+          if (scenario === "late") messageUpdate("late old progress", "progress");
+        }
+        promptActive = false;
+        promptId = undefined;
+        ok(id, { stopReason: "end_turn" });
+        return;
+      }
       if (process.env.STUB_UNKNOWN_EXTENSION === "1") {
         // An extension request the supervisor does not model. It carries an id,
         // so it has to be answered.

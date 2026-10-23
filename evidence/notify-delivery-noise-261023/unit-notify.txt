@@ -1,0 +1,38 @@
+✔ invalid default changes are atomic and do not change the current route (12.7414ms)
+✔ pending records never migrate when the global default changes (7.5953ms)
+✔ an inbox write failure prevents host invocation and is observable (4.5195ms)
+✔ a legacy inbox record has no inferred route after restart (6.4391ms)
+✔ a torn inbox tail does not swallow a newly persisted notification (7.7177ms)
+✔ records one durable notification per important event and ignores progress (10.23ms)
+✔ notifications survive a restart and acknowledgements are idempotent (9.5019ms)
+✔ unknown ids are reported instead of failing the whole acknowledgement (4.1397ms)
+✔ delivery renders a short pointer, never the event payload (2.5843ms)
+✔ a needs_input pointer tells the agent to read the current pendingInput (2.088ms)
+✔ codex-queue delivery runs the Codex CLI once and records success (1234.3027ms)
+✔ failed delivery is retried, then marked failed without losing the record (1349.4277ms)
+✔ codex-queue target requires a thread id and validates it (9.5379ms)
+✔ compaction drops old acknowledged records but never unacknowledged ones (10.6728ms)
+✔ acknowledged records leave the default inbox and are never re-delivered (1498.877ms)
+✔ an explicitly retried failed delivery gets a fresh attempt budget (1329.3894ms)
+✔ a retry requested while an attempt is in flight still performs a real attempt (467.9852ms)
+✔ freshness gate: needs_input must match the live pending request, not the payload (3.0443ms)
+✔ only cancellations are suppressed by a later run, and never a new turn's own cancel (3.067ms)
+✔ a record that stopped being current is superseded, never reported as delivered (30.0439ms)
+✔ a delivered record is never rewritten as superseded (184.1532ms)
+✔ inbox-only records are re-checked on read so answered requests leave the default inbox (5.8801ms)
+✔ the delivery gate is per worker: one stale record never blocks another worker (164.7627ms)
+✔ an unacknowledged delivered reminder never suppresses the next needs_input (327.1711ms)
+✔ a burst never starves the delivery window opened by the first record (1951.2267ms)
+✔ reading the inbox during an in-flight host call never rewrites it as superseded (801.0791ms)
+✔ a failed delivery of a request that is no longer current stops being actionable (170.8103ms)
+✔ a withdrawal for the current request clears it (0.5336ms)
+✔ a withdrawal never guesses: other kinds, other ids and missing ids are ignored (0.0929ms)
+✔ an answer already in flight, a cancellation or a finished run wins over a withdrawal (0.0931ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9874.4461

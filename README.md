@@ -264,6 +264,16 @@ node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-threa
 
 旧客户端省略 `notifyTarget` 仍可调用；这是向后兼容的默认值快照，不保证它能识别发起会话。恢复历史通知时只信事件中的历史目标；无历史目标的旧事件不会投递给新接管者。通知 `delivered` 仅表示队列接受；`ack` 表示消费者已处理。崩溃窗口可能重复投递，消费者应按稳定通知 ID 去重。
 
+### 通知降噪与结果读取（0.4.3）
+
+唤醒消息只携带 Worker、事件类型、序号和读取提示，不重复发送命令参数或完整报告。收到提醒后先用 `worker_status` 取得**当前** `pendingInput` 或最终 `result`，处理后确认收件箱通知；不要根据晚到的消息直接回答旧 requestId。
+
+Daemon 默认给新通知留出 1000ms 短窗口，同一 Worker 共用一个定时器；`HARNESS_SUPERVISOR_NOTIFY_DELAY_MS=0` 可关闭延迟，允许范围 0—60000ms。投递前再次核对请求是否仍有效，已回答、撤回、过期或被新回合替换的待输入请求不再投递，标为 `superseded`，保留事件与诊断记录。窗口内取消后立即 resume 的旧取消提醒也会被抑制；真正完成、失败和仍需输入的提醒继续发送。此机制不将所有历史事件强行合并为一条，也不能撤回已被 Codex queue 接受的消息。
+
+`superseded` 不表示 delivered 或消费者 ack；默认待办视图排除这类记录，显式 `state='all'` 可核对历史。该配置只控制 Daemon 投递，独立于 MCP production/development 呈现模式。
+
+MiniMax Code 在原生 ACP 提供 messageId 时按最后一条 assistant 消息构建结果，同一消息的分块完整重组，较早过程播报留在进度事件中。不对最终报告增加固定字数上限。缺少 messageId 的旧协议仅能依据工具调用边界分开前后文本，不能可靠分开同一连续流中的多条匿名发言。
+
 ### 关键语义
 
 - `spawn` 返回时任务尚未完成；终态以 `wait` / `status` 为准。

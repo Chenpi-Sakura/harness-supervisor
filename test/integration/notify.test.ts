@@ -370,3 +370,207 @@ test("a daemon killed mid-delivery re-delivers after restart with one inbox reco
   assert.ok(calls.length >= 1, "at least one delivery attempt happened");
   assert.ok(calls.length <= 2, `at-least-once, at most one retry in this scenario; got ${calls.length}`);
 });
+
+/* ------------------------------------------------------------------------- *
+ * Delivery noise control (short window + freshness gate)
+ * ------------------------------------------------------------------------- */
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+interface QueueCall {
+  argv: string[];
+}
+
+async function queueCalls(logFile: string): Promise<QueueCall[]> {
+  const raw = await readFile(logFile, "utf8").catch(() => "");
+  return raw
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as QueueCall);
+}
+
+function notifyEnv(logFile: string, delayMs: number): Record<string, string> {
+  return {
+    HARNESS_SUPERVISOR_NOTIFY_CHANNEL: "codex-queue",
+    HARNESS_SUPERVISOR_CODEX_WAKE_THREAD: "01a1623d-d0a4-7493-b44d-5d1143efb6fe",
+    HARNESS_SUPERVISOR_CODEX_BIN: `"${process.execPath}" "${FAKE_CODEX}"`,
+    HARNESS_SUPERVISOR_NOTIFY_DELAY_MS: String(delayMs),
+    HARNESS_SUPERVISOR_NOTIFY_RETRY_MS: "200",
+    HS_FAKE_CODEX_LOG: logFile,
+  };
+}
+
+async function waitForNotification(
+  client: SupervisorClient,
+  workerId: string,
+  predicate: (record: NotificationsResult["notifications"][number]) => boolean,
+  timeoutMs = 25_000,
+): Promise<NotificationsResult["notifications"][number]> {
+  const deadline = Date.now() + timeoutMs;
+  let last: NotificationsResult["notifications"][number] | undefined;
+  while (Date.now() < deadline) {
+    const result = await inbox(client, { workerId });
+    last = result.notifications.find(predicate);
+    if (last) return last;
+    await sleep(100);
+  }
+  throw new Error(
+    `notification was not observed in time; saw ${JSON.stringify(
+      last ? { kind: last.kind, delivery: last.delivery.state } : null,
+    )}`,
+  );
+}
+
+test("an answered input request is never delivered, but stays readable as superseded", async (t) => {
+  const logDir = await mkdtemp(path.join(os.tmpdir(), "hs-codex-calls-"));
+  const logFile = path.join(logDir, "calls.jsonl");
+  const daemon = await TestDaemon.create();
+  const cwd = await makeWorkspace();
+  // Wide window so the answer reliably arrives before the reminder would be sent.
+  const client = await daemon.start({ env: notifyEnv(logFile, 4_000) });
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+
+  const worker = await spawnWorker(client, cwd, "[scenario:ask] needs approval");
+  const waiting = await waitForStatus(client, worker.id, ["awaiting_input"], 15_000);
+  const requestId = waiting.pendingInput!.requestId;
+  await client.request("answer", {
+    workerId: worker.id,
+    requestId,
+    response: { confirmed: true },
+  });
+  await waitTerminal(client, worker.id, 20_000);
+
+  const completed = await waitForNotification(
+    client,
+    worker.id,
+    (record) => record.kind === "completed" && record.delivery.state === "delivered",
+  );
+  assert.equal(completed.delivery.attempts, 1);
+
+  const ask = await waitForNotification(
+    client,
+    worker.id,
+    (record) => record.kind === "needs_input" && record.delivery.state === "superseded",
+  );
+  assert.match(ask.delivery.supersededReason ?? "", /no longer pending|answered/);
+  assert.equal(ask.delivery.attempts, 0, "the host must not be called for a dead request");
+  assert.equal(ask.ackAt, undefined, "superseded is not an acknowledgement");
+  assert.equal(ask.summary.requestId, requestId);
+
+  // The event itself is untouched: the inbox and the event log are the evidence.
+  const events = await client.request<{
+    events: Array<{ type: string; data?: { requestId?: string } }>;
+  }>("events", { workerId: worker.id, sinceSeq: 0, limit: 500 });
+  assert.ok(
+    events.events.some(
+      (event) => event.type === "run.needs_input" && event.data?.requestId === requestId,
+    ),
+    "the needs_input event must still be in the event history",
+  );
+
+  // The default actionable view no longer offers it; state=all still shows it.
+  const actionable = await client.request<NotificationsResult>("notifications", {
+    workerId: worker.id,
+    state: "pending",
+  });
+  assert.equal(
+    actionable.notifications.some((item) => item.id === ask.id),
+    false,
+    "an answered request must not stay actionable",
+  );
+
+  const calls = await queueCalls(logFile);
+  assert.equal(calls.length, 1, "only the completion wakes the host");
+  assert.ok(calls[0]!.argv[4]!.includes(worker.id));
+  assert.ok(calls[0]!.argv[4]!.includes("completed"));
+  assert.ok(!calls[0]!.argv[4]!.includes("needs_input"));
+});
+
+test("a maintenance cancel followed by a resume does not wake the host for the intermediate state", async (t) => {
+  const logDir = await mkdtemp(path.join(os.tmpdir(), "hs-codex-calls-"));
+  const logFile = path.join(logDir, "calls.jsonl");
+  const daemon = await TestDaemon.create();
+  const cwd = await makeWorkspace();
+  const client = await daemon.start({ env: notifyEnv(logFile, 4_000) });
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+
+  const worker = await spawnWorker(client, cwd, "[scenario:ask] first run");
+  const first = await waitForStatus(client, worker.id, ["awaiting_input"], 15_000);
+  assert.ok(first.pendingInput);
+  const firstAsk = await waitForNotification(
+    client,
+    worker.id,
+    (record) => record.kind === "needs_input",
+  );
+
+  await client.request("cancel", { workerId: worker.id });
+  await waitForStatus(client, worker.id, ["cancelled"], 20_000);
+
+  // Same worker, resumed immediately: the cancellation was maintenance, not a result.
+  await client.request("resume", { workerId: worker.id, prompt: "[scenario:ask] second run" });
+  const second = await waitForStatus(client, worker.id, ["awaiting_input"], 20_000);
+  assert.ok(second.pendingInput);
+  assert.notEqual(second.pendingInput!.requestId, first.pendingInput!.requestId);
+  const secondAsk = await waitForNotification(
+    client,
+    worker.id,
+    (record) => record.kind === "needs_input" && record.seq !== firstAsk.seq,
+  );
+
+  // Let the new request's own window elapse before answering: a genuinely pending
+  // request must still reach the host.
+  const delivered = await waitForNotification(
+    client,
+    worker.id,
+    (record) => record.id === secondAsk.id && record.delivery.state === "delivered",
+  );
+  assert.equal(delivered.kind, "needs_input");
+
+  await client.request("answer", {
+    workerId: worker.id,
+    requestId: second.pendingInput!.requestId,
+    response: { confirmed: true },
+  });
+  await waitTerminal(client, worker.id, 20_000);
+  await waitForNotification(
+    client,
+    worker.id,
+    (record) => record.kind === "completed" && record.delivery.state === "delivered",
+  );
+
+  const cancelledRecord = await waitForNotification(
+    client,
+    worker.id,
+    (record) => record.kind === "cancelled" && record.delivery.state === "superseded",
+  );
+  assert.match(cancelledRecord.delivery.supersededReason ?? "", /new run started|resumed/);
+  assert.equal(cancelledRecord.ackAt, undefined);
+
+  const calls = await queueCalls(logFile);
+  const messages = calls.map((call) => call.argv[4] ?? "");
+  assert.equal(
+    messages.some((message) => message.includes(" cancelled ")),
+    false,
+    "the maintenance cancel must not wake the host",
+  );
+  assert.equal(
+    messages.some((message) => message.includes(`needs_input seq=${firstAsk.seq}`)),
+    false,
+    "the answered request must not wake the host",
+  );
+  assert.equal(
+    messages.some((message) => message.includes(`needs_input seq=${secondAsk.seq}`)),
+    true,
+    "the real pending request must still be delivered",
+  );
+  assert.equal(
+    messages.some((message) => message.includes(" completed ")),
+    true,
+    "the final result must still be delivered",
+  );
+});

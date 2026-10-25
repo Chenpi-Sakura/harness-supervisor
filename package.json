@@ -1,12 +1,14 @@
 {
   "name": "harness-supervisor",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "A small lifecycle and messaging layer for native AI agent harnesses (Pi first).",
   "type": "module",
   "license": "MIT",
   "bin": {
     "harness-supervisor": "dist/src/cli.js",
-    "harness-sup": "dist/src/cli.js"
+    "harness-sup": "dist/src/cli.js",
+    "harness-supervisor-codex-hook": "dist/src/codex-notification-hook.js",
+    "harness-supervisor-install-codex-hook": "dist/src/install-codex-notification-hook.js"
   },
   "exports": {
     ".": {

@@ -1,0 +1,15 @@
+{
+  "codexVersion": "0.161.0",
+  "result": "passed",
+  "cliExitCode": 0,
+  "modelPostRequests": 0,
+  "installerChanged": true,
+  "check": {
+    "id": "w-installed-native#445",
+    "block": true,
+    "checkedAt": "2026-10-25T06:52:11.163Z",
+    "ackAt": "2026-10-25T06:52:08.792Z",
+    "decision": "block_acknowledged"
+  },
+  "note": "安装器生成的真实 hooks.json 定义在隔离 Codex 配置中验证；真实 CLI 执行入口，本机模型替身，未改生产 hooks 或信任记录。"
+}

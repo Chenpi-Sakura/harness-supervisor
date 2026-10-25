@@ -340,7 +340,7 @@ export function presentInfo(
   };
 }
 
-function notificationForProduction(record: NotificationRecord) {
+function notificationForProduction(record: NotificationRecord, includeDelivery = false) {
   return {
     id: record.id,
     workerId: record.workerId,
@@ -355,6 +355,12 @@ function notificationForProduction(record: NotificationRecord) {
       ...(record.summary.options !== undefined ? { options: [...record.summary.options] } : {}),
     },
     acked: Boolean(record.ackAt),
+    ...(includeDelivery ? {
+      createdAt: record.createdAt,
+      ...(record.ackAt ? { ackAt: record.ackAt } : {}),
+      delivery: { ...record.delivery },
+      ...(record.target ? { target: { ...record.target } } : {}),
+    } : {}),
     ...(record.delivery.state === "superseded" ? { actionable: false } : {}),
   };
 }
@@ -362,10 +368,11 @@ function notificationForProduction(record: NotificationRecord) {
 export function presentNotifications(
   result: NotificationsResult,
   mode: McpPresentationMode,
+  includeDelivery = false,
 ): unknown {
   if (mode === "development") return result;
   return {
-    notifications: result.notifications.map(notificationForProduction),
+    notifications: result.notifications.map(record => notificationForProduction(record, includeDelivery)),
     counts: result.counts,
   };
 }

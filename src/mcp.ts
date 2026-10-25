@@ -683,6 +683,7 @@ server.registerTool(
         ),
       workerId: z.string().min(1).optional(),
       limit: z.number().int().min(1).max(500).optional(),
+      includeDelivery: z.boolean().optional().describe("Opt-in diagnostics: timestamps, delivery attempts, queue receipt and target. Does not prove host consumption; default output remains compact."),
     },
   },
   async (args) => {
@@ -694,7 +695,7 @@ server.registerTool(
         limit: args.limit ?? 50,
         ...(unacknowledgedOnly ? { unacknowledgedOnly: true } : {}),
       });
-      return ok(presentNotifications(result, mode));
+      return ok(presentNotifications(result, mode, args.includeDelivery ?? false));
     } catch (error) {
       return fail(error);
     }

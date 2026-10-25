@@ -570,6 +570,13 @@ test("production notification defaults filter unacked before the limit and never
   }
   assert.equal(inbox.counts.unacked >= 1, true);
   assert.equal("target" in inbox, false, "production inbox omits routing metadata");
+  const diagnostics = parseTool(await call(production,"supervisor_notifications", {
+    state:"all", workerId:worker.id, includeDelivery:true,
+  }));
+  const diagnosticRecord = diagnostics.notifications.find((item: {workerId:string}) => item.workerId===worker.id);
+  assert.ok(diagnosticRecord?.createdAt);
+  assert.ok(diagnosticRecord?.delivery);
+  assert.deepEqual(diagnosticRecord.target,{channel:"codex-queue",codexThreadId:threadId});
 
   const legacyInbox = parseTool(
     await call(development, "supervisor_notifications", {

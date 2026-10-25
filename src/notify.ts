@@ -427,6 +427,11 @@ export class Notifier {
     }
     for (const record of changed) void this.persist(record);
     await this.flush();
+    for (const record of changed) this.logger.info("Notification acknowledged", {
+      notificationId: record.id, ackAt: record.ackAt,
+      deliveryState: record.delivery.state, attempts: record.delivery.attempts,
+      enqueuedAt: record.delivery.enqueuedAt, messageId: record.delivery.messageId,
+    });
     return { acked: changed.length, missing };
   }
 
@@ -511,6 +516,10 @@ export class Notifier {
       // Codex CLI accepted a message it cannot be recalled, so this check has to
       // happen *before* the call; the delivered text also tells the agent to
       // read the current pendingInput instead of trusting the message.
+      record.delivery.dispatchPreparedAt = new Date().toISOString();
+      void this.persist(record);
+      await this.flush();
+      if (record.ackAt || !this.started) return record;
       const staleReason = this.checkStale(record);
       if (staleReason) {
         this.markSuperseded(record, staleReason);
@@ -518,14 +527,24 @@ export class Notifier {
         return record;
       }
       const message = renderMessage(record);
+      record.delivery.lastAttemptStartedAt = new Date().toISOString();
+      void this.persist(record);
       const result = await this.runCodexQueue(target.codexThreadId, message);
       record.delivery.attempts += 1;
       record.delivery.lastAttemptAt = new Date().toISOString();
+      record.delivery.lastAttemptFinishedAt = record.delivery.lastAttemptAt;
       record.delivery.channel = target.channel;
       if (result.ok) {
         record.delivery.state = "delivered";
         record.delivery.lastError = undefined;
         record.delivery.messageId = result.messageId;
+        record.delivery.enqueuedAt = record.delivery.lastAttemptFinishedAt;
+        this.logger.info("Notification accepted by Codex queue", {
+          notificationId: record.id, workerId: record.workerId, seq: record.seq,
+          threadId: target.codexThreadId, attempts: record.delivery.attempts,
+          startedAt: record.delivery.lastAttemptStartedAt, enqueuedAt: record.delivery.enqueuedAt,
+          ackAt: record.ackAt, messageId: result.messageId,
+        });
         this.clearRetryTimer(id);
       } else {
         record.delivery.lastError = result.error;

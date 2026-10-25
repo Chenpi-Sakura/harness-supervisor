@@ -32,6 +32,11 @@ test("explicit history marks superseded input as non-actionable in production", 
   const view = presentNotifications(result, "production") as {notifications: {actionable?: boolean; acked: boolean}[]};
   assert.equal(view.notifications[0]?.actionable, false);
   assert.equal(view.notifications[0]?.acked, false, "superseding is not a consumer acknowledgement");
+  const compact = view.notifications[0] as unknown as Record<string, unknown>;
+  assert.equal("delivery" in compact, false);
+  const debug = presentNotifications(result, "production", true) as {notifications: {delivery: {state: string}; createdAt: string}[]};
+  assert.equal(debug.notifications[0]?.delivery.state, "superseded");
+  assert.equal(debug.notifications[0]?.createdAt, result.notifications[0]?.createdAt);
 });
 
 test("resolveMcpMode defaults to production and rejects invalid CLI/env values", () => {

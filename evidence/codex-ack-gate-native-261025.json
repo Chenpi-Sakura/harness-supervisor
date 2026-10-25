@@ -1,0 +1,46 @@
+{
+  "result": "passed",
+  "modelPostRequests": 3,
+  "ackedPointerModelRequests": 0,
+  "freshPointerReachedModel": true,
+  "queueAcceptedAt": "2026-10-25T06:44:46.131Z",
+  "ackAt": "2026-10-25T06:44:46.132Z",
+  "checks": [
+    {
+      "block": true,
+      "id": "w-native-ack#445",
+      "checkedAt": "2026-10-25T06:44:47.328Z",
+      "ackAt": "2026-10-25T06:44:46.132Z",
+      "decision": "block_acknowledged"
+    },
+    {
+      "block": false,
+      "id": "w-native-ack#714",
+      "checkedAt": "2026-10-25T06:44:54.947Z",
+      "decision": "allow_unacknowledged"
+    }
+  ],
+  "receiptAccepted": true,
+  "note": "真实 Codex TUI/queue；模型端为本机替身，HS 通知状态为隔离夹具。已 ACK 旧消息未触发模型端请求，同 Worker 新事件正常放行。",
+  "requests": [
+    {
+      "path": "/v1/responses",
+      "hold": true,
+      "seq445": false,
+      "seq714": false
+    },
+    {
+      "path": "/v1/responses",
+      "hold": true,
+      "seq445": false,
+      "seq714": false
+    },
+    {
+      "path": "/v1/responses",
+      "hold": true,
+      "seq445": false,
+      "seq714": true
+    }
+  ],
+  "codexVersion": "0.161.0"
+}

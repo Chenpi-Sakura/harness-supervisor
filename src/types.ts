@@ -277,6 +277,13 @@ export interface NotificationRecord {
     channel: string;
     attempts: number;
     lastAttemptAt?: string;
+    /** Preparation persisted before the final ACK/freshness check; may be skipped. */
+    dispatchPreparedAt?: string;
+    /** Local dispatch start/end; lastAttemptAt retains its legacy end-time meaning. */
+    lastAttemptStartedAt?: string;
+    lastAttemptFinishedAt?: string;
+    /** When the CLI reported queue acceptance, not when the host consumed it. */
+    enqueuedAt?: string;
     lastError?: string;
     messageId?: string;
     /** Why the supervisor decided not to deliver this record (state=superseded). */

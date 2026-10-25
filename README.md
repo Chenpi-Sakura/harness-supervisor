@@ -276,6 +276,8 @@ MiniMax Code 在原生 ACP 提供 messageId 时按最后一条 assistant 消息�
 
 ### 关键语义
 
+0.4.4 提供可选的 [Codex 消费前 ACK 过滤器](docs/codex-ack-gate.md)，处理“队列已接受、随后 ACK、再到聊天”的迟到消息。需要在目标电脑安装并信任原生 hook，仅升级 Daemon 不会自动启用。`supervisor_notifications(includeDelivery=true)` 可按需返回投递时序，默认输出保持精简。
+
 - `spawn` 返回时任务尚未完成；终态以 `wait` / `status` 为准。
 - `worker_wait` 是有界等待，超时不代表失败；不带游标时先检查当前状态，避免白等。
 - `run.message_sent` 只代表消息被 Harness 接受，不代表模型已看到或采纳。

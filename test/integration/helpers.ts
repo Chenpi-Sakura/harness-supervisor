@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -272,6 +272,26 @@ export async function waitPidDead(pid: number, timeoutMs = 10_000): Promise<void
 
 export async function readJson<T>(file: string): Promise<T> {
   return JSON.parse(await readFile(file, "utf8")) as T;
+}
+
+/**
+ * Admission markers and auto-created metrics tasks are written before the
+ * worker record. A test that interrupts a spawn must wait for the worker
+ * itself, or it may kill the daemon in that legitimate pre-worker window.
+ */
+export async function waitForWorkerRecord(stateDir: string, timeoutMs = 10_000): Promise<void> {
+  const dir = path.join(stateDir, "workers");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const raw = await readFile(path.join(dir, entry.name, "worker.json"), "utf8").catch(() => "");
+      if (raw.trim().length > 0) return;
+    }
+    await sleep(25);
+  }
+  throw new Error("timed out waiting for a persisted worker record");
 }
 
 export function eventTypes(events: Array<{ type: string }>): string[] {

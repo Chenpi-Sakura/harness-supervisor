@@ -72,6 +72,7 @@ const SpawnSchema = z
     cwd: z.string().min(1).max(4096),
     prompt: z.string().min(1).max(256 * 1024),
     name: z.string().min(1).max(200).optional(),
+    taskId: z.string().min(1).max(120).optional(),
     ...ConfigFields,
     ...RequestIdField,
     ...NotifyTargetField,
@@ -171,6 +172,44 @@ export const METHOD_SCHEMAS = {
   notification_retry: z
     .object({
       states: z.array(z.enum(["pending", "delivered", "failed"])).min(1).max(3).optional(),
+    })
+    .strict(),
+  metrics_task_create: z
+    .object({
+      taskId: z.string().min(1).max(120).optional(),
+      title: z.string().min(1).max(200),
+      category: z.string().min(1).max(50).optional(),
+      parentSessionRef: z.string().min(1).max(300).optional(),
+      createdBy: z.enum(["mcp", "cli", "manual", "import"]).optional(),
+    })
+    .strict(),
+  metrics_task_show: z.object({ taskId: z.string().min(1).max(120) }).strict(),
+  metrics_report: z
+    .object({
+      since: z.string().min(1).max(100).optional(),
+      until: z.string().min(1).max(100).optional(),
+      includeTasks: z.boolean().optional(),
+      limit: z.number().int().min(1).max(1000).optional(),
+    })
+    .strict(),
+  metrics_usage_record: z
+    .object({
+      taskId: z.string().min(1).max(120),
+      role: z.enum(["parent_agent", "worker"]),
+      workerId: z.string().min(1).max(200).optional(),
+      usageId: z.string().min(1).max(100).optional(),
+      provider: z.string().min(1).max(200).optional(),
+      modelId: z.string().min(1).max(200).optional(),
+      harness: z.string().min(1).max(100).optional(),
+      inputTokens: z.number().int().min(0).max(1_000_000_000_000_000).nullable().optional(),
+      outputTokens: z.number().int().min(0).max(1_000_000_000_000_000).nullable().optional(),
+      cacheReadTokens: z.number().int().min(0).max(1_000_000_000_000_000).nullable().optional(),
+      cacheWriteTokens: z.number().int().min(0).max(1_000_000_000_000_000).nullable().optional(),
+      reportedTotalTokens: z.number().int().min(0).max(1_000_000_000_000_000).nullable().optional(),
+      usageSource: z.enum(["manual", "host_reported", "imported", "estimated"]).optional(),
+      attribution: z.enum(["exact", "incremental", "session_level", "estimated"]).optional(),
+      confidence: z.enum(["verified", "partial", "unverified", "unknown"]).optional(),
+      note: z.string().max(500).optional(),
     })
     .strict(),
   ping: z.object({}).strict(),

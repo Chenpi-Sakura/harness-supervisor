@@ -10,6 +10,7 @@ import type {
   HarnessQueueContents,
   HarnessSession,
   HarnessStateInfo,
+  HarnessUsageReport,
 } from "../../types.js";
 import { Deferred, withTimeout } from "../../util/async.js";
 import { JsonlDecoder, serializeJsonLine } from "../../util/jsonl.js";
@@ -30,6 +31,7 @@ export interface QoderSessionOptions {
   sessionId: string;
   resumeId?: string;
   requestedSessionFile?: string;
+  modelId?: string;
   onStderr?: (text: string) => void;
   onDiagnostic?: (text: string) => void;
   requestTimeoutMs?: number;
@@ -91,6 +93,7 @@ export class QoderCliSession implements HarnessSession {
   private readonly launch: QoderLaunch;
   private readonly resumeId?: string;
   private readonly requestedSessionFile?: string;
+  private readonly modelId?: string;
   private readonly decoder: JsonlDecoder;
   private readonly stderrDecoder = new StringDecoder("utf8");
   private readonly closed = new Deferred<HarnessExit>();
@@ -114,6 +117,7 @@ export class QoderCliSession implements HarnessSession {
   private runSeen = false;
   private lastAssistantText: string | undefined;
   private lastResult: LastResult | null = null;
+  private pendingUsage: HarnessUsageReport | undefined;
   private settleTimer: NodeJS.Timeout | undefined;
   private turns = 0;
 
@@ -130,6 +134,7 @@ export class QoderCliSession implements HarnessSession {
     this.launch = options.launch;
     this.resumeId = options.resumeId;
     this.requestedSessionFile = options.requestedSessionFile;
+    this.modelId = options.modelId;
 
     this.decoder = new JsonlDecoder(
       (record) => this.handleRecord(record),
@@ -777,6 +782,39 @@ export class QoderCliSession implements HarnessSession {
           300,
         ),
       });
+      const token = (value: unknown): number | undefined =>
+        typeof value === "number" && Number.isFinite(value) && value >= 0
+          ? Math.trunc(value)
+          : undefined;
+      const inputTokens = token(usage.input_tokens);
+      const outputTokens = token(usage.output_tokens);
+      const cacheReadTokens = token(usage.cache_read_input_tokens);
+      const cacheWriteTokens = token(usage.cache_creation_input_tokens);
+      const reportedTotalTokens = token(usage.total_tokens);
+      const modelId =
+        typeof record.model === "string" && record.model
+          ? record.model
+          : this.modelId;
+      const structured: HarnessUsageReport = {
+        ...(typeof record.provider === "string" && record.provider
+          ? { provider: record.provider }
+          : {}),
+        ...(modelId ? { modelId } : {}),
+        ...(inputTokens !== undefined ? { inputTokens } : {}),
+        ...(outputTokens !== undefined ? { outputTokens } : {}),
+        ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+        ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+        ...(reportedTotalTokens !== undefined ? { reportedTotalTokens } : {}),
+      };
+      if (
+        structured.inputTokens !== undefined ||
+        structured.outputTokens !== undefined ||
+        structured.cacheReadTokens !== undefined ||
+        structured.cacheWriteTokens !== undefined ||
+        structured.reportedTotalTokens !== undefined
+      ) {
+        this.pendingUsage = structured;
+      }
     }
     const fallbackTurns = isError ? 0 : 1;
     const numTurns =
@@ -814,6 +852,14 @@ export class QoderCliSession implements HarnessSession {
     if (this.settledSeen) return;
     this.cancelSettleTimer();
     this.settledSeen = true;
+    // Multiple result records inside the settle window describe one terminal
+    // state; emitting each result's usage would count the same turn twice. Keep
+    // the newest report, and do not let a duplicate without token fields erase it.
+    if (this.pendingUsage) {
+      const usage = this.pendingUsage;
+      this.pendingUsage = undefined;
+      this.emit({ type: "usage", usage });
+    }
     const result = this.lastResult;
     this.emit({
       type: "settled",

@@ -23,6 +23,7 @@ HS 管理的是 **进程、会话、事件**，不是新的多智能体框架：
 - **持久化通知收件箱**：完成 / 失败 / 取消 / 需要输入 / 崩溃 / 失联等事件生成稳定 ID 的通知，可查询、可确认、跨重启不重复；默认不产生任何外部调用。
 - **可选队列投递**：登记 Codex thread 后，可用官方 `codex queue` 把简短通知写入该 thread；是否真正唤醒主 Agent 取决于宿主是否加载该 thread。
 - **可选请求幂等**：`spawn` / `resume` / `send` 支持 `requestId`；重复请求不会重复执行，结果不确定时报 `UNCERTAIN`。
+- **任务度量（阶段一/二）**：每次 `spawn` 自动创建或关联一个委托任务；记录 Worker 终态、耗时、可得的运行时 Token 用量，并生成带覆盖率、来源和未知字段的单任务/汇总报告。主 Agent 用量只能显式补录；费用不采集（积分制无法直接核对），验收、返工与干预尚未采集。
 - **统一入口**：CLI、MCP、IPC 共享同一个 daemon 与同一份状态。
 
 ## 构成
@@ -38,6 +39,7 @@ SupervisorClient ─── 本地 IPC（named pipe / Unix socket + token）
                     ├─ Worker 状态机与并发准入
                     ├─ 追加式事件日志 + seq 游标
                     ├─ 持久化通知收件箱
+                    ├─ 任务度量与用量记录（独立的追加日志）
                     └─ wait / 输入请求 / 取消 / 恢复
                          │
               ┌──────────┴──────────┐
@@ -56,6 +58,7 @@ SupervisorClient ─── 本地 IPC（named pipe / Unix socket + token）
 | `src/adapters/mcode/` | MiniMax Code ACP（ndJSON）、权限请求、session 句柄 |
 | `src/supervisor.ts` | 状态机、wait、send/answer、cancel、resume、重启对账 |
 | `src/store.ts` | Worker 记录、追加式事件日志、游标、持久化 |
+| `src/metrics.ts` | 任务/用量记录、独立追加日志、覆盖率与报告计算 |
 | `src/notify.ts` | 通知收件箱、确认、可选投递与重试 |
 | `src/ipc/` | 本地 IPC、token 认证、server/client |
 | `src/cli.ts` / `src/mcp.ts` | 两个入口，共用同一套核心行为 |
@@ -89,6 +92,8 @@ node dist/src/cli.js wait <workerId> --timeout-ms 60000
 node dist/src/cli.js send <workerId> --message "也写一个时间戳" --mode steer
 node dist/src/cli.js cancel <workerId>
 node dist/src/cli.js resume <workerId> --prompt "继续并总结改动"
+node dist/src/cli.js metrics show <taskId>          # 任务状态、Worker 耗时与用量
+node dist/src/cli.js metrics report                 # 汇总、覆盖率与未知字段
 node dist/src/cli.js down                    # 优雅关闭（会取消活动 Worker）
 ```
 
@@ -106,7 +111,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up          # 在本机启动 daemon
-node dist/src/cli.js info        # 核对 version=0.4.0 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.5.0 与 stateDir
 ```
 
 依赖：Node.js >= 22.19（`node -v` 核对）；Pi >= 1.3。若 `npm ci` 因网络镜像失败，改用 `npm install` 后以 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -235,10 +240,14 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 | `supervisor_notifications` | 读取通知收件箱（production 默认全部未确认；development 默认 pending） |
 | `supervisor_notifications_ack` | 确认通知（幂等） |
 | `supervisor_wake_target` | 可选：登记 Codex thread 以启用队列投递 |
+| `metrics_task_create` | 创建一个可关联多个 Worker 的委托任务 |
+| `metrics_task_show` | 单任务状态、耗时、用量记录、覆盖率与警告 |
+| `metrics_report` | 区间汇总（按任务创建时间）、覆盖率、未知字段；可带任务详情 |
+| `metrics_record_usage` | 人工补录主 Agent 或 Worker 用量；支持 `usageId` 幂等 |
 
 ### CLI 命令
 
-`up` `down` `daemon` `info` · `spawn` `list` `status` `events` `wait` `send` `answer` `cancel` `resume` · `inbox` `ack` `notify-target` `retry-notifications` · `prune`
+`up` `down` `daemon` `info` · `spawn` `list` `status` `events` `wait` `send` `answer` `cancel` `resume` · `inbox` `ack` `notify-target` `retry-notifications` · `metrics create|show|report|export|record-usage` · `prune`
 
 ### Worker 通知绑定（多 Codex 对话）
 
@@ -274,6 +283,56 @@ Daemon 默认给新通知留出 1000ms 短窗口，同一 Worker 共用一个定
 
 MiniMax Code 在原生 ACP 提供 messageId 时按最后一条 assistant 消息构建结果，同一消息的分块完整重组，较早过程播报留在进度事件中。不对最终报告增加固定字数上限。缺少 messageId 的旧协议仅能依据工具调用边界分开前后文本，不能可靠分开同一连续流中的多条匿名发言。
 
+### 任务度量（0.5.0，阶段一/二）
+
+本节只实现“可信的任务记录与报告”，不是完整的成本分析平台。费用不采集（当前多为积分制，无法直接核对）；首次验收、返工与人工干预尚未采集，报告会以 `notTracked`、`unknownFields` 和警告显式说明，而不是填零。
+
+**存储与关联**
+
+- 每个 `spawn` 若无 `taskId`，自动创建一个 `delegated` 任务并关联该 Worker；需要多个 Worker 属于同一验收单元时，先用 `metrics create` / `metrics_task_create` 创建任务，再在 `spawn` 传 `--task` / `taskId`。
+- 任务记录与用量记录位于独立追加日志 `stateDir/metrics/metrics.jsonl`（权限 0600），采用 last-wins 读取；损坏行和截断尾行被忽略并产生警告，不阻塞 Worker。
+- 旧 Worker 没有 `taskId` 时不会被猜测归入历史任务，也不会为了统计重跑或虚构用量。`prune` 删除 Worker 目录后，任务记录仍保留；报告会把缺失 Worker 标为 `missing` 并降低状态确定性。
+- 任务状态由现有 Worker 状态机派生，不另建状态机：有活动 Worker → `running`；有失败/崩溃 → `failed`；有中断/失联 → `interrupted`；全部完成 → `completed`；仅有取消 → `cancelled`；没有 Worker → `pending`；缺失 Worker 或混合终态无法唯一判断 → `unknown`。
+
+**用量来源与可信度**
+
+| 来源 | 实现 | `usageSource` / `confidence` | 说明 |
+| --- | --- | --- | --- |
+| Pi | assistant message 的 `usage`（input/output/cacheRead/cacheWrite/totalTokens）按回合累加后写 `run.usage` | `runtime_reported` / `partial` | 字段缺失保持未知；不把 cache 加到 input/output |
+| Qoder CLI | `result.usage` 的 token 字段；同一 settle 窗口只取最后一个 result | `runtime_reported` / `partial` | 全零报告转为 `null` + `unverified`，不当作真实零消耗 |
+| MiniMax Code | 最新 0.6.13 实测：ACP `usage_update` 只有上下文 `used`/`size` 与 `cost=0 USD`（不是 Token 消耗）；prompt result 只有 `stopReason` | 无 UsageRecord / `unknown` | 不读取 mcode 私有会话库；headless `exec --output-format json` 虽有 usage，但 HS 走 ACP |
+| 主 Agent | 只能通过 `metrics_record_usage` 显式补录 | `manual` / `partial`（可标 `verified`） | HS 不读取 Codex/GPT 会话总量，也不从 MCP 进程环境推断 |
+
+`attribution=session_level` 的主 Agent 用量只在 `sessionLevelParentUsage` 中展示，不计入任务级总量；只有调用方明确提供可核验的任务级增量时才使用 `incremental`/`exact`。`confidence` 的 `verified` 目前没有来源会自动产生，运行时报告最多是 `partial`。
+
+**报告与导出**
+
+```bash
+node dist/src/cli.js metrics create --title "实现某项功能" --category coding --json
+# 返回 taskId 后，可把多个 Worker 关联到同一任务：
+node dist/src/cli.js spawn --cwd ./repo --prompt "..." --task <taskId> --json
+
+node dist/src/cli.js metrics show <taskId> --json
+node dist/src/cli.js metrics report --since 2026-10-01 --until 2026-10-31 --json
+node dist/src/cli.js metrics export --since 2026-10-01 --json
+
+# 主 Agent 用量必须显式补录；session_level 不会进入任务总量
+node dist/src/cli.js metrics record-usage <taskId> --role parent_agent \
+  --input-tokens 12000 --output-tokens 800 --attribution incremental --confidence partial \
+  --usage-id parent-task-1 --json
+```
+
+MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`metrics_record_usage`。`metrics_report` 的 `includeTasks` 可带任务详情（`limit` 只截断详情，聚合计数仍覆盖全部选中任务）。
+
+报告包含：任务状态计数、Worker 数、每类用量的记录数/可用数/verified/partial/unverified、各 Token 字段的值与已知/缺失记录数、端到端耗时、Worker 运行时长、单 Worker 等待时间（含启动开销）、覆盖率、`notTracked` 与数据质量警告。Token 分类从不相加；`reportedTotalTokens` 只在运行时明确报告时汇总。未知值保持 `null`，不会用零或估算填充。
+
+**兼容与隔离**
+
+- 统计初始化或写入失败只记日志并使度量接口报 `UNSUPPORTED`，不阻断 Worker 的 spawn / 取消 / 恢复 / 通知；任务关联失败时 Worker 仍会运行，只是没有统计。
+- 度量日志没有自动清理策略，当前不会随 `prune` 删除；长期保留策略列入后续工作。
+- 度量为 0.5.0 新增 IPC；旧 MCP 连接旧 daemon 时不会伪造统计，工具会明确要求升级/重启 daemon。旧 Worker、旧事件日志和现有通知/ACK 语义不受影响。
+- 度量只保存任务元数据、Worker ID、时间戳、用量数字、来源与短备注；不复制完整 prompt、模型输出、思考过程、环境变量或凭据。
+
 ### 关键语义
 
 0.4.4 提供可选的 [Codex 消费前 ACK 过滤器](docs/codex-ack-gate.md)，处理“队列已接受、随后 ACK、再到聊天”的迟到消息。需要在目标电脑安装并信任原生 hook，仅升级 Daemon 不会自动启用。`supervisor_notifications(includeDelivery=true)` 可按需返回投递时序，默认输出保持精简。
@@ -297,7 +356,9 @@ MiniMax Code 在原生 ACP 提供 messageId 时按最后一条 assistant 消息�
 
 - 非终态：`starting` / `running` / `awaiting_input`
 - 终态：`completed` / `failed` / `cancelled` / `crashed` / `orphaned` / `interrupted`
-- 事件：`worker.starting|started|session`、`run.accepted|started|progress|needs_input|input_answered|message_sent|error|completed|failed|cancelled`、`worker.cancel_requested|exited|crashed|orphaned|interrupted|resumed|resume_failed`
+- 事件：`worker.starting|started|session`、`run.accepted|started|progress|usage|needs_input|input_answered|message_sent|error|completed|failed|cancelled`、`worker.cancel_requested|exited|crashed|orphaned|interrupted|resumed|resume_failed`
+
+`run.usage` 是结构化、低频的运行时用量报告；`run.progress` 中旧的 `kind=usage` 仍保留以兼容既有事件消费者，但任务度量只消费 `run.usage`。`run.usage` 只描述 Token，不代表费用；本系统不采集费用。
 
 `orphaned` 表示 daemon 重启后进程可能仍存活但已失去控制；`interrupted` 表示进程已不在或 PID 已被复用。两者都不代表任务成功，也不会被自动重跑。
 
@@ -306,8 +367,10 @@ MiniMax Code 在原生 ACP 提供 messageId 时按最后一条 assistant 消息�
 | Runtime | 状态 | 说明 |
 | --- | --- | --- |
 | Pi | 完整 | 原生 RPC；steer / follow-up / cancel / resume / 扩展对话框均可映射 |
-| MiniMax Code | 实验性 | ACP over ndJSON（`mcode acp`）。spawn / 完成 / 取消 / resume 已对真实 0.6.12 进程验证；权限问答在 Ask 模式下对真实进程验证过（是否触发询问由运行时风险分类决定，并非每次都出现）。steer 与 follow-up 依赖 `mcode/session/steer`、`mcode/session/queue/enqueue` 扩展，未声明该扩展的构建会明确报 `UNSUPPORTED`；真实进程上 `queue/enqueue` 可用，steer 在**活跃 turn 内**已验证有效（agent 照做，事件记为 `mode=steered`），turn 结束后再发会被拒，因此 steer 的送达依赖 turn 是否还活着。ACP 的 `session/prompt` 会阻塞到 turn 结束且拒绝并发第二个 prompt |
-| Qoder CLI | 实验性 | 单轮、取消、AskUserQuestion、resume 已真实验证；steer / follow-up 在当前版本被接受但未生效，权限 allow/deny 仅部分验证 |
+| MiniMax Code | 实验性 | ACP over ndJSON（`mcode acp`）。spawn / 完成 / 取消 / resume 已在真实 0.6.12 上验证（历史证据；最新 0.6.13 本轮只做了单轮 ACP 与 Token 探测，未重跑全部交互）；权限问答在 Ask 模式下对真实进程验证过（是否触发询问由运行时风险分类决定，并非每次都出现）。steer 与 follow-up 依赖 `mcode/session/steer`、`mcode/session/queue/enqueue` 扩展，未声明该扩展的构建会明确报 `UNSUPPORTED`；真实进程上 `queue/enqueue` 可用，steer 在**活跃 turn 内**已验证有效（agent 照做，事件记为 `mode=steered`），turn 结束后再发会被拒，因此 steer 的送达依赖 turn 是否还活着。ACP 的 `session/prompt` 会阻塞到 turn 结束且拒绝并发第二个 prompt |
+| Qoder CLI | 实验性 | 单轮、取消、AskUserQuestion、resume 已真实验证；steer / follow-up 在当前版本被接受但未生效，权限 allow/deny 仅部分验证。任务度量可读取 `result.usage`，但全零报告按未知处理 |
+
+用量采集边界：Pi 只在 assistant message 原生提供 `usage` 时记录；Qoder 只在 `result.usage` 存在时记录；MiniMax Code 最新 0.6.13 实测 ACP 只提供上下文 `used`/`size` 与 `cost=0 USD`，prompt result 不含 usage，其 headless `exec --output-format json` 虽有结构化 usage，但 HS 走 ACP 且不读取私有会话库，因此报告中保持未知。主 Agent 用量不会从宿主会话自动读取，必须显式补录。
 
 ### MiniMax Code 接入
 
@@ -339,6 +402,8 @@ node dist/src/cli.js spawn --runtime mcode --cwd ./repo --prompt "..."
 - **单用户本地**：没有多用户、远程 MCP 认证或配额管理；生命周期控制不等于资源限制。
 - **投递不是 exactly-once**：通知与队列投递均为 at-least-once；`delivered` 不等于主 Agent 已读到。
 - **唤醒受宿主约束**：只有宿主加载了目标 thread，队列消息才会触发新回合。
+- **度量不是账单**：Token 为运行时或人工报告值，未与 provider 账单核对；本系统不采集费用（积分制无法直接核对），验收、返工、干预和对照基线在阶段一/二均未采集。主 Agent 用量不会自动读取，缺失就是未知，不是零。
+- **统计故障不阻断执行**：度量存储不可用时 Worker 仍可运行，但该 Worker 可能没有任务关联或用量记录，报告会明确说明。
 - **崩溃后不接管**：daemon 重启只做状态对账，不会重新接上原管道，也不会自动重跑。
 - **平台**：Windows 原生已验证；WSL / 其他 POSIX 需自行验证。
 
@@ -354,6 +419,7 @@ node dist/src/cli.js spawn --runtime mcode --cwd ./repo --prompt "..."
 | --- | --- |
 | [`docs/v0.2-report.md`](docs/v0.2-report.md) | v0.2 交付报告：通知、幂等、保留策略、Qoder 验证 |
 | [`docs/iteration-261023-report.md`](docs/iteration-261023-report.md) | 2026-10-23 迭代：Worker 通知路由、原生输入闭环、事件历史与幂等可靠性 |
+| [`evidence/metrics-phase12-261025/README.md`](evidence/metrics-phase12-261025/README.md) | 0.5.0 任务度量阶段一/二的测试与烟雾证据 |
 | [`evidence/release-v0.2.0-261023/README.md`](evidence/release-v0.2.0-261023/README.md) | 主目录发布验收、Windows 原子替换修复及部署限制 |
 | [`docs/archive/project-status-2026-10-22.md`](docs/archive/project-status-2026-10-22.md) | 2026-10-22 项目现状审计 |
 | [`docs/archive/readme-detailed-2026-10-22.md`](docs/archive/readme-detailed-2026-10-22.md) | 旧版详细 README 快照（含实现细节与历史数据） |
@@ -362,7 +428,7 @@ node dist/src/cli.js spawn --runtime mcode --cwd ./repo --prompt "..."
 ## 项目结构
 
 ```text
-src/            daemon、supervisor、store、notify、IPC、CLI、MCP、adapters
+src/            daemon、supervisor、store、metrics、notify、IPC、CLI、MCP、adapters
 test/           unit / integration / e2e 与脚本化 Harness fixtures
 scripts/        真实 E2E 脚本（Pi / Qoder / MiniMax Code / Codex）
 examples/       MCP 配置与 CLI 示例

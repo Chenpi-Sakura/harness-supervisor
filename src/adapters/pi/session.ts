@@ -41,6 +41,8 @@ interface AssistantState {
   errorMessage?: string;
 }
 
+type PiUsageTotals = "input" | "output" | "cacheRead" | "cacheWrite" | "total";
+
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
 export class PiRpcSession implements HarnessSession {
@@ -65,6 +67,16 @@ export class PiRpcSession implements HarnessSession {
   private runSeen = false;
   private lastAssistant: AssistantState | null = null;
   private turns = 0;
+  private usageTotals = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+    seen: false,
+  };
+  private usageProvider: string | undefined;
+  private usageModelId: string | undefined;
 
   private constructor(child: ChildProcessWithoutNullStreams, options: PiRpcSessionOptions) {
     this.child = child;
@@ -441,6 +453,20 @@ export class PiRpcSession implements HarnessSession {
         this.settledSeen = true;
         const aborted = record.aborted === true || this.lastAssistant?.stopReason === "aborted";
         const failed = !aborted && this.lastAssistant?.stopReason === "error";
+        if (this.usageTotals.seen) {
+          this.emit({
+            type: "usage",
+            usage: {
+              ...(this.usageProvider ? { provider: this.usageProvider } : {}),
+              ...(this.usageModelId ? { modelId: this.usageModelId } : {}),
+              inputTokens: this.usageTotals.input,
+              outputTokens: this.usageTotals.output,
+              cacheReadTokens: this.usageTotals.cacheRead,
+              cacheWriteTokens: this.usageTotals.cacheWrite,
+              reportedTotalTokens: this.usageTotals.total,
+            },
+          });
+        }
         this.emit({
           type: "settled",
           aborted,
@@ -500,6 +526,7 @@ export class PiRpcSession implements HarnessSession {
     if (!message || typeof message !== "object") return;
     const obj = message as Record<string, unknown>;
     if (obj.role !== "assistant") return;
+    this.accumulateUsage(obj);
     const text = extractAssistantText(obj);
     const stopReason = typeof obj.stopReason === "string" ? obj.stopReason : undefined;
     const errorMessage = typeof obj.errorMessage === "string" ? obj.errorMessage : undefined;
@@ -511,6 +538,34 @@ export class PiRpcSession implements HarnessSession {
         preview: safeText(text, 400),
       });
     }
+  }
+
+  /**
+   * Pi reports usage on each assistant message. Summing the reported fields
+   * keeps the original accounting categories; cache tokens are never folded
+   * into input/output. Missing fields stay absent rather than becoming zero.
+   */
+  private accumulateUsage(message: Record<string, unknown>): void {
+    if (typeof message.provider === "string" && message.provider) {
+      this.usageProvider = message.provider;
+    }
+    if (typeof message.model === "string" && message.model) {
+      this.usageModelId = message.model;
+    }
+    const usage = message.usage;
+    if (!usage || typeof usage !== "object" || Array.isArray(usage)) return;
+    const raw = usage as Record<string, unknown>;
+    const take = (key: string, target: PiUsageTotals): void => {
+      const value = raw[key];
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return;
+      this.usageTotals[target] += value;
+      this.usageTotals.seen = true;
+    };
+    take("input", "input");
+    take("output", "output");
+    take("cacheRead", "cacheRead");
+    take("cacheWrite", "cacheWrite");
+    take("totalTokens", "total");
   }
 
   private handleExtensionUi(record: Record<string, unknown>): void {

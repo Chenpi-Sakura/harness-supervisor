@@ -61,6 +61,7 @@ export class QoderAdapter implements HarnessAdapter {
       cwd: spec.cwd,
       callbacks,
       sessionId,
+      modelId: spec.model,
       onStderr: this.options.onStderr
         ? (text) => this.options.onStderr?.(spec.workerId, text)
         : undefined,
@@ -113,6 +114,7 @@ export class QoderAdapter implements HarnessAdapter {
       sessionId: resumeId,
       resumeId,
       requestedSessionFile: resolved,
+      modelId: spec.model,
       onStderr: this.options.onStderr
         ? (text) => this.options.onStderr?.(spec.workerId, text)
         : undefined,

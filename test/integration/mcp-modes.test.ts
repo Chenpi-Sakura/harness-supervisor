@@ -17,6 +17,7 @@ import {
   TestDaemon,
   connectExisting,
   makeWorkspace,
+  waitForWorkerRecord,
 } from "./helpers.js";
 
 interface ToolResult {
@@ -200,7 +201,7 @@ test("production hides diagnostics while development keeps the legacy status pay
   assert.equal(spawned.status, "running", "spawn returns acceptance, not completion");
   assert.deepEqual(
     Object.keys(spawned).sort(),
-    ["id", "lastSeq", "notifyTarget", "runtime", "status"],
+    ["id", "lastSeq", "notifyTarget", "runtime", "status", "taskId"],
   );
   assert.deepEqual(spawned.notifyTarget, { channel: "none" });
 
@@ -502,7 +503,7 @@ test("production event pagination stays lossless and explicit progress still wor
 
   const list = parseTool(await call(production, "worker_list", {}));
   assert.equal(list.length, 1);
-  assert.deepEqual(Object.keys(list[0]).sort(), ["id", "lastSeq", "runtime", "status"]);
+  assert.deepEqual(Object.keys(list[0]).sort(), ["id", "lastSeq", "runtime", "status", "taskId"]);
 });
 
 test("production notification defaults filter unacked before the limit and never hide new records", async (t) => {
@@ -639,6 +640,7 @@ test("production surfaces UNCERTAIN over MCP and never re-executes an interrupte
   };
   const inFlight = call(first, "worker_spawn", spawnArgs).catch(() => undefined);
   await waitForIdempotencyRecord(stateDir, `spawn:${requestId}`, (record) => record.state === "in_progress");
+  await waitForWorkerRecord(stateDir);
   await daemon.kill();
   await inFlight;
 

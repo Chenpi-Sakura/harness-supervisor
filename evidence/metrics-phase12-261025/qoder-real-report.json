@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-27T06:02:17.926Z",
+  "period": {
+    "since": null,
+    "until": null,
+    "field": "task.createdAt"
+  },
+  "taskCount": 1,
+  "workerCount": 1,
+  "counts": {
+    "pending": 0,
+    "running": 0,
+    "completed": 1,
+    "failed": 0,
+    "cancelled": 0,
+    "interrupted": 0,
+    "unknown": 0
+  },
+  "usageCoverage": {
+    "tasks": 1,
+    "tasksWithWorkers": 1,
+    "tasksWithWorkerUsage": 0,
+    "tasksWithAttributableParentUsage": 0,
+    "tasksWithSessionLevelParentUsage": 0,
+    "tasksWithAnyUsableUsage": 0,
+    "tasksWithVerifiedUsage": 0,
+    "tasksWithUnverifiedUsage": 1,
+    "tasksWithMissingWorkers": 0,
+    "workerUsageRecords": 1,
+    "parentUsageRecords": 0
+  },
+  "knownWorkerUsage": {
+    "records": 1,
+    "usableRecords": 0,
+    "verifiedRecords": 0,
+    "partialRecords": 0,
+    "unverifiedRecords": 1,
+    "unknownRecords": 0,
+    "inputTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "outputTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "cacheReadTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "cacheWriteTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "reportedTotalTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    }
+  },
+  "knownParentUsage": {
+    "records": 0,
+    "usableRecords": 0,
+    "verifiedRecords": 0,
+    "partialRecords": 0,
+    "unverifiedRecords": 0,
+    "unknownRecords": 0,
+    "inputTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "outputTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "cacheReadTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "cacheWriteTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "reportedTotalTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    }
+  },
+  "sessionLevelParentUsage": {
+    "records": 0,
+    "usableRecords": 0,
+    "verifiedRecords": 0,
+    "partialRecords": 0,
+    "unverifiedRecords": 0,
+    "unknownRecords": 0,
+    "inputTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "outputTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "cacheReadTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "cacheWriteTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    },
+    "reportedTotalTokens": {
+      "value": null,
+      "knownRecords": 0,
+      "missingRecords": 0
+    }
+  },
+  "unverifiedUsage": {
+    "records": 1,
+    "taskCount": 1,
+    "note": "These records are excluded from known totals; all-zero runtime reports are unknown, not verified zero."
+  },
+  "durationStats": {
+    "endToEnd": {
+      "knownCount": 1,
+      "missingCount": 0,
+      "totalMs": 19227,
+      "avgMs": 19227,
+      "medianMs": 19227,
+      "minMs": 19227,
+      "maxMs": 19227
+    },
+    "workerRun": {
+      "knownCount": 1,
+      "missingCount": 0,
+      "totalMs": 6298,
+      "avgMs": 6298,
+      "medianMs": 6298,
+      "minMs": 6298,
+      "maxMs": 6298
+    },
+    "waiting": {
+      "knownCount": 1,
+      "missingCount": 0,
+      "totalMs": 12929,
+      "avgMs": 12929,
+      "medianMs": 12929,
+      "minMs": 12929,
+      "maxMs": 12929
+    },
+    "note": "workerRun is the sum of per-worker run times, not wall-clock time. waiting is derived only for single-worker tasks and includes process startup and supervisor overhead."
+  },
+  "notTracked": {
+    "cost": "Not collected in phase 1-2. HS does not import provider billing or convert subscription credits into money.",
+    "firstPassAcceptance": "Not collected in phase 1-2. Worker completion is not treated as acceptance.",
+    "rework": "Not collected in phase 1-2. Reviewing logs or asking for a report is not counted as rework.",
+    "intervention": "Not collected in phase 1-2. Steer/follow-up events are not assumed to be human interventions.",
+    "comparison": "Not available without a comparable non-HS baseline with the same acceptance criteria and accounting."
+  },
+  "unknownFields": [
+    "cost",
+    "firstAcceptancePassed",
+    "reworkCount",
+    "interventionCount",
+    "comparisonBaseline",
+    "providerBillingVerification"
+  ],
+  "dataQualityWarnings": [
+    "1 task(s) have no attributable parent-agent usage; main-agent cost is unknown for them.",
+    "1 task(s) have workers but no usable worker usage; worker cost is unknown for them.",
+    "1 usage record(s) are unverified and excluded from known totals.",
+    "Phase 1-2 do not collect cost, first-pass acceptance, rework or intervention; worker completion is not acceptance.",
+    "Runtime and manual token values are not billing-verified unless their confidence is verified."
+  ]
+}

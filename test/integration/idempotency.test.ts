@@ -12,6 +12,7 @@ import {
   makeWorkspace,
   spawnWorker,
   waitForEvent,
+  waitForWorkerRecord,
   waitTerminal,
 } from "./helpers.js";
 
@@ -382,6 +383,7 @@ test("an interrupted requestId returns UNCERTAIN after a daemon restart and is n
     (record) => record.state === "in_progress",
   );
   assert.equal(admission.uncertainAt, undefined, "a live request is not yet uncertain");
+  await waitForWorkerRecord(daemon.stateDir);
   await daemon.kill();
   await inFlight;
 

@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-27",
+  "cliVersionDir": "0.6.13",
+  "agentVersion": "0.6.13",
+  "transport": "ACP over ndJSON",
+  "prompt": "Reply with exactly MCODE_USAGE_PROBE_OK. Do not use any tools.",
+  "updateKinds": {
+    "available_commands_update": 3,
+    "session_info_update": 2,
+    "agent_message_chunk": 2,
+    "usage_update": 2
+  },
+  "usageUpdates": [
+    {
+      "sessionUpdate": "usage_update",
+      "used": 20269,
+      "size": 1000000,
+      "cost": {
+        "amount": 0,
+        "currency": "USD"
+      }
+    },
+    {
+      "sessionUpdate": "usage_update",
+      "used": 20269,
+      "size": 1000000,
+      "cost": {
+        "amount": 0,
+        "currency": "USD"
+      }
+    }
+  ],
+  "promptResponse": {
+    "keys": [
+      "stopReason"
+    ],
+    "stopReason": "end_turn",
+    "usage": null,
+    "meta": null
+  },
+  "conclusion": "The latest installed ACP path exposes context occupancy (used/size) and cost=0, but no input/output token breakdown. ACP prompt result contains only stopReason. HS therefore keeps mcode token usage unknown."
+}

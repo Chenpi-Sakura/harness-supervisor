@@ -115,6 +115,11 @@ export interface WorkerRecord {
   supervisorId: string;
   /** Persisted at spawn; global defaults never move an existing worker. */
   notifyTarget?: NotifyTarget;
+  /**
+   * Task this worker belongs to. Optional on purpose: workers created before
+   * task metrics existed are not retroactively attributed to a guessed task.
+   */
+  taskId?: string;
 }
 
 export interface WorkerSummary extends WorkerRecord {
@@ -129,6 +134,7 @@ export type WorkerEventType =
   | "run.accepted"
   | "run.started"
   | "run.progress"
+  | "run.usage"
   | "run.needs_input"
   | "run.input_answered"
   | "run.message_sent"
@@ -166,6 +172,8 @@ export interface SpawnInput {
   thinking?: string;
   maxDurationMs?: number;
   extraArgs?: string[];
+  /** Link this worker to an existing delegated task. Omit to auto-create one. */
+  taskId?: string;
 }
 
 export interface ResumeInput {
@@ -331,6 +339,16 @@ export interface HarnessStateInfo {
   sessionFile?: string;
 }
 
+export interface HarnessUsageReport {
+  provider?: string;
+  modelId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reportedTotalTokens?: number;
+}
+
 export type HarnessEvent =
   | { type: "run_started" }
   | {
@@ -341,6 +359,15 @@ export type HarnessEvent =
       preview?: string;
       isError?: boolean;
       durationMs?: number;
+    }
+  | {
+      /**
+       * Structured, provider-reported usage for this run. Values are not
+       * billing-verified and all-zero reports are treated as unknown later;
+       * adapters must not invent numbers when the runtime did not report them.
+       */
+      type: "usage";
+      usage: HarnessUsageReport;
     }
   | {
       type: "needs_input";

@@ -184,6 +184,7 @@ function statusWorkerForProduction(worker: WorkerSummary) {
     id: worker.id,
     runtime: worker.runtime,
     ...(worker.name !== undefined ? { name: worker.name } : {}),
+    ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
     cwd: worker.cwd,
     status: worker.status,
     lastSeq: worker.lastSeq,
@@ -206,6 +207,7 @@ export function presentAcceptedWorker(worker: WorkerSummary, mode: McpPresentati
     notifyTarget: targetOf(worker.notifyTarget),
   };
   if (worker.name !== undefined) out.name = worker.name;
+  if (worker.taskId !== undefined) out.taskId = worker.taskId;
   if (isTerminal(worker.status) || worker.status === "awaiting_input") {
     if (worker.result) out.result = resultOf(worker.result);
     if (worker.pendingInput) out.pendingInput = pendingOf(worker.pendingInput);
@@ -268,6 +270,7 @@ export function presentWorkerList(workers: WorkerSummary[], mode: McpPresentatio
   return workers.map((worker) => ({
     id: worker.id,
     ...(worker.name !== undefined ? { name: worker.name } : {}),
+    ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
     runtime: worker.runtime,
     status: worker.status,
     lastSeq: worker.lastSeq,

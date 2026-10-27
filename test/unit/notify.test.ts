@@ -882,18 +882,20 @@ test("a burst never starves the delivery window opened by the first record", asy
     const notifier = codexNotifier(dir, { deliveryDelayMs: 150 });
     await notifier.init();
     try {
-      notifier.ingest(worker, makeEvent(60, "run.completed", { text: "first" }));
-      let deliveredDuringBurst = false;
+      const first = notifier.ingest(worker, makeEvent(60, "run.completed", { text: "first" }))!;
+      let firstAttemptStartedDuringBurst = false;
       for (let index = 1; index < 12; index += 1) {
         await sleep(40);
         notifier.ingest(worker, makeEvent(60 + index, "run.completed", { text: `burst ${index}` }));
-        if (notifier.list({ state: "delivered" }).length >= 1) deliveredDuringBurst = true;
+        // The host process can start slowly on a busy machine; the attempt
+        // timestamp proves the window opened without depending on spawn time.
+        if (first.delivery.lastAttemptStartedAt) firstAttemptStartedDuringBurst = true;
       }
       assert.ok(
-        deliveredDuringBurst,
+        firstAttemptStartedDuringBurst,
         "later events must not postpone the first record's window (no timer reset)",
       );
-      await waitFor(() => notifier.list({ state: "delivered" }).length === 12);
+      await waitFor(() => notifier.list({ state: "delivered" }).length === 12, 20_000);
       const calls = await readCalls(logFile);
       assert.equal(calls.length, 12);
       assert.match(calls[0]!.argv[4]!, /seq=60(?!\d)/, "delivery stays in event order");

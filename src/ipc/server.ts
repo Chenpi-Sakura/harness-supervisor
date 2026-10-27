@@ -273,6 +273,23 @@ export class IpcServer {
         const retried = await supervisor.retryNotifications(states);
         return { retried };
       }
+      case "metrics_task_create": {
+        return supervisor.createMetricsTask(
+          params as Parameters<Supervisor["createMetricsTask"]>[0],
+        );
+      }
+      case "metrics_task_show": {
+        const { taskId } = params as { taskId: string };
+        return supervisor.metricsTask(taskId);
+      }
+      case "metrics_report": {
+        return supervisor.metricsReport(params as Parameters<Supervisor["metricsReport"]>[0]);
+      }
+      case "metrics_usage_record": {
+        return supervisor.recordMetricsUsage(
+          params as Parameters<Supervisor["recordMetricsUsage"]>[0],
+        );
+      }
       case "ping":
         return { pong: true, pid: process.pid, uptimeMs: Date.now() - Date.parse(supervisor.startedAt) };
       case "shutdown":

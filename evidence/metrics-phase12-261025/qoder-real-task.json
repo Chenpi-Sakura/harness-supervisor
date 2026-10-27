@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 1,
+  "task": {
+    "schemaVersion": 1,
+    "id": "t-mvqa1ni2-7327a31e",
+    "title": "delegated qoder task",
+    "executionMode": "delegated",
+    "createdAt": "2026-10-27T06:00:56.378Z",
+    "updatedAt": "2026-10-27T06:00:56.378Z",
+    "workerIds": [
+      "w-mvqa1ni2-6f884c43"
+    ],
+    "acceptanceStatus": "pending",
+    "createdBy": "spawn"
+  },
+  "status": "completed",
+  "timing": {
+    "createdAt": "2026-10-27T06:00:56.378Z",
+    "startedAt": "2026-10-27T06:01:09.307Z",
+    "finishedAt": "2026-10-27T06:01:15.605Z",
+    "endToEndMs": 19227,
+    "waitingMs": 12929
+  },
+  "workers": [
+    {
+      "workerId": "w-mvqa1ni2-6f884c43",
+      "missing": false,
+      "runtime": "qoder",
+      "status": "completed",
+      "createdAt": "2026-10-27T06:00:56.377Z",
+      "startedAt": "2026-10-27T06:01:09.307Z",
+      "endedAt": "2026-10-27T06:01:15.605Z",
+      "runMs": 6298
+    }
+  ],
+  "usage": [
+    {
+      "schemaVersion": 1,
+      "id": "runtime:w-mvqa1ni2-6f884c43:10",
+      "taskId": "t-mvqa1ni2-7327a31e",
+      "workerId": "w-mvqa1ni2-6f884c43",
+      "role": "worker",
+      "modelId": "DeepSeek-Flash",
+      "harness": "qoder",
+      "inputTokens": null,
+      "outputTokens": null,
+      "cacheReadTokens": null,
+      "cacheWriteTokens": null,
+      "reportedTotalTokens": null,
+      "usageSource": "runtime_reported",
+      "attribution": "exact",
+      "confidence": "unverified",
+      "recordedAt": "2026-10-27T06:01:14.121Z",
+      "note": "The runtime reported only zero token fields; treated as unknown, not as a verified zero. Provider billing was not checked."
+    }
+  ],
+  "usageSummary": {
+    "worker": {
+      "records": 1,
+      "usableRecords": 0,
+      "verifiedRecords": 0,
+      "partialRecords": 0,
+      "unverifiedRecords": 1,
+      "unknownRecords": 0,
+      "inputTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "outputTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "cacheReadTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "cacheWriteTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "reportedTotalTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      }
+    },
+    "parentAttributable": {
+      "records": 0,
+      "usableRecords": 0,
+      "verifiedRecords": 0,
+      "partialRecords": 0,
+      "unverifiedRecords": 0,
+      "unknownRecords": 0,
+      "inputTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "outputTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "cacheReadTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "cacheWriteTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "reportedTotalTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      }
+    },
+    "parentSessionLevel": {
+      "records": 0,
+      "usableRecords": 0,
+      "verifiedRecords": 0,
+      "partialRecords": 0,
+      "unverifiedRecords": 0,
+      "unknownRecords": 0,
+      "inputTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "outputTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "cacheReadTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "cacheWriteTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      },
+      "reportedTotalTokens": {
+        "value": null,
+        "knownRecords": 0,
+        "missingRecords": 0
+      }
+    },
+    "unverified": {
+      "records": 1,
+      "note": "Excluded from known totals; unknown is not zero."
+    }
+  },
+  "warnings": [
+    "No usable worker token usage was recorded; worker cost is unknown.",
+    "No attributable parent-agent usage was recorded; main-agent cost is unknown.",
+    "1 usage record(s) are unverified and excluded from known totals."
+  ],
+  "unknownFields": [
+    "cost",
+    "firstAcceptancePassed",
+    "reworkCount",
+    "interventionCount",
+    "comparisonBaseline",
+    "providerBillingVerification"
+  ]
+}

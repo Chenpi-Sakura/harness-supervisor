@@ -34,6 +34,14 @@ import {
   type WorkerStatusResult,
   type WorkerSummary,
 } from "./types.js";
+import type {
+  MetricsReport,
+  TaskCreateInput,
+  TaskMetrics,
+  TaskRecord,
+  UsageRecord,
+  UsageRecordInput,
+} from "./metrics.js";
 import { VERSION } from "./version.js";
 
 function argValue(name: string): string | undefined {
@@ -79,7 +87,9 @@ const client = new SupervisorClient({
 });
 
 const REQUIRED_DAEMON_VERSION = "0.4.0";
+const METRICS_DAEMON_VERSION = "0.5.0";
 let daemonSupportsNewIpc = false;
+let daemonSupportsMetrics = false;
 let daemonVersion = "unknown";
 
 function versionTuple(value: unknown): [number, number, number] | null {
@@ -121,11 +131,19 @@ async function assessDaemonCompatibility(): Promise<void> {
   }
   daemonVersion = typeof info.version === "string" ? info.version : "unknown";
   daemonSupportsNewIpc = daemonAtLeast(info.version, REQUIRED_DAEMON_VERSION);
+  daemonSupportsMetrics = daemonAtLeast(info.version, METRICS_DAEMON_VERSION);
   if (daemonSupportsNewIpc) return;
   if (mode === "production") {
     throw new SupervisorError("UNSUPPORTED", upgradeAdvice(daemonVersion));
   }
   process.stderr.write(`harness-supervisor MCP warning: ${upgradeAdvice(daemonVersion)}\n`);
+}
+
+function metricsUnsupportedError(): SupervisorError {
+  return new SupervisorError(
+    "UNSUPPORTED",
+    `Task metrics require supervisor daemon ${METRICS_DAEMON_VERSION} or newer; the connected daemon is ${daemonVersion}. Restart or upgrade the daemon, then retry. The MCP server never replaces a running daemon.`,
+  );
 }
 
 function ok(value: unknown) {
@@ -192,10 +210,10 @@ const NotifyTargetShape = {
 };
 
 const DEVELOPMENT_INSTRUCTIONS =
-  "Harness Supervisor manages native Pi/Qoder/MiniMax Code workers. worker_spawn returns prompt acceptance, never completion. Reuse the worker id; do not spawn duplicates. worker_wait is bounded, omits ordinary progress, and returns when input is needed; answer through worker_answer. MCP event reads are pull-based. Important events also enter a durable inbox; acknowledge processed notification ids. For multiple Codex conversations, pass worker_spawn.notifyTarget with a verified originating thread id. It is persisted per worker and per event. Omission snapshots the daemon default for new workers; worker_resume omission preserves binding, while an explicit target authorizes takeover for future events. supervisor_wake_target only changes the shared default for new workers. No per-request Codex identity is inferred from MCP or the most recent session. Without a known route use channel='none'. codex-queue can trigger a new turn while the host has that target loaded; delivery is at-least-once and never itself proves wake-up.";
+  "Harness Supervisor manages native Pi/Qoder/MiniMax Code workers. worker_spawn returns prompt acceptance, never completion. Reuse the worker id; do not spawn duplicates. worker_wait is bounded, omits ordinary progress, and returns when input is needed; answer through worker_answer. MCP event reads are pull-based. Important events also enter a durable inbox; acknowledge processed notification ids. For multiple Codex conversations, pass worker_spawn.notifyTarget with a verified originating thread id. It is persisted per worker and per event. Omission snapshots the daemon default for new workers; worker_resume omission preserves binding, while an explicit target authorizes takeover for future events. supervisor_wake_target only changes the shared default for new workers. No per-request Codex identity is inferred from MCP or the most recent session. Without a known route use channel='none'. codex-queue can trigger a new turn while the host has that target loaded; delivery is at-least-once and never itself proves wake-up. Task metrics are phase 1-2: a spawn auto-creates or links a task, and supervisor_metrics_* expose task and report data. Main-agent usage is never read from the host and must be recorded explicitly; unknown is not zero. Cost, acceptance, rework and intervention are not collected yet.";
 
 const PRODUCTION_INSTRUCTIONS =
-  "Harness Supervisor manages independent native Pi/Qoder/MiniMax Code workers and is pull-based: it never wakes this conversation by itself. worker_spawn/worker_resume return acceptance, not completion; keep the returned id and lastSeq, reuse the worker, and use worker_wait or worker_status for the final state. When a run needs input, answer it with worker_answer using pendingInput.requestId; worker_send only queues steering/follow-up. Pass requestId on side-effecting calls: an identical retry replays, different parameters CONFLICT, and an interrupted request reports UNCERTAIN and is not re-executed. Durable notifications are read with supervisor_notifications (default: all unacknowledged) and acknowledged after processing. Omit notifyTarget to snapshot the daemon default for new workers; resume omission preserves the binding; for parallel conversations pass an explicit verified thread id. codex-queue delivery can start a turn only while the host has that thread loaded; delivery is at-least-once and is not proof of wake-up. MCP does not infer the caller's thread.";
+  "Harness Supervisor manages independent native Pi/Qoder/MiniMax Code workers and is pull-based: it never wakes this conversation by itself. worker_spawn/worker_resume return acceptance, not completion; keep the returned id and lastSeq, reuse the worker, and use worker_wait or worker_status for the final state. When a run needs input, answer it with worker_answer using pendingInput.requestId; worker_send only queues steering/follow-up. Pass requestId on side-effecting calls: an identical retry replays, different parameters CONFLICT, and an interrupted request reports UNCERTAIN and is not re-executed. Durable notifications are read with supervisor_notifications (default: all unacknowledged) and acknowledged after processing. Omit notifyTarget to snapshot the daemon default for new workers; resume omission preserves the binding; for parallel conversations pass an explicit verified thread id. codex-queue delivery can start a turn only while the host has that thread loaded; delivery is at-least-once and is not proof of wake-up. MCP does not infer the caller's thread. Task metrics are phase 1-2: a spawn auto-creates or links a task, and supervisor_metrics_* expose task and report data. Main-agent usage is never read from the host and must be recorded explicitly; unknown is not zero. Cost, acceptance, rework and intervention are not collected yet.";
 
 interface ToolDescriptions {
   spawn: string;
@@ -300,6 +318,14 @@ server.registerTool(
           "Runtime adapter name (default: pi; qoder uses the Qoder CLI; mcode uses MiniMax Code over ACP)",
         ),
       name: z.string().min(1).max(200).optional().describe("Human-readable worker label"),
+      taskId: z
+        .string()
+        .min(1)
+        .max(120)
+        .optional()
+        .describe(
+          "Link this worker to an existing delegated metrics task. Omit to auto-create one; use metrics_task_create first when several workers belong to the same task.",
+        ),
       ...ConfigShape,
       ...RequestIdShape,
       ...NotifyTargetShape,
@@ -314,6 +340,7 @@ server.registerTool(
           cwd: args.cwd,
           prompt: args.prompt,
           name: args.name,
+          taskId: args.taskId,
           model: args.model,
           provider: args.provider,
           tools: args.tools,
@@ -662,6 +689,134 @@ server.registerTool(
     try {
       const info = await client.request<SupervisorInfo>("info", {});
       return ok(presentInfo(info, mode, mode));
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+const MetricsTokenShape = {
+  inputTokens: z.number().int().min(0).max(1_000_000_000_000_000).optional(),
+  outputTokens: z.number().int().min(0).max(1_000_000_000_000_000).optional(),
+  cacheReadTokens: z.number().int().min(0).max(1_000_000_000_000_000).optional(),
+  cacheWriteTokens: z.number().int().min(0).max(1_000_000_000_000_000).optional(),
+  reportedTotalTokens: z.number().int().min(0).max(1_000_000_000_000_000).optional(),
+};
+
+server.registerTool(
+  "metrics_task_create",
+  {
+    title: "Create a delegated task for metrics",
+    description:
+      "Create a delegated task that one or more workers can join through worker_spawn.taskId. Spawn without taskId auto-creates a task, so create explicitly only when several workers share one acceptance unit. Phase 1-2 records timing and usage; cost, acceptance, rework and intervention are not collected. A supplied taskId makes creation idempotent only when the title/category/parent reference match.",
+    inputSchema: {
+      title: z.string().min(1).max(200).describe("Short task title, not the full prompt"),
+      category: z.string().min(1).max(50).optional(),
+      taskId: z.string().min(1).max(120).optional().describe("Optional caller-supplied stable id"),
+      parentSessionRef: z
+        .string()
+        .min(1)
+        .max(300)
+        .optional()
+        .describe("Optional opaque reference to the originating main-agent session"),
+    },
+  },
+  async (args) => {
+    try {
+      if (!daemonSupportsMetrics) throw metricsUnsupportedError();
+      const input: TaskCreateInput = { ...args, createdBy: "mcp" };
+      return ok(
+        await client.request<TaskRecord>("metrics_task_create", input, { timeoutMs: 15_000 }),
+      );
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "metrics_task_show",
+  {
+    title: "Show one task's metrics",
+    description:
+      "Read one task's derived status, worker timings, raw usage records, coverage and warnings. Worker completion is not acceptance. Unknown values stay null; all-zero runtime usage is unverified and excluded from known totals. Parent-agent usage appears only when explicitly recorded.",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    inputSchema: { taskId: z.string().min(1).max(120) },
+  },
+  async (args) => {
+    try {
+      if (!daemonSupportsMetrics) throw metricsUnsupportedError();
+      return ok(
+        await client.request<TaskMetrics>("metrics_task_show", { taskId: args.taskId }),
+      );
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "metrics_report",
+  {
+    title: "Summarize task metrics over a time range",
+    description:
+      "Aggregate tasks whose createdAt falls in the optional since/until window. Reports task status counts, worker/parent/session-level usage separately, per-field coverage, durations, unknown fields and data-quality warnings. Token categories are never added together. Cost, first-pass acceptance, rework and intervention are not tracked in phases 1-2. includeTasks returns task details (limit applies; aggregate counts still cover all selected tasks).",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    inputSchema: {
+      since: z.string().min(1).max(100).optional().describe("ISO 8601 lower bound on task.createdAt"),
+      until: z.string().min(1).max(100).optional().describe("ISO 8601 upper bound on task.createdAt"),
+      includeTasks: z.boolean().optional(),
+      limit: z.number().int().min(1).max(1000).optional(),
+    },
+  },
+  async (args) => {
+    try {
+      if (!daemonSupportsMetrics) throw metricsUnsupportedError();
+      return ok(
+        await client.request<MetricsReport>("metrics_report", args, { timeoutMs: 30_000 }),
+      );
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "metrics_record_usage",
+  {
+    title: "Record task usage manually",
+    description:
+      "Record one usage record for a task. Parent-agent usage is never read from the Codex host; record it explicitly with role=parent_agent, and leave attribution=session_level unless you actually measured a task-level before/after increment. Session-level parent usage is reported separately and excluded from task totals. Worker usage requires a workerId already linked to the task. At least one token field is required; unknown must not be recorded as zero. Pass usageId to make retries idempotent; the same usageId with different values returns CONFLICT.",
+    annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: false },
+    inputSchema: {
+      taskId: z.string().min(1).max(120),
+      role: z.enum(["parent_agent", "worker"]),
+      workerId: z.string().min(1).max(200).optional(),
+      usageId: z.string().min(1).max(100).optional(),
+      provider: z.string().min(1).max(200).optional(),
+      modelId: z.string().min(1).max(200).optional(),
+      harness: z.string().min(1).max(100).optional(),
+      ...MetricsTokenShape,
+      usageSource: z
+        .enum(["manual", "host_reported", "imported", "estimated"])
+        .optional(),
+      attribution: z
+        .enum(["exact", "incremental", "session_level", "estimated"])
+        .optional()
+        .describe(
+          "Parent usage defaults to session_level (not attributable); use incremental only for a measured task-level delta. Worker usage defaults to exact.",
+        ),
+      confidence: z.enum(["verified", "partial", "unverified", "unknown"]).optional(),
+      note: z.string().max(500).optional(),
+    },
+  },
+  async (args) => {
+    try {
+      if (!daemonSupportsMetrics) throw metricsUnsupportedError();
+      const input: UsageRecordInput = { ...args };
+      return ok(
+        await client.request<UsageRecord>("metrics_usage_record", input, { timeoutMs: 15_000 }),
+      );
     } catch (error) {
       return fail(error);
     }

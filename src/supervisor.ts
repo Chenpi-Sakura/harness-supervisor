@@ -18,6 +18,16 @@ import {
 import { Retention, type PruneOptions, type PruneResult } from "./retention.js";
 import { Store } from "./store.js";
 import {
+  MetricsStore,
+  type MetricsReport,
+  type MetricsReportOptions,
+  type TaskCreateInput,
+  type TaskMetrics,
+  type TaskRecord,
+  type UsageRecord,
+  type UsageRecordInput,
+} from "./metrics.js";
+import {
   ACTIVE_STATUSES,
   isTerminal,
   type ExtensionUiResponse,
@@ -160,6 +170,7 @@ export class Supervisor {
   readonly notifier: Notifier;
   readonly idempotency: IdempotencyStore;
   readonly retention: Retention;
+  readonly metrics: MetricsStore;
   private readonly adapters: Map<string, HarnessAdapter>;
   private readonly logger: Logger;
   private readonly runtimes = new Map<string, Runtime>();
@@ -167,6 +178,8 @@ export class Supervisor {
   private pendingSpawns = 0;
   private initialized = false;
   private shuttingDown = false;
+  private metricsReady = false;
+  private metricsError: string | undefined;
 
   constructor(options: SupervisorOptions) {
     this.store = options.store;
@@ -210,16 +223,32 @@ export class Supervisor {
       logger: this.logger,
       sessionsDir: this.store.sessionsDir,
     });
+    this.metrics = new MetricsStore(this.stateDir, this.logger);
   }
 
   async init(): Promise<void> {
     if (this.initialized) return;
     await this.notifier.init();
     await this.idempotency.init();
+    try {
+      const warnings = await this.metrics.init();
+      this.metricsReady = true;
+      if (warnings.length > 0) {
+        this.logger.warn("Task metrics loaded with warnings", {
+          warnings: warnings.length,
+        });
+      }
+    } catch (error) {
+      this.metricsError = errorMessage(error);
+      this.logger.error("Task metrics are unavailable; worker lifecycle continues without them", {
+        error: this.metricsError,
+      });
+    }
     this.store.onAnyEvent((event) => {
       const record = this.store.getWorker(event.workerId);
       if (!record) return;
       this.notifier.ingest(record, event);
+      this.ingestMetricsEvent(record, event);
     });
     const { workers, warnings } = await this.store.init();
     const now = new Date().toISOString();
@@ -272,6 +301,7 @@ export class Supervisor {
       }
     }
     this.initialized = true;
+    await this.reconcileMetricsUsage();
     await this.reconcileNotifications();
     this.logger.info("Supervisor initialized", {
       workers: workers.length,
@@ -308,6 +338,78 @@ export class Supervisor {
         error: errorMessage(error),
       });
     });
+  }
+
+  private ingestMetricsEvent(record: WorkerRecord, event: WorkerEvent): void {
+    if (!this.metricsReady || event.type !== "run.usage") return;
+    try {
+      this.metrics.ingestEvent(record, event);
+    } catch (error) {
+      this.logger.warn(`Failed to ingest metrics usage for ${record.id}`, {
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  private async reconcileMetricsUsage(): Promise<void> {
+    if (!this.metricsReady) return;
+    let created = 0;
+    for (const record of this.store.listWorkers()) {
+      if (!record.taskId) continue;
+      try {
+        for await (const event of this.store.scanEvents(record.id)) {
+          if (event.type !== "run.usage") continue;
+          const existed = this.metrics.hasUsage(`runtime:${record.id}:${event.seq}`);
+          const usage = this.metrics.ingestEvent(record, event);
+          if (usage && !existed) created += 1;
+        }
+      } catch (error) {
+        this.logger.warn(`Cannot fully rebuild metrics usage for ${record.id}`, {
+          error: errorMessage(error),
+        });
+      }
+    }
+    await this.metrics.flush().catch((error: unknown) => {
+      this.logger.warn("Failed to flush reconciled metrics usage", {
+        error: errorMessage(error),
+      });
+    });
+    if (created > 0) {
+      this.logger.info("Reconciled task usage from persisted events", { created });
+    }
+  }
+
+  createMetricsTask(input: TaskCreateInput): Promise<TaskRecord> {
+    this.assertInitialized();
+    return this.requireMetrics().createTask(input);
+  }
+
+  metricsTask(taskId: string): TaskMetrics {
+    this.assertInitialized();
+    return this.requireMetrics().taskMetrics(taskId, (workerId) => this.store.getWorker(workerId));
+  }
+
+  metricsReport(options: MetricsReportOptions = {}): MetricsReport {
+    this.assertInitialized();
+    return this.requireMetrics().report(
+      (workerId) => this.store.getWorker(workerId),
+      options,
+    );
+  }
+
+  recordMetricsUsage(input: UsageRecordInput): Promise<UsageRecord> {
+    this.assertInitialized();
+    return this.requireMetrics().recordUsage(input);
+  }
+
+  private requireMetrics(): MetricsStore {
+    if (!this.metricsReady) {
+      throw new SupervisorError(
+        "UNSUPPORTED",
+        `Task metrics are unavailable in this daemon${this.metricsError ? `: ${this.metricsError}` : ""}. Worker lifecycle is unaffected.`,
+      );
+    }
+    return this.metrics;
   }
 
   notifications(filter: {
@@ -511,6 +613,7 @@ export class Supervisor {
     const now = new Date().toISOString();
     const id = newWorkerId();
     this.assertAcceptingWork();
+    const taskBinding = await this.resolveTaskForSpawn(input, id, runtimeName);
     const record: WorkerRecord = {
       schemaVersion: SCHEMA_VERSION,
       id,
@@ -529,8 +632,16 @@ export class Supervisor {
       resumeCount: 0,
       supervisorId: this.supervisorId,
       notifyTarget: validateNotifyTarget(input.notifyTarget ?? this.notifier.getTarget()),
+      ...(taskBinding.taskId ? { taskId: taskBinding.taskId } : {}),
     };
     await this.store.createWorker(record);
+    if (taskBinding.linkAfterCreate && taskBinding.taskId) {
+      await this.metrics.linkWorker(taskBinding.taskId, id).catch((error: unknown) => {
+        this.logger.warn(`Failed to link worker ${id} to task ${taskBinding.taskId}`, {
+          error: errorMessage(error),
+        });
+      });
+    }
     const runtime = this.createRuntime(record, adapter);
     this.runtimes.set(id, runtime);
     this.store.appendEvent(id, "worker.starting", {
@@ -585,6 +696,54 @@ export class Supervisor {
         workerId: id,
         status: record.status,
       });
+    }
+  }
+
+  private async resolveTaskForSpawn(
+    input: SpawnInput,
+    workerId: string,
+    runtime: string,
+  ): Promise<{ taskId?: string; linkAfterCreate: boolean }> {
+    if (!this.metricsReady) {
+      if (input.taskId) {
+        this.logger.warn(
+          `Task metrics are unavailable; worker ${workerId} was not linked to ${input.taskId}`,
+        );
+      }
+      return { linkAfterCreate: false };
+    }
+    if (input.taskId) {
+      const task = this.metrics.getTask(input.taskId);
+      if (!task) {
+        throw new SupervisorError("NOT_FOUND", `Unknown taskId: ${input.taskId}`, {
+          taskId: input.taskId,
+        });
+      }
+      if (task.executionMode !== "delegated") {
+        throw new SupervisorError(
+          "UNSUPPORTED",
+          `Task ${task.id} is not a delegated task; only delegated tasks can link workers`,
+          { taskId: task.id },
+        );
+      }
+      return { taskId: task.id, linkAfterCreate: true };
+    }
+    try {
+      const task = await this.metrics.createTask({
+        title:
+          typeof input.name === "string" && input.name.trim().length > 0
+            ? safeText(input.name.trim(), 200)
+            : `delegated ${runtime} task`,
+        createdBy: "spawn",
+        workerId,
+      });
+      return { taskId: task.id, linkAfterCreate: false };
+    } catch (error) {
+      this.logger.warn(
+        `Failed to create a metrics task for worker ${workerId}; continuing without task statistics`,
+        { error: errorMessage(error) },
+      );
+      return { linkAfterCreate: false };
     }
   }
 
@@ -1178,6 +1337,11 @@ export class Supervisor {
     }
     this.notifier.stop();
     await this.notifier.flush().catch(() => undefined);
+    await this.metrics.flush().catch((error: unknown) => {
+      this.logger.warn("Failed to flush task metrics during shutdown", {
+        error: errorMessage(error),
+      });
+    });
     await this.store.flush().catch((error: unknown) => {
       this.logger.error("Failed to flush persistence during shutdown", {
         error: errorMessage(error),
@@ -1557,6 +1721,27 @@ export class Supervisor {
         }
         this.store.appendEvent(record.id, "run.progress", data);
         await this.store.saveWorker(record);
+        break;
+      }
+      case "usage": {
+        const data: Record<string, unknown> = {};
+        for (const key of [
+          "inputTokens",
+          "outputTokens",
+          "cacheReadTokens",
+          "cacheWriteTokens",
+          "reportedTotalTokens",
+        ] as const) {
+          const value = event.usage[key];
+          if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+            data[key] = Math.trunc(value);
+          }
+        }
+        if (event.usage.provider) data.provider = safeText(event.usage.provider, 200);
+        if (event.usage.modelId) data.modelId = safeText(event.usage.modelId, 200);
+        if (Object.keys(data).length > 0) {
+          this.store.appendEvent(record.id, "run.usage", data);
+        }
         break;
       }
       case "needs_input": {

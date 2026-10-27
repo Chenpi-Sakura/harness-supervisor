@@ -4,6 +4,14 @@ import { runDaemon } from "./daemon.js";
 import { SupervisorError, errorMessage } from "./errors.js";
 import { SupervisorClient } from "./ipc/client.js";
 import { resolveStateDir } from "./ipc/protocol.js";
+import type {
+  MetricsReport,
+  TaskMetrics,
+  TaskRecord,
+  TokenFieldSummary,
+  UsageRecord,
+  UsageSummary,
+} from "./metrics.js";
 import type { NotifyTarget, WorkerEvent, WorkerStatus, WorkerSummary } from "./types.js";
 import { VERSION } from "./version.js";
 import { silentLogger } from "./util/logger.js";
@@ -35,6 +43,7 @@ Workers:
   spawn --prompt <text> [--cwd <dir>] [--name <n>] [--model <m>] [--provider <p>]
         [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder|mcode]
         [--extra-args '["--no-extensions"]'] [--request-id <key>] [--wait] [--json]
+        [--task <taskId>]
         [--notify-thread <verified-thread-id> | --notify-none]
   list [--status running,failed] [--limit 50] [--json]
   status <workerId> [--json]
@@ -56,6 +65,23 @@ Notifications:
         official "codex queue" CLI. The Codex host only runs the message while that
         thread is loaded; delivery is at-least-once and is not a wake guarantee.
   retry-notifications [--states pending,failed]
+
+Metrics (phases 1-2):
+  metrics create --title <title> [--category <c>] [--task-id <id>]
+        [--parent-session <ref>] [--json]
+  metrics show <taskId> [--json]
+  metrics report [--since <iso>] [--until <iso>] [--include-tasks] [--limit 500] [--json]
+  metrics export [--since <iso>] [--until <iso>] [--limit 500]
+  metrics record-usage <taskId> --role parent_agent|worker [--worker <id>]
+        [--input-tokens <n>] [--output-tokens <n>] [--cache-read-tokens <n>]
+        [--cache-write-tokens <n>] [--reported-total-tokens <n>]
+        [--provider <p>] [--model <m>] [--harness <h>]
+        [--usage-source manual|host_reported|imported|estimated]
+        [--attribution exact|incremental|session_level|estimated]
+        [--confidence verified|partial|unverified|unknown]
+        [--usage-id <id>] [--note <text>] [--json]
+        Parent-agent usage is never read from the Codex host; record it explicitly.
+        session_level parent usage is reported separately, not in task totals.
 
 Maintenance:
   prune [--older-than-days 7] [--keep 20] [--dry-run] [--include-sessions] [--json]
@@ -89,6 +115,18 @@ function stringArg(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new SupervisorError("BAD_REQUEST", `--${name} must be a string`);
   return value;
+}
+
+function tokenArg(value: unknown, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 1_000_000_000_000_000) {
+    throw new SupervisorError(
+      "BAD_REQUEST",
+      `--${name} must be a non-negative integer no larger than 1000000000000000`,
+    );
+  }
+  return parsed;
 }
 
 function boolArg(value: unknown): boolean {
@@ -131,6 +169,80 @@ function parseExtraArgs(value: unknown): string[] | undefined {
 
 function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function tokenFieldText(field: TokenFieldSummary): string {
+  const total = field.knownRecords + field.missingRecords;
+  return field.value === null
+    ? `unknown (0/${total})`
+    : `${field.value} (${field.knownRecords}/${total})`;
+}
+
+function usageSummaryText(label: string, summary: UsageSummary): string {
+  return (
+    `${label}: records=${summary.records} usable=${summary.usableRecords} ` +
+    `verified=${summary.verifiedRecords} partial=${summary.partialRecords} ` +
+    `unverified=${summary.unverifiedRecords}\n` +
+    `  input=${tokenFieldText(summary.inputTokens)} output=${tokenFieldText(summary.outputTokens)} ` +
+    `cacheRead=${tokenFieldText(summary.cacheReadTokens)} cacheWrite=${tokenFieldText(summary.cacheWriteTokens)} ` +
+    `reportedTotal=${tokenFieldText(summary.reportedTotalTokens)}`
+  );
+}
+
+function printTaskMetrics(metrics: TaskMetrics): void {
+  const task = metrics.task;
+  const timing = metrics.timing;
+  process.stdout.write(
+    `task ${task.id}  status=${metrics.status}  mode=${task.executionMode}\n` +
+      `  title: ${task.title}\n` +
+      `  created=${timing.createdAt} started=${timing.startedAt ?? "unknown"} ` +
+      `finished=${timing.finishedAt ?? "unknown"} endToEndMs=${timing.endToEndMs ?? "unknown"} ` +
+      `waitingMs=${timing.waitingMs ?? "unknown"}\n` +
+      `  workers=${metrics.workers.length} usageRecords=${metrics.usage.length}\n`,
+  );
+  for (const worker of metrics.workers) {
+    process.stdout.write(
+      `  - ${worker.workerId}${worker.missing ? " (missing)" : ""} ` +
+        `runtime=${worker.runtime ?? "-"} status=${worker.status ?? "unknown"} ` +
+        `runMs=${worker.runMs ?? "unknown"}\n`,
+    );
+  }
+  process.stdout.write(
+    `${usageSummaryText("worker usage", metrics.usageSummary.worker)}\n` +
+      `${usageSummaryText("parent usage", metrics.usageSummary.parentAttributable)}\n` +
+      `${usageSummaryText("session-level parent usage", metrics.usageSummary.parentSessionLevel)}\n`,
+  );
+  if (metrics.warnings.length > 0) {
+    process.stdout.write("warnings:\n");
+    for (const warning of metrics.warnings) process.stdout.write(`  - ${warning}\n`);
+  }
+}
+
+function printMetricsReport(report: MetricsReport): void {
+  const counts = report.counts;
+  process.stdout.write(
+    `tasks=${report.taskCount} workers=${report.workerCount} ` +
+      `pending=${counts.pending} running=${counts.running} completed=${counts.completed} ` +
+      `failed=${counts.failed} cancelled=${counts.cancelled} interrupted=${counts.interrupted} ` +
+      `unknown=${counts.unknown}\n` +
+      `coverage: workerUsage=${report.usageCoverage.tasksWithWorkerUsage}/${report.usageCoverage.tasksWithWorkers} ` +
+      `parentUsage=${report.usageCoverage.tasksWithAttributableParentUsage}/${report.usageCoverage.tasks} ` +
+      `verified=${report.usageCoverage.tasksWithVerifiedUsage} ` +
+      `unverifiedRecords=${report.unverifiedUsage.records}\n` +
+      `${usageSummaryText("known worker usage", report.knownWorkerUsage)}\n` +
+      `${usageSummaryText("known parent usage", report.knownParentUsage)}\n` +
+      `${usageSummaryText("session-level parent usage", report.sessionLevelParentUsage)}\n` +
+      `duration endToEnd known=${report.durationStats.endToEnd.knownCount} ` +
+      `avgMs=${report.durationStats.endToEnd.avgMs ?? "unknown"} ` +
+      `workerRun known=${report.durationStats.workerRun.knownCount} ` +
+      `avgMs=${report.durationStats.workerRun.avgMs ?? "unknown"}\n`,
+  );
+  if (report.dataQualityWarnings.length > 0) {
+    process.stdout.write("warnings:\n");
+    for (const warning of report.dataQualityWarnings) {
+      process.stdout.write(`  - ${warning}\n`);
+    }
+  }
 }
 
 function printWorker(worker: WorkerSummary): void {
@@ -285,6 +397,24 @@ async function main(): Promise<void> {
         state: { type: "string" },
         states: { type: "string" },
         worker: { type: "string" },
+        task: { type: "string" },
+        "task-id": { type: "string" },
+        title: { type: "string" },
+        category: { type: "string" },
+        "parent-session": { type: "string" },
+        role: { type: "string" },
+        "input-tokens": { type: "string" },
+        "output-tokens": { type: "string" },
+        "cache-read-tokens": { type: "string" },
+        "cache-write-tokens": { type: "string" },
+        "reported-total-tokens": { type: "string" },
+        harness: { type: "string" },
+        "usage-source": { type: "string" },
+        attribution: { type: "string" },
+        confidence: { type: "string" },
+        "usage-id": { type: "string" },
+        note: { type: "string" },
+        "include-tasks": { type: "boolean" },
       },
     });
   } catch (error) {
@@ -363,6 +493,7 @@ async function main(): Promise<void> {
             cwd: stringArg(values.cwd, "cwd") ?? process.cwd(),
             prompt,
             name: stringArg(values.name, "name"),
+            taskId: stringArg(values.task, "task"),
             model: stringArg(values.model, "model"),
             provider: stringArg(values.provider, "provider"),
             tools: parseList(values.tools),
@@ -682,6 +813,94 @@ async function main(): Promise<void> {
           );
         }
         return;
+      }
+      case "metrics": {
+        const subcommand = positionals[1];
+        if (!subcommand) {
+          throw new SupervisorError(
+            "BAD_REQUEST",
+            "metrics requires a subcommand: create, show, report, export or record-usage",
+          );
+        }
+        if (subcommand === "create") {
+          const result = await client.request<TaskRecord>("metrics_task_create", {
+            title: stringArg(values.title, "title"),
+            category: stringArg(values.category, "category"),
+            taskId: stringArg(values["task-id"], "task-id"),
+            parentSessionRef: stringArg(values["parent-session"], "parent-session"),
+            createdBy: "cli",
+          });
+          if (json) printJson(result);
+          else process.stdout.write(`task ${result.id} created\n`);
+          return;
+        }
+        if (subcommand === "show") {
+          const taskId = positionals[2];
+          if (!taskId) throw new SupervisorError("BAD_REQUEST", "metrics show requires a taskId");
+          const result = await client.request<TaskMetrics>("metrics_task_show", { taskId });
+          if (json) printJson(result);
+          else printTaskMetrics(result);
+          return;
+        }
+        if (subcommand === "report") {
+          const result = await client.request<MetricsReport>("metrics_report", {
+            since: stringArg(values.since, "since"),
+            until: stringArg(values.until, "until"),
+            includeTasks: boolArg(values["include-tasks"]),
+            limit: intArg(values.limit, "limit", 500),
+          });
+          if (json) printJson(result);
+          else printMetricsReport(result);
+          return;
+        }
+        if (subcommand === "export") {
+          const result = await client.request<MetricsReport>("metrics_report", {
+            since: stringArg(values.since, "since"),
+            until: stringArg(values.until, "until"),
+            includeTasks: true,
+            limit: intArg(values.limit, "limit", 500),
+          });
+          printJson(result);
+          return;
+        }
+        if (subcommand === "record-usage") {
+          const taskId = positionals[2];
+          if (!taskId) {
+            throw new SupervisorError("BAD_REQUEST", "metrics record-usage requires a taskId");
+          }
+          const role = stringArg(values.role, "role");
+          if (role !== "parent_agent" && role !== "worker") {
+            throw new SupervisorError("BAD_REQUEST", "--role must be parent_agent or worker");
+          }
+          const result = await client.request<UsageRecord>("metrics_usage_record", {
+            taskId,
+            role,
+            workerId: stringArg(values.worker, "worker"),
+            usageId: stringArg(values["usage-id"], "usage-id"),
+            provider: stringArg(values.provider, "provider"),
+            modelId: stringArg(values.model, "model"),
+            harness: stringArg(values.harness, "harness"),
+            inputTokens: tokenArg(values["input-tokens"], "input-tokens"),
+            outputTokens: tokenArg(values["output-tokens"], "output-tokens"),
+            cacheReadTokens: tokenArg(values["cache-read-tokens"], "cache-read-tokens"),
+            cacheWriteTokens: tokenArg(values["cache-write-tokens"], "cache-write-tokens"),
+            reportedTotalTokens: tokenArg(
+              values["reported-total-tokens"],
+              "reported-total-tokens",
+            ),
+            usageSource: stringArg(values["usage-source"], "usage-source"),
+            attribution: stringArg(values.attribution, "attribution"),
+            confidence: stringArg(values.confidence, "confidence"),
+            note: stringArg(values.note, "note"),
+          });
+          if (json) printJson(result);
+          else process.stdout.write(`usage ${result.id} recorded\n`);
+          return;
+        }
+        throw new SupervisorError(
+          "BAD_REQUEST",
+          `unknown metrics subcommand "${subcommand}"; expected create, show, report, export or record-usage`,
+        );
       }
       case "prune": {
         const result = await client.request(

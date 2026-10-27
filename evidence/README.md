@@ -1,6 +1,6 @@
 # Test evidence
 
-All artifacts here were produced by actual runs on 2026-10-21 and 2026-10-22 (Windows, Node v24.21.0, Pi 1.3.0, codex-cli 0.161.0; qodercli 1.1.75 for the protocol probe and 1.1.76 for the real worker/resume run).
+All artifacts here were produced by actual runs on 2026-10-21, 2026-10-22, 2026-10-25 and 2026-10-27 (Windows, Node v24.21.0, Pi 1.3.0, codex-cli 0.161.0; qodercli 1.1.75 for the protocol probe, 1.1.76/1.1.78 for real worker runs).
 
 ## 1. Real Pi worker
 
@@ -140,5 +140,25 @@ The added regression coverage:
 - Inbox: `delivered=1, pending=0, failed=0`; `turnsStarted=2`.
 - See [codex-wake-e2e/README.md](codex-wake-e2e/README.md), [codex-wake-e2e/result-late-worker.json](codex-wake-e2e/result-late-worker.json) and [codex-wake-e2e/result.json](codex-wake-e2e/result.json).
 - Remaining gap: confirmation that the Codex *desktop window* keeps the thread loaded after a turn ends (the mechanism itself is proven; the session here is an app-server session managed by the probe).
+
+## 14. Task metrics phase 1-2 (executed 2026-10-27)
+
+- Version 0.5.0, isolated daemons and temporary state directories; production daemon untouched.
+- Fake Pi: spawn auto-created a task; `run.usage` recorded input=10/output=5/total=15 as `partial`; report kept token categories separate and warned that parent usage was unknown.
+- Real Qoder single text-only turn: `qodercli 1.1.78`, `DeepSeek-Flash`, worker `w-mvqa1ni2-6f884c43`, task `t-mvqa1ni2-7327a31e`, final text `METRICS_REAL_OK`.
+- Qoder reported all-zero token fields. The metrics record stored `null` for every token field, `confidence=unverified`, and the report counted it as unverified rather than known zero usage.
+- The task's end-to-end time was 19,227ms, worker run 6,298ms, single-worker waiting 12,929ms. These are timings, not token/cost measurements.
+- Automated: metrics unit 12, metrics integration 5, metrics CLI 1, metrics MCP 1; full regression 253 tests (251 pass, 0 fail, 2 skipped real-Pi E2E).
+- See [metrics-phase12-261025/README.md](metrics-phase12-261025/README.md), [qoder-real-task.json](metrics-phase12-261025/qoder-real-task.json), and [qoder-real-report.json](metrics-phase12-261025/qoder-real-report.json).
+- Not validated: real Pi token accounting, non-zero Qoder tokens, real main-agent usage entry, cost, acceptance, rework or intervention metrics.
+- MiniMax Code: a real 0.6.13 ACP probe (2026-10-27) is archived separately; see section 15.
+
+## 15. MiniMax Code 0.6.13 token-usage probe (executed 2026-10-27)
+
+- One real text-only ACP turn with the latest installed MiniMax Code (`0.6.13`, matching `.minimax-code/current`), isolated temp workspace.
+- `session/prompt` result contained only `stopReason: "end_turn"`; no `usage`.
+- Two `usage_update` records contained context occupancy `used=20269`/`size=1000000` and `cost={amount:0,currency:"USD"}`; no input/output/reasoning/cache token breakdown.
+- Conclusion: the ACP path used by HS cannot attribute Token usage for mcode; mcode tokens remain `unknown` rather than zero. The headless `exec --output-format json` usage path was not used because HS runs mcode over ACP and does not read its private session store.
+- See [mcode-usage-probe-261027/README.md](mcode-usage-probe-261027/README.md) and [probe.json](mcode-usage-probe-261027/probe.json).
 
 > Note: the original temp state/work directories may be cleaned up; the artifacts relevant to each run are copied into these evidence folders.

@@ -161,4 +161,12 @@ The added regression coverage:
 - Conclusion: the ACP path used by HS cannot attribute Token usage for mcode; mcode tokens remain `unknown` rather than zero. The headless `exec --output-format json` usage path was not used because HS runs mcode over ACP and does not read its private session store.
 - See [mcode-usage-probe-261027/README.md](mcode-usage-probe-261027/README.md) and [probe.json](mcode-usage-probe-261027/probe.json).
 
+## 16. Qoder CLI 1.1.78 re-run (executed 2026-10-25)
+
+- Host: Windows, `qodercli 1.1.78`, model `DeepSeek-Flash`; both runs used isolated daemons and temporary state directories, and the production daemon was untouched.
+- Text-only worker `w-mvnp0m2o-ef4da8e3`: spawn returned in 7.3s, the first run completed in 7.5s with `QODER_E2E_OK`; `resume` returned `QODER_RESUME_OK` with the same session `9aae0c2c-bd76-4ad2-a871-afdbb131e7bd` and `resumeCount=1`, and the daemon stayed alive. Qoder again reported all-zero `usage` fields; that means it reported no token/cost values, not that usage was zero.
+- Interaction suite (`QODER_REAL=1 QODER_REAL_MODEL=DeepSeek-Flash npm run e2e:qoder:interactions`) repeated the section 12 scenarios on 1.1.78: the real Bash tool call completed; steer and follow-up produced `run.message_sent` but did not change the answer (`reflected=false`, follow-up `extraTurns=1`); cancel with a queued follow-up ended `cancelled` with no live process; `AskUserQuestion` surfaced Red/Blue and `Blue` reached the model.
+- Still not verified: permission allow/deny. No `can_use_tool` request was observed in either attempt.
+- See [qoder-real-1.1.78/result.json](qoder-real-1.1.78/result.json), [qoder-real-1.1.78/events.jsonl](qoder-real-1.1.78/events.jsonl), [qoder-real-1.1.78/test-run.txt](qoder-real-1.1.78/test-run.txt), [qoder-interactions-1.1.78/summary.json](qoder-interactions-1.1.78/summary.json), and [qoder-interactions-1.1.78/run.log](qoder-interactions-1.1.78/run.log).
+
 > Note: the original temp state/work directories may be cleaned up; the artifacts relevant to each run are copied into these evidence folders.

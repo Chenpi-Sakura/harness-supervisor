@@ -1,0 +1,66 @@
+{
+  "cliVersion": "1.1.78",
+  "model": "DeepSeek-Flash",
+  "startedAt": "2026-10-25T10:37:24.844Z",
+  "scenarios": [
+    {
+      "name": "tool-call-auto",
+      "at": "2026-10-25T10:37:43.197Z",
+      "workerId": "w-mvnp1iap-312b7390",
+      "status": "completed",
+      "result": "HS_QODER_TOOL_OK",
+      "toolStarts": 1,
+      "tools": [
+        "Bash"
+      ],
+      "reflected": true
+    },
+    {
+      "name": "steer",
+      "at": "2026-10-25T10:37:59.645Z",
+      "workerId": "w-mvnp1w2m-321f7f31",
+      "status": "completed",
+      "messageSent": true,
+      "reflected": false,
+      "result": "1. The ocean covers about 71% of Earth's surface.\n2. More than 80% of it remains unexplored and unmapped.\n3. The Pacific is the largest and deepest ocean.\n4. The Mariana Trench's Challenger Deep is about 11,000 m down.\n5. Sunlight rarely reaches below 200 m, the \"twilight zone.\"\n6. The ocean holds r"
+    },
+    {
+      "name": "follow-up",
+      "at": "2026-10-25T10:38:16.648Z",
+      "workerId": "w-mvnp28rj-7b5015e6",
+      "status": "completed",
+      "messageSent": true,
+      "extraTurns": 1,
+      "reflected": false,
+      "result": "1. Mountains rise where the earth folds and lifts.\n2. Snow lingers on their peaks long after spring arrives.\n3. Their slopes shelter forests, rivers, and quiet valleys.\n4. Climbers test themselves against thin air and steep rock.\n5. From a summit, the world looks both smaller and clearer."
+    },
+    {
+      "name": "cancel-with-queued-follow-up",
+      "at": "2026-10-25T10:38:28.920Z",
+      "workerId": "w-mvnp2lvt-16d8b9fc",
+      "status": "cancelled",
+      "queuedFollowUpRecorded": true,
+      "queuedTextNeverRan": true,
+      "processAlive": false
+    },
+    {
+      "name": "ask-user-question",
+      "at": "2026-10-25T10:39:24.628Z",
+      "workerId": "w-mvnp3o0a-43cbeefd",
+      "title": "Qoder needs an answer",
+      "options": [
+        "Red",
+        "Blue"
+      ],
+      "chosen": "Blue",
+      "status": "completed",
+      "reflected": true,
+      "result": "Blue"
+    }
+  ],
+  "unverified": [
+    "permission-allow: no can_use_tool request was observed",
+    "permission-deny: no can_use_tool request was observed"
+  ],
+  "finishedAt": "2026-10-25T10:39:24.638Z"
+}

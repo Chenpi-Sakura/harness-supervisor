@@ -1,0 +1,47 @@
+{
+  "ranAt": "2026-10-25T10:37:13.971Z",
+  "host": "win32 10.0.26300 / Node v24.21.0",
+  "qodercliVersion": "1.1.78",
+  "model": "DeepSeek-Flash",
+  "permissionMode": "accept_edits",
+  "workerId": "w-mvnp0m2o-ef4da8e3",
+  "spawnReturnedMs": 7280,
+  "firstRun": {
+    "status": "completed",
+    "durationMs": 7454,
+    "result": "QODER_E2E_OK",
+    "sessionId": "9aae0c2c-bd76-4ad2-a871-afdbb131e7bd",
+    "sessionFilePresent": true,
+    "pid": 45408,
+    "usage": [
+      {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "total_cost_usd": 0,
+        "total_credits": 0
+      }
+    ]
+  },
+  "resumedRun": {
+    "status": "completed",
+    "result": "QODER_RESUME_OK",
+    "resumeCount": 1,
+    "sameSessionId": true,
+    "sameSessionFile": true,
+    "usage": [
+      {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "total_cost_usd": 0,
+        "total_credits": 0
+      }
+    ]
+  },
+  "daemonSurvived": true,
+  "usageNote": "usage arrays are the raw values reported by qodercli; zeros mean it did not report token/cost for these turns, not a claim of zero usage.",
+  "note": "Text-only run: no tools and no permission prompts. Raw Qoder session content was not copied."
+}

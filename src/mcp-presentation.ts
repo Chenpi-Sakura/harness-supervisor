@@ -76,6 +76,7 @@ function pendingOf(value: PendingInput | undefined): PendingInput | undefined {
   if (!value) return undefined;
   return {
     requestId: value.requestId,
+    ...(value.seq !== undefined ? { seq: value.seq } : {}),
     method: value.method,
     ...(value.title !== undefined ? { title: value.title } : {}),
     ...(value.message !== undefined ? { message: value.message } : {}),

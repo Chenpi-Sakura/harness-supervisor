@@ -66,15 +66,21 @@ CLI 数字按 `stdout.trimEnd()` 计，末尾换行属于输出框架，不计�
 
 `worker_wait` 不在上述表格里：它仍返回完整 result，但默认不再返回任何 `run.progress`（包括失败的工具调用），唯一例外是取消时记录的 `queue_cleared`。CLI `wait` 与 MCP 保持一致，`--include-progress` / `includeProgress=true` 才恢复工具调用。
 
-阶段 1 的新能力（显式完整读取、面间独立性、单条读取、CLI 默认与 `--full`）见 `stage1-capabilities.json`，脚本自带 14 项断言，全部通过时退出码为 0。其中显式面的独立性使用隔离夹具（8,040 字符结果 + 2,000 字符问题）：
+阶段 1 的新能力（显式完整读取、面间独立性、单条读取、CLI 默认与 `--full`）见 `stage1-capabilities.json`，脚本自带 18 项断言，全部通过时退出码为 0。其中显式面的独立性使用隔离夹具（8,040 字符结果、2,000 字符问题、failed Worker）：
 
-| 调用 | 结果面 | 输入面 | 字节 |
-|---|---|---|---|
-| `includeInput=true`（completed） | 预览 + `chars=8040` + `truncated=true` | 无 | 1267 |
-| `includeResult=true`（awaiting_input） | 无 | 预览 400 字符 + `chars=2000` + `truncated=true` | 843 |
-| `includeInput=true`（awaiting_input） | 无 | 全文 2000 字符 | 2401 |
-| `includeResult=true` + `includeInput=true` | 全文 8040 字符 | — | 8293 |
-| `includeResult=true` + `recentEvents=100` | 全文 | — | 17374（8 条生命周期事件，过滤 4 条 progress） |
+| 调用 | 结果面 | 输入面 | 事件 | 字节 |
+|---|---|---|---|---|
+| `includeInput=true`（completed） | 预览 + `chars=8040` + `truncated=true` | 无 | — | 1267 |
+| `includeInput=true` + `recentEvents=100`（completed） | 同上 | 无 | 8 条 summary，无 `data` | 1822 |
+| `includeResult=true`（awaiting_input） | 无 | 预览 400 字符 + `chars=2000` | — | 851 |
+| `includeResult=true` + `recentEvents=100`（awaiting_input） | 无 | 同上 | 6 条 summary，无 `data` | 1299 |
+| `includeInput=true`（awaiting_input） | 无 | 全文 2000 字符 | — | 2409 |
+| `includeInput=true`（failed） | `error` 预览 | 无 | — | 317 |
+| `includeResult=true`（failed） | `error` 全文 | 无 | — | 276 |
+| `includeResult=true` + `includeInput=true`（completed） | 全文 8040 字符 | — | — | 8293 |
+| `includeResult=true` + `recentEvents=100`（completed） | 全文 | — | 8 条 summary，过滤 4 条 progress | 8848 |
+
+显式读取的事件同样只返回紧凑摘要（无 `data`），完整事件只能经 `worker_events` 或 `seq` 取得。
 
 ## 构建、测试与环境
 

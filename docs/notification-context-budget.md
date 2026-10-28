@@ -95,7 +95,7 @@
 5. **不重复**。只有**当前运行**的 `run.completed` 正文与 `worker.result` 重复时才省略；历史完成事件（时间早于 `startedAt`）或无法核实的场景一律保留。
 6. **摘要不等于原文**。HS 存储的是归一化摘要（`preview` ≤1000 字符、`detail` ≤500）；完整对话在 runtime 的 session 文件中，由 `worker.session` 事件的 `sessionFile` 指向。按编号查找只能返回 HS 实际持有的内容，不能承诺完整原文。
 7. **等待与完整读取都不带工具调用**。`worker_wait` 默认不返回任何 `run.progress`——包括失败的工具调用；唯一例外是 `queue_cleared`（它记录取消时丢弃了多少条排队消息，是取消事实，不是工具数据）。`worker_status` 的完整读取同样过滤 progress。工具调用只能通过 `includeProgress=true` 或 `seq=<n>` 显式取得。
-8. **两个显式面互相独立**。`includeResult=true` 只放开结果面，`pendingInput` 仍是 `{preview, chars, truncated}`；`includeInput=true` 只放开输入面，`result` 仍是预览（`preview` ≤1000 字符）。只有两者同时为 `true` 才同时返回全文。
+8. **两个显式面互相独立**。`includeResult=true` 只放开结果面（含 `error`），`pendingInput` 仍是 `{preview, chars, truncated}`；`includeInput=true` 只放开输入面，`result`/`error` 仍是预览（`preview` ≤1000 字符）。只有两者同时为 `true` 才同时返回全文。显式读取同时请求 `recentEvents` 时，事件也只返回紧凑摘要，不能从事件旁路取回未请求面的全文。
 
 **默认预算（序列化 UTF-8 字节，不是 Token 估计）**：
 
@@ -244,8 +244,8 @@ IPC 不变是有意为之：内部消费者（CLI、MCP、测试）依赖完整�
 | 默认 `worker_events` | 序列化 **≤ 4 KiB**；返回 **0 条** `run.progress` | ✅ 293–1098 字节，`progress=0` |
 | 30 次工具调用 Worker 的默认读取 | 总量 **≤ 4 KiB**（阶段 0 实测 20172 字符） | ✅ status 2047 B + events 610 B |
 | 任意被省略的过程事件 | 可用 `seq` 单条取回，内容完整 | ✅ `run.progress` 单条 343 B，`data` 完整 |
-| 显式 `includeResult` / `includeInput` / `includeProgress` / CLI `--full` | 显式读取不受默认预算限制；每个面只放开自己 | ✅ 完整结果 8293 B；完整问题 2401 B；CLI `--full` 20029 / 41553 B |
-| 两个显式面互相独立 | 未请求的面保持精简预览 | ✅ 见 9.2 |
+| 显式 `includeResult` / `includeInput` / `includeProgress` / CLI `--full` | 显式读取不受默认预算限制；每个面只放开自己 | ✅ 完整结果 8293 B；完整问题 2409 B；CLI `--full` 20029 / 41553 B |
+| 两个显式面互相独立 | 未请求的面保持精简预览，`recentEvents` 也不能夹带全文 | ✅ 见 9.2 |
 | CLI / MCP / IPC | 分别有回归测试 | ✅ `cli.test.ts`、`mcp-modes.test.ts`、`mcp.test.ts`；IPC 契约未改 |
 | 度量 | 同时记录序列化大小；Token 用量无法取得时标记未知 | ✅ 只记录字符/字节；Token **未知** |
 
@@ -268,24 +268,28 @@ IPC 不变是有意为之：内部消费者（CLI、MCP、测试）依赖完整�
 
 失败与取消场景变大，是因为默认响应现在也带最多 10 条紧凑生命周期事件，绝对值仍在 1 KiB 以内。
 
-### 9.2 显式读取的独立性（隔离夹具：8,040 字符结果 + 2,000 字符问题）
+### 9.2 显式读取的独立性（隔离夹具：8,040 字符结果、2,000 字符问题、failed Worker）
 
-| 调用 | 结果面 | 输入面 | 字节 |
-|---|---|---|---|
-| `includeInput=true`（completed） | `preview` + `chars=8040` + `truncated=true` | 无 | 1267 |
-| `includeResult=true`（awaiting_input） | 无 | `{preview: 400 字符, chars: 2000, truncated: true}` | 843 |
-| `includeInput=true`（awaiting_input） | 无 | 全文 2000 字符 | 2401 |
-| `includeResult=true` + `includeInput=true`（completed） | 全文 8040 字符 | — | 8293 |
-| `includeResult=true` + `recentEvents=100`（completed） | 全文 8040 字符 | — | 17374；8 条生命周期事件，4 条 progress 被过滤 |
+| 调用 | 结果面 | 输入面 | 事件 | 字节 |
+|---|---|---|---|---|
+| `includeInput=true`（completed） | `preview` + `chars=8040` + `truncated=true` | 无 | — | 1267 |
+| `includeInput=true` + `recentEvents=100`（completed） | 同上 | 无 | 8 条 summary，无 `data` | 1822 |
+| `includeResult=true`（awaiting_input） | 无 | 400 字符预览 + `chars=2000` + `truncated=true` | — | 851 |
+| `includeResult=true` + `recentEvents=100`（awaiting_input） | 无 | 同上 | 6 条 summary，无 `data` | 1299 |
+| `includeInput=true`（awaiting_input） | 无 | 全文 2000 字符 | — | 2409 |
+| `includeInput=true`（failed） | `error` 预览（带 `chars`/`truncated`） | 无 | — | 317 |
+| `includeResult=true`（failed） | `error` 全文 | 无 | — | 276 |
+| `includeResult=true` + `includeInput=true`（completed） | 全文 8040 字符 | — | — | 8293 |
+| `includeResult=true` + `recentEvents=100`（completed） | 全文 8040 字符 | — | 8 条 summary，4 条 progress 被过滤 | 8848 |
 
-这组数据同时说明：显式读取不受 2 KiB 默认预算约束；未请求的面不会被顺带放大；`recentEvents` 的完整读取仍不返回工具调用。
+这组数据说明：显式读取不受 2 KiB 默认预算约束；未请求的面只返回带标记的预览；`recentEvents` 在显式读取中同样只返回紧凑摘要（无 `data`），因此不能从事件旁路取回另一面的全文。完整事件仍可通过 `worker_events` 或 `seq=<n>` 读取。
 
 ### 9.3 构建、测试与复现
 
 - 构建：`npx tsc -p tsconfig.json --outDir .smoke-stage1/dist`（隔离输出，未重建生产 `dist`）；
 - 类型检查：`npx tsc -p tsconfig.json --noEmit`，退出码 0；
 - 完整回归：`node .smoke-stage1/test/run.mjs`（272 个测试，270 通过，2 跳过，0 失败）；
-- 能力测量：`HS_DIST_DIR=.smoke-stage1/dist node evidence/context-budget-baseline/measure-stage1.mjs`，14 项预算/独立性断言全部通过，退出码 0；
+- 能力测量：`HS_DIST_DIR=.smoke-stage1/dist node evidence/context-budget-baseline/measure-stage1.mjs`，18 项预算/独立性断言全部通过，退出码 0；
 - 原始输出：`stage1-after.json`、`stage1-capabilities.json`、`test-suite-stage1.txt`。
 - 环境与限制：Windows + Node v24.21.0；生产 daemon 0.5.0 只读访问；真实 Codex Desktop 的模型侧行为未验证，Token 用量未知。
 
@@ -302,11 +306,11 @@ IPC 不变是有意为之：内部消费者（CLI、MCP、测试）依赖完整�
 
 | 风险 | 应对 |
 |---|---|
-| 改默认返回破坏现有调用方 | production/development 分层；显式参数保持旧行为 |
+| 改默认返回破坏现有调用方 | production/development 分层；显式参数可恢复全文，但两个面需分别请求，未请求面保持预览 |
 | 读取分层导致多次往返 | L0 一次到位，L1 给目录，L2 逐条 |
 | 归因错误，把旁路算到 Worker 头上 | 先取证再改措辞 |
 | 把护栏描述为安全隔离 | 文档与报告中显式标注"非安全边界" |
 | 需求蔓延 | 每次迭代对照第 4.7 节的"不做"边界 |
-| 显式 `includeResult` / `includeInput` 会超出 2 KiB | 这是调用方明确请求；未请求的面仍是预览，测试固定字段形状 |
-| `includeResult` 与 `recentEvents` 同传时仍返回完整生命周期事件 | 保留改动前行为；默认不带 `recentEvents`，进度事件仍被过滤 |
+| 显式 `includeResult` / `includeInput` 会超出 2 KiB | 这是调用方明确请求；未请求的面只给上限 1000 字符的预览，并以 `chars`/`truncated` 标记 |
+| 显式面与 `recentEvents` 同传时事件可能夹带未请求面 | 显式读取的事件也只返回紧凑摘要（无 `data`）；全文只能经 `worker_events`/`seq` 取得 |
 | `worker_wait` 仍返回完整 result（阶段 0 实测 2–5 KB），但不再带工具调用 | 有意保留结果：它是拿最终答案的主路径，缩成预览会让绝大多数调用多一跳。阶段 1 不处理，若后续测量证明它成为主要开销再单列 |

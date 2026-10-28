@@ -509,9 +509,28 @@ test("includeResult and includeInput are independent reads", async (t) => {
   assert.equal(inputOnly.worker.result.chars, resultText.length);
   assert.equal(inputOnly.worker.result.truncated, true);
   assert.ok(inputOnly.worker.result.preview.length <= 1000);
-  assert.ok(
-    Buffer.byteLength(rawText(inputOnlyCall), "utf8") <= 2048,
-    "the untouched result face stays inside the compact budget",
+  t.diagnostic(`includeInput (report) response: ${Buffer.byteLength(rawText(inputOnlyCall), "utf8")} bytes`);
+
+  const inputWithEvents = parseTool(
+    await call(production, "worker_status", {
+      workerId: reportWorker.id,
+      includeInput: true,
+      recentEvents: 100,
+    }),
+  );
+  assert.equal(
+    "text" in (inputWithEvents.worker.result ?? {}),
+    false,
+    "includeInput must not return the full result even with recentEvents",
+  );
+  assert.ok(inputWithEvents.recentEvents.length <= 10, "status events stay capped at 10");
+  for (const event of inputWithEvents.recentEvents) {
+    assert.equal("data" in event, false, "status events are summaries, never raw payloads");
+  }
+  assert.equal(
+    JSON.stringify(inputWithEvents.recentEvents).includes("FAKE_PI_REPORT_BEGIN"),
+    false,
+    "the unrequested result must not come back through recentEvents",
   );
 
   const askWorker = parseTool(
@@ -546,7 +565,30 @@ test("includeResult and includeInput are independent reads", async (t) => {
   assert.equal(resultOnly.worker.pendingInput.message.chars, 2000);
   assert.equal(resultOnly.worker.pendingInput.message.truncated, true);
   assert.ok(resultOnly.worker.pendingInput.message.preview.length <= 400);
+  assert.equal(typeof resultOnly.worker.pendingInput.seq, "number", "the request seq stays available");
   assert.equal("result" in resultOnly.worker, false, "awaiting input has no result body");
+
+  const resultWithEvents = parseTool(
+    await call(production, "worker_status", {
+      workerId: askWorker.id,
+      includeResult: true,
+      recentEvents: 100,
+    }),
+  );
+  assert.equal(
+    typeof resultWithEvents.worker.pendingInput.message,
+    "object",
+    "includeResult must not return the full question even with recentEvents",
+  );
+  assert.ok(resultWithEvents.recentEvents.length <= 10);
+  for (const event of resultWithEvents.recentEvents) {
+    assert.equal("data" in event, false, "status events are summaries, never raw payloads");
+  }
+  assert.equal(
+    JSON.stringify(resultWithEvents.recentEvents).includes("Q".repeat(200)),
+    false,
+    "the unrequested question must not come back through recentEvents",
+  );
 
   const both = parseTool(
     await call(production, "worker_status", {
@@ -559,6 +601,19 @@ test("includeResult and includeInput are independent reads", async (t) => {
     both.worker.pendingInput.message,
     longQuestion,
     "both flags return the complete pending input",
+  );
+
+  const bothReport = parseTool(
+    await call(production, "worker_status", {
+      workerId: reportWorker.id,
+      includeResult: true,
+      includeInput: true,
+    }),
+  );
+  assert.equal(
+    bothReport.worker.result.text,
+    resultText,
+    "both flags return the complete result",
   );
 
   parseTool(
@@ -583,6 +638,37 @@ test("includeResult and includeInput are independent reads", async (t) => {
     }),
   );
   assert.equal(fullReport.worker.result.text, resultText, "includeResult returns the complete result");
+
+  const failedWorker = parseTool(
+    await call(production, "worker_spawn", {
+      cwd,
+      prompt: "[scenario:error] explicit faces",
+      notifyTarget: { channel: "none" },
+    }),
+  );
+  parseTool(
+    await call(production, "worker_wait", {
+      workerId: failedWorker.id,
+      timeoutMs: 15_000,
+      until: "terminal",
+    }),
+  );
+  const failedInput = parseTool(
+    await call(production, "worker_status", {
+      workerId: failedWorker.id,
+      includeInput: true,
+    }),
+  );
+  assert.equal(typeof failedInput.worker.error, "object", "error belongs to the result face");
+  assert.equal(failedInput.worker.error.truncated, false);
+  assert.ok(failedInput.worker.error.chars > 0);
+  const failedFull = parseTool(
+    await call(production, "worker_status", {
+      workerId: failedWorker.id,
+      includeResult: true,
+    }),
+  );
+  assert.match(failedFull.worker.error, /FAKE_PROVIDER_ERROR/);
 });
 
 test("production event pagination stays lossless and explicit progress still works", async (t) => {

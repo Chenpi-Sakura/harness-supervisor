@@ -8,9 +8,11 @@ import { resolveStateDir, NotifyTargetSchema } from "./ipc/protocol.js";
 import {
   EVENTS_BUDGET_BYTES,
   MAX_COMPACT_EVENTS,
+  MAX_EVENT_SUMMARY_CHARS,
   MAX_PENDING_MESSAGE_CHARS,
   MAX_RESULT_PREVIEW_CHARS,
   STATUS_BUDGET_BYTES,
+  compactEvent,
   compactPendingInput,
   compactStatus,
   lifecycleEvents,
@@ -250,7 +252,7 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   spawn:
     "Start an independent native harness process (Pi by default) in its own working directory. Returns when the prompt is accepted, not when the task completes. Keep the returned id/lastSeq and observe with worker_wait or worker_status. Pass notifyTarget only for a verified destination; omission snapshots the daemon default for new workers.",
   status:
-    "Return the current status, a bounded result preview (chars/truncated), a bounded pending input and the lastSeq cursor. The default response stays within 2 KiB and includes at most 10 compact lifecycle events; run.progress is never included. includeResult=true returns the full result, includeInput=true returns the complete pending input; each is independent and the other face stays a bounded preview. Both still exclude run.progress; use worker_events for tool calls.",
+    "Return the current status, a bounded result preview (chars/truncated), a bounded pending input and the lastSeq cursor. The default response stays within 2 KiB and includes at most 10 compact lifecycle events; run.progress is never included. includeResult=true returns the full result (error belongs to this face), includeInput=true returns the complete pending input; each is independent and the other face stays a bounded preview. In production, status events are always compact summaries (at most 10, even with recentEvents); full event payloads come only from worker_events or seq=<n>. Both explicit faces still exclude run.progress.",
   list:
     "List managed workers (newest first) with id, name, runtime, status and lastSeq. State persists across daemon restarts.",
   events:
@@ -392,7 +394,7 @@ server.registerTool(
         .boolean()
         .optional()
         .describe(
-          "Return the complete pending input (production only). The result stays a preview; pass includeResult=true as well for both. Still no run.progress",
+          "Return the complete pending input (production only). The result/error face stays a bounded preview; pass includeResult=true as well for both. Still no run.progress",
         ),
     },
   },
@@ -423,23 +425,34 @@ server.registerTool(
       // return the full result. Only the requested face is exempt from the
       // default budget; the other one keeps a bounded preview.
       const includeRecentEvents = args.recentEvents !== undefined;
+      const requestedEvents = args.recentEvents ?? 0;
       const result = await client.request<WorkerStatusResult>("status", {
         workerId: args.workerId,
-        recentEvents: includeRecentEvents ? args.recentEvents : 0,
+        recentEvents: includeRecentEvents ? requestedEvents : 0,
       });
-      let progressOmitted = 0;
-      if (includeRecentEvents) {
-        // The complete read still must not smuggle tool calls in through
-        // `recentEvents`: the caller asked for the full result/input, not progress.
-        const visible = lifecycleEvents(result.recentEvents);
-        progressOmitted = result.recentEvents.length - visible.length;
-        result.recentEvents = visible;
-      }
-      const presented = presentStatus(result, mode, { includeRecentEvents }) as {
+      // Status events are always compact summaries in production. Returning the
+      // raw stored payload here would smuggle the unrequested face back in
+      // (`run.completed.data.text`, `run.failed.data.error`,
+      // `run.needs_input.data.message`). Full events stay in worker_events/seq.
+      const eventLimit = Math.min(requestedEvents, MAX_COMPACT_EVENTS);
+      const lifecycle = lifecycleEvents(result.recentEvents);
+      const kept = lifecycle.slice(Math.max(0, lifecycle.length - eventLimit));
+      const presented = presentStatus(
+        { ...result, recentEvents: [] },
+        mode,
+        { includeRecentEvents: false },
+      ) as {
         worker: { result?: unknown; error?: unknown; pendingInput?: unknown; [key: string]: unknown };
+        recentEvents?: unknown[];
         eventsOmitted?: number;
       };
-      if (progressOmitted > 0) presented.eventsOmitted = progressOmitted;
+      if (includeRecentEvents) {
+        presented.recentEvents = kept.map((event) =>
+          compactEvent(event, result.worker, MAX_EVENT_SUMMARY_CHARS),
+        );
+        const omitted = result.recentEvents.length - kept.length;
+        if (omitted > 0) presented.eventsOmitted = omitted;
+      }
       if (args.includeResult !== true) {
         if (result.worker.result) {
           presented.worker.result = resultPreview(

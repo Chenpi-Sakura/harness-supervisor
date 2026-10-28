@@ -228,6 +228,7 @@ export function compactPendingInput(input: PendingInput | undefined, messageChar
   const options = input.options?.slice(0, MAX_PENDING_OPTIONS);
   return {
     requestId: input.requestId,
+    ...(input.seq !== undefined ? { seq: input.seq } : {}),
     method: input.method,
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.message !== undefined ? { message: textPreview(input.message, messageChars) } : {}),

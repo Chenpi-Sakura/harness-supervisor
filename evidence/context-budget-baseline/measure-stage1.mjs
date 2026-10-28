@@ -215,6 +215,32 @@ const askWait = await mcpCalls(
 );
 const question = askWait[0].parsed?.worker?.pendingInput?.message ?? "";
 
+const failedSpawn = await mcpCalls(
+  [
+    {
+      label: "spawn failed",
+      name: "worker_spawn",
+      args: {
+        cwd: faceCwd,
+        prompt: "[scenario:error] stage1 faces",
+        notifyTarget: { channel: "none" },
+      },
+    },
+  ],
+  faceEnv,
+);
+const failedId = failedSpawn[0].parsed?.id;
+await mcpCalls(
+  [
+    {
+      label: "wait failed",
+      name: "worker_wait",
+      args: { workerId: failedId, timeoutMs: 20_000, until: "terminal" },
+    },
+  ],
+  faceEnv,
+);
+
 const faceCalls = await mcpCalls(
   [
     {
@@ -223,9 +249,19 @@ const faceCalls = await mcpCalls(
       args: { workerId: reportId, includeInput: true },
     },
     {
+      label: "mcp status includeInput recentEvents=100 (report)",
+      name: "worker_status",
+      args: { workerId: reportId, includeInput: true, recentEvents: 100 },
+    },
+    {
       label: "mcp status includeResult (ask)",
       name: "worker_status",
       args: { workerId: askId, includeResult: true },
+    },
+    {
+      label: "mcp status includeResult recentEvents=100 (ask)",
+      name: "worker_status",
+      args: { workerId: askId, includeResult: true, recentEvents: 100 },
     },
     {
       label: "mcp status includeInput (ask)",
@@ -236,6 +272,16 @@ const faceCalls = await mcpCalls(
       label: "mcp status both (report)",
       name: "worker_status",
       args: { workerId: reportId, includeResult: true, includeInput: true },
+    },
+    {
+      label: "mcp status includeInput (failed)",
+      name: "worker_status",
+      args: { workerId: failedId, includeInput: true },
+    },
+    {
+      label: "mcp status includeResult (failed)",
+      name: "worker_status",
+      args: { workerId: failedId, includeResult: true },
     },
     {
       label: "mcp status includeResult recentEvents=100 (report)",
@@ -249,6 +295,8 @@ const faceCalls = await mcpCalls(
 const faceRows = faceCalls.map((row) => {
   const worker = row.parsed?.worker ?? {};
   const message = worker.pendingInput?.message;
+  const events = Array.isArray(row.parsed?.recentEvents) ? row.parsed.recentEvents : [];
+  const eventsJson = JSON.stringify(events);
   return {
     interface: "mcp",
     label: row.label,
@@ -259,6 +307,14 @@ const faceRows = faceCalls.map((row) => {
     resultPreview: typeof worker.result?.preview === "string",
     resultChars: worker.result?.chars,
     resultTruncated: worker.result?.truncated,
+    errorText: typeof worker.error === "string",
+    errorPreview: worker.error !== null && typeof worker.error === "object",
+    errorChars:
+      typeof worker.error === "string"
+        ? worker.error.length
+        : typeof worker.error === "object" && worker.error !== null
+          ? worker.error.chars
+          : undefined,
     inputText: typeof message === "string",
     inputPreview: message !== null && typeof message === "object",
     inputChars: typeof message === "string" ? message.length : message?.chars,
@@ -267,10 +323,11 @@ const faceRows = faceCalls.map((row) => {
       typeof message === "object" && message !== null && typeof message.preview === "string"
         ? message.preview.length
         : undefined,
-    events: Array.isArray(row.parsed?.recentEvents) ? row.parsed.recentEvents.length : 0,
-    progress: (row.parsed?.recentEvents ?? []).filter(
-      (event) => event?.type === "run.progress",
-    ).length,
+    events: events.length,
+    eventData: events.some((event) => event !== null && typeof event === "object" && "data" in event),
+    containsReportBody: eventsJson.includes("FAKE_PI_REPORT_BEGIN"),
+    containsQuestionBody: eventsJson.includes("Q".repeat(200)),
+    progress: events.filter((event) => event?.type === "run.progress").length,
     eventsOmitted: row.parsed?.eventsOmitted,
   };
 });
@@ -337,8 +394,36 @@ const checks = [
       (face("mcp status includeInput (report)").resultChars ?? 0) >= 8000,
   },
   {
-    name: "includeInput alone stays within the compact budget",
-    pass: (face("mcp status includeInput (report)").bytes ?? Infinity) <= 2048,
+    name: "includeInput preview is bounded and marked",
+    pass:
+      (face("mcp status includeInput (report)").resultChars ?? 0) >= 8000 &&
+      face("mcp status includeInput (report)").resultTruncated === true,
+  },
+  {
+    name: "includeInput + recentEvents never returns event payloads",
+    pass:
+      face("mcp status includeInput recentEvents=100 (report)").eventData === false &&
+      face("mcp status includeInput recentEvents=100 (report)").containsReportBody === false &&
+      (face("mcp status includeInput recentEvents=100 (report)").events ?? 1) <= 10,
+  },
+  {
+    name: "includeResult + recentEvents never returns the full question",
+    pass:
+      face("mcp status includeResult recentEvents=100 (ask)").inputPreview === true &&
+      face("mcp status includeResult recentEvents=100 (ask)").containsQuestionBody === false &&
+      face("mcp status includeResult recentEvents=100 (ask)").eventData === false &&
+      (face("mcp status includeResult recentEvents=100 (ask)").events ?? 1) <= 10,
+  },
+  {
+    name: "includeInput keeps the failed worker error a preview",
+    pass:
+      face("mcp status includeInput (failed)").errorPreview === true &&
+      face("mcp status includeInput (failed)").errorText === false &&
+      (face("mcp status includeInput (failed)").errorChars ?? 0) > 0,
+  },
+  {
+    name: "includeResult returns the complete failed worker error",
+    pass: face("mcp status includeResult (failed)").errorText === true,
   },
   {
     name: "includeInput returns the complete question",
@@ -348,10 +433,12 @@ const checks = [
       question.length === 2000,
   },
   {
-    name: "includeResult with recentEvents stays compact and progress-free",
+    name: "includeResult with recentEvents is progress-free and summary-only",
     pass:
       (face("mcp status includeResult recentEvents=100 (report)").events ?? 1) <= 10 &&
-      (face("mcp status includeResult recentEvents=100 (report)").progress ?? 1) === 0,
+      (face("mcp status includeResult recentEvents=100 (report)").progress ?? 1) === 0 &&
+      face("mcp status includeResult recentEvents=100 (report)").eventData === false &&
+      face("mcp status includeResult recentEvents=100 (report)").containsReportBody === false,
   },
 ];
 

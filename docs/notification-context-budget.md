@@ -220,7 +220,7 @@ IPC 不变是有意为之：内部消费者（CLI、MCP、测试）依赖完整�
 | 编号 | 未知 | 影响 |
 |---|---|---|
 | V1 | Codex Desktop 的 app-server 是否可达（本机 CLI 托管 socket 不存在） | N5 是否可行 |
-| V2 | `turn/steer` 的输入是否触发 `UserPromptSubmit` hook | N5 与 0.4.4 闸门的关系 |
+| V2 | `turn/steer` 的输入是否触发 `UserPromptSubmit` hook | 不再验证：0.5.x 已移除该 Hook，N5 不依赖消费前闸门 |
 | V3 | 工具调用阻塞期间 steer 内容何时被模型看到 | N5 的实际收益 |
 
 **纪律**：V1–V3 未通过前，不修改投递架构。阶段 1 与这三项无关，可独立推进。

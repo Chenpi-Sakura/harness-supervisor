@@ -367,7 +367,9 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 
 ### 关键语义
 
-0.4.4 提供可选的 [Codex 消费前 ACK 过滤器](docs/codex-ack-gate.md)，处理“队列已接受、随后 ACK、再到聊天”的迟到消息。需要在目标电脑安装并信任原生 hook，仅升级 Daemon 不会自动启用。`supervisor_notifications(includeDelivery=true)` 可按需返回投递时序，默认输出保持精简。
+0.4.4 的可选 Codex 消费前 ACK hook 已在 0.5.x 移除：不再发布 `harness-supervisor-codex-hook` 与安装器，也不再产生 `notification-gate.jsonl`。收件箱、ACK、重试与投递前失效检查保留，`supervisor_notifications(includeDelivery=true)` 仍可查看投递时序。
+
+如果机器上安装过旧 hook，HS **不会自动修改** `~/.codex/hooks.json`。请在重新构建/升级该机器的 `dist` 之前，用 Codex `/hooks` 禁用或手动删除对应的 `UserPromptSubmit` 组（命令形如 `node '<repo>/dist/src/codex-notification-hook.js' --state-dir '<stateDir>'`）。`tsc` 不会删除已移除源文件对应的旧产物；需要先停止并保护 Daemon，再执行 `npm run clean` 后重新 `npm run build`，否则旧构建里的 hook 文件会继续存在。清理后该入口消失，未清理的 hooks.json 会指向不存在的文件。迁移只动用户自己的配置，HS 不代删。
 
 - `spawn` 返回时任务尚未完成；终态以 `wait` / `status` 为准。
 - `worker_wait` 是有界等待，超时不代表失败；不带游标时先检查当前状态，避免白等。

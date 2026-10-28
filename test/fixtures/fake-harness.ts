@@ -213,7 +213,14 @@ async function runPrompt(prompt) {
       id: uiId,
       method: "confirm",
       title: "Approve fake step?",
-      message: "The fake harness needs permission to continue.",
+      message: process.env.FAKE_PI_UI_MESSAGE_CHARS
+        ? "Q".repeat(
+            Math.max(
+              1,
+              Math.min(Number(process.env.FAKE_PI_UI_MESSAGE_CHARS) || 1, 6000),
+            ),
+          )
+        : "The fake harness needs permission to continue.",
       ...(process.env.FAKE_PI_UI_TIMEOUT
         ? { timeout: Number(process.env.FAKE_PI_UI_TIMEOUT) }
         : {}),

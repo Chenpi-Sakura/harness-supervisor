@@ -205,14 +205,21 @@ test("production hides diagnostics while development keeps the legacy status pay
   );
   assert.deepEqual(spawned.notifyTarget, { channel: "none" });
 
-  const status = parseTool(
-    await call(production, "worker_status", { workerId: spawned.id }),
-  );
+  const statusCall = await call(production, "worker_status", { workerId: spawned.id });
+  const status = parseTool(statusCall);
   assert.equal(status.worker.id, spawned.id);
   assert.equal(status.worker.status, "running");
   assert.equal(status.worker.lastSeq > 0, true);
-  assert.equal("recentEvents" in status, false, "production status omits events unless requested");
+  assert.equal(Array.isArray(status.recentEvents), true, "compact status returns lifecycle events");
+  assert.ok(status.recentEvents.length <= 10, "compact status is capped at 10 lifecycle events");
+  for (const event of status.recentEvents) {
+    assert.notEqual(event.type, "run.progress", "compact status never returns progress");
+  }
   assert.equal("stderrTail" in status, false);
+  assert.ok(
+    Buffer.byteLength(rawText(statusCall), "utf8") <= 2048,
+    "compact status stays within the 2 KiB default budget",
+  );
   for (const field of [
     "pid",
     "sessionId",
@@ -327,6 +334,22 @@ test("production returns a complete report once, answers native input, and prese
   assert.ok(completedEvent);
   assert.equal("text" in (completedEvent.data ?? {}), false, "run.completed must not repeat result.text");
 
+  const compactReportCall = await call(production, "worker_status", { workerId: reportWorker.id });
+  const compactReport = parseTool(compactReportCall);
+  assert.ok(
+    Buffer.byteLength(rawText(compactReportCall), "utf8") <= 2048,
+    "a 20k-char result still fits the 2 KiB default budget",
+  );
+  assert.equal(compactReport.worker.result.chars, reportText.length, "the preview reports the real length");
+  assert.equal(compactReport.worker.result.truncated, true);
+  assert.ok(compactReport.worker.result.preview.length < reportText.length);
+
+  const fullReport = parseTool(
+    await call(production, "worker_status", { workerId: reportWorker.id, includeResult: true }),
+  );
+  assert.equal(fullReport.worker.result.text, reportText, "includeResult=true still returns the complete result");
+  assert.equal(fullReport.worker.result.truncated, false);
+
   const developmentWait = parseTool(
     await call(development, "worker_wait", {
       workerId: reportWorker.id,
@@ -375,6 +398,21 @@ test("production returns a complete report once, answers native input, and prese
   assert.equal(pending.title, "Approve fake step?");
   assert.equal(pending.message, "The fake harness needs permission to continue.");
   assert.equal("pid" in waiting.worker, false);
+
+  const compactAsk = parseTool(
+    await call(production, "worker_status", { workerId: askWorker.id }),
+  );
+  assert.equal(typeof compactAsk.worker.pendingInput.message, "object", "the compact view marks the question");
+  assert.equal(typeof compactAsk.worker.pendingInput.message.chars, "number");
+  assert.equal(compactAsk.worker.pendingInput.message.truncated, false);
+  const fullAsk = parseTool(
+    await call(production, "worker_status", { workerId: askWorker.id, includeInput: true }),
+  );
+  assert.equal(
+    fullAsk.worker.pendingInput.message,
+    "The fake harness needs permission to continue.",
+    "includeInput returns the complete pending input",
+  );
   const answered = parseTool(
     await call(production, "worker_answer", {
       workerId: askWorker.id,
@@ -432,6 +470,121 @@ test("production returns a complete report once, answers native input, and prese
   parseTool(await call(production, "worker_wait", { workerId: first.id, timeoutMs: 15_000 }));
 });
 
+test("includeResult and includeInput are independent reads", async (t) => {
+  const daemon = await TestDaemon.create("hs-mcp-faces-");
+  t.after(() => daemon.stop());
+  const cwd = await makeWorkspace();
+  await daemon.start({
+    env: { FAKE_PI_REPORT_CHARS: "8000", FAKE_PI_UI_MESSAGE_CHARS: "2000" },
+  });
+  const production = await connectMcp(t, daemon.stateDir, {});
+
+  const reportWorker = parseTool(
+    await call(production, "worker_spawn", {
+      cwd,
+      prompt: "[scenario:report] explicit faces",
+      notifyTarget: { channel: "none" },
+    }),
+  );
+  const reportWait = parseTool(
+    await call(production, "worker_wait", {
+      workerId: reportWorker.id,
+      timeoutMs: 20_000,
+      until: "terminal",
+    }),
+  );
+  const resultText: string = reportWait.worker.result.text;
+  assert.ok(resultText.length >= 8000);
+
+  const inputOnlyCall = await call(production, "worker_status", {
+    workerId: reportWorker.id,
+    includeInput: true,
+  });
+  const inputOnly = parseTool(inputOnlyCall);
+  assert.equal(
+    "text" in (inputOnly.worker.result ?? {}),
+    false,
+    "includeInput must not return the full result",
+  );
+  assert.equal(inputOnly.worker.result.chars, resultText.length);
+  assert.equal(inputOnly.worker.result.truncated, true);
+  assert.ok(inputOnly.worker.result.preview.length <= 1000);
+  assert.ok(
+    Buffer.byteLength(rawText(inputOnlyCall), "utf8") <= 2048,
+    "the untouched result face stays inside the compact budget",
+  );
+
+  const askWorker = parseTool(
+    await call(production, "worker_spawn", {
+      cwd,
+      prompt: "[scenario:ask] explicit faces",
+      notifyTarget: { channel: "none" },
+    }),
+  );
+  const waiting = parseTool(
+    await call(production, "worker_wait", {
+      workerId: askWorker.id,
+      timeoutMs: 15_000,
+      until: "terminal",
+    }),
+  );
+  assert.equal(waiting.worker.status, "awaiting_input");
+  const longQuestion: string = waiting.worker.pendingInput.message;
+  assert.equal(longQuestion.length, 2000);
+
+  const resultOnly = parseTool(
+    await call(production, "worker_status", {
+      workerId: askWorker.id,
+      includeResult: true,
+    }),
+  );
+  assert.equal(
+    typeof resultOnly.worker.pendingInput.message,
+    "object",
+    "includeResult must keep the question a bounded preview",
+  );
+  assert.equal(resultOnly.worker.pendingInput.message.chars, 2000);
+  assert.equal(resultOnly.worker.pendingInput.message.truncated, true);
+  assert.ok(resultOnly.worker.pendingInput.message.preview.length <= 400);
+  assert.equal("result" in resultOnly.worker, false, "awaiting input has no result body");
+
+  const both = parseTool(
+    await call(production, "worker_status", {
+      workerId: askWorker.id,
+      includeResult: true,
+      includeInput: true,
+    }),
+  );
+  assert.equal(
+    both.worker.pendingInput.message,
+    longQuestion,
+    "both flags return the complete pending input",
+  );
+
+  parseTool(
+    await call(production, "worker_answer", {
+      workerId: askWorker.id,
+      requestId: waiting.worker.pendingInput.requestId,
+      confirmed: true,
+    }),
+  );
+  parseTool(
+    await call(production, "worker_wait", {
+      workerId: askWorker.id,
+      timeoutMs: 15_000,
+      until: "terminal",
+    }),
+  );
+
+  const fullReport = parseTool(
+    await call(production, "worker_status", {
+      workerId: reportWorker.id,
+      includeResult: true,
+    }),
+  );
+  assert.equal(fullReport.worker.result.text, resultText, "includeResult returns the complete result");
+});
+
 test("production event pagination stays lossless and explicit progress still works", async (t) => {
   const daemon = await TestDaemon.create("hs-mcp-events-");
   t.after(() => daemon.stop());
@@ -454,11 +607,26 @@ test("production event pagination stays lossless and explicit progress still wor
     }),
   );
 
+  const compactCall = await call(production, "worker_events", { workerId: worker.id });
+  const compact = parseTool(compactCall);
+  assert.equal(
+    compact.events.some((event: { type: string }) => event.type === "run.progress"),
+    false,
+    "the compact default never returns progress",
+  );
+  assert.ok(compact.events.length <= 10, "the compact default is capped at 10 lifecycle events");
+  assert.ok(compact.progressOmitted > 0, "the fixture run stores progress events");
+  assert.ok(
+    Buffer.byteLength(rawText(compactCall), "utf8") <= 4096,
+    "compact events stay within the 4 KiB default budget",
+  );
+
   const firstPage = parseTool(
     await call(production, "worker_events", {
       workerId: worker.id,
       sinceSeq: 0,
       limit: 2,
+      includeProgress: true,
     }),
   );
   assert.equal(firstPage.events.length, 2);
@@ -475,6 +643,7 @@ test("production event pagination stays lossless and explicit progress still wor
       workerId: worker.id,
       sinceSeq: firstPage.nextSeq,
       limit: 500,
+      includeProgress: true,
     }),
   );
   const firstSeqs = new Set(firstPage.events.map((event: { seq: number }) => event.seq));
@@ -501,9 +670,127 @@ test("production event pagination stays lossless and explicit progress still wor
     "includeProgress=true must still deliver progress in production",
   );
 
+  const progressSeq = withProgress.events.find(
+    (event: { type: string }) => event.type === "run.progress",
+  ).seq;
+  const single = parseTool(
+    await call(production, "worker_events", { workerId: worker.id, seq: progressSeq }),
+  );
+  assert.equal(single.event.seq, progressSeq, "a single event is readable by seq");
+  assert.equal(single.event.type, "run.progress", "single-event reads bypass the progress filter");
+  assert.equal(typeof single.event.data, "object", "single-event reads keep the full stored data");
+
   const list = parseTool(await call(production, "worker_list", {}));
   assert.equal(list.length, 1);
   assert.deepEqual(Object.keys(list[0]).sort(), ["id", "lastSeq", "runtime", "status", "taskId"]);
+});
+
+test("compact failure status is bounded and the full error stays retrievable", async (t) => {
+  const daemon = await TestDaemon.create("hs-mcp-fail-");
+  t.after(() => daemon.stop());
+  const cwd = await makeWorkspace();
+  await daemon.start();
+  const production = await connectMcp(t, daemon.stateDir, {});
+
+  const worker = parseTool(
+    await call(production, "worker_spawn", {
+      cwd,
+      prompt: "[scenario:error] compact failure",
+      notifyTarget: { channel: "none" },
+    }),
+  );
+  parseTool(
+    await call(production, "worker_wait", {
+      workerId: worker.id,
+      timeoutMs: 20_000,
+      until: "terminal",
+    }),
+  );
+
+  const statusCall = await call(production, "worker_status", { workerId: worker.id });
+  const status = parseTool(statusCall);
+  assert.equal(status.worker.status, "failed");
+  assert.ok(status.worker.error.chars > 0, "the error is never dropped from the compact view");
+  assert.ok(
+    Buffer.byteLength(rawText(statusCall), "utf8") <= 2048,
+    "compact failure status stays within 2 KiB",
+  );
+
+  const full = parseTool(
+    await call(production, "worker_status", { workerId: worker.id, includeResult: true }),
+  );
+  assert.equal(full.worker.status, "failed");
+  assert.equal(typeof full.worker.error, "string");
+  assert.ok(full.worker.error.length > 0);
+});
+
+test("complete status and default wait never leak tool calls", async (t) => {
+  const daemon = await TestDaemon.create("hs-mcp-leak-");
+  t.after(() => daemon.stop());
+  const cwd = await makeWorkspace();
+  await daemon.start();
+  const production = await connectMcp(t, daemon.stateDir, {});
+
+  const worker = parseTool(
+    await call(production, "worker_spawn", {
+      cwd,
+      prompt: "[scenario:tool-error] leak check",
+      notifyTarget: { channel: "none" },
+    }),
+  );
+  parseTool(
+    await call(production, "worker_wait", {
+      workerId: worker.id,
+      timeoutMs: 20_000,
+      until: "terminal",
+    }),
+  );
+
+  // The complete read returns the full result/input, but `recentEvents` must
+  // still be lifecycle-only: asking for the payload is not asking for tool calls.
+  const fullStatus = parseTool(
+    await call(production, "worker_status", {
+      workerId: worker.id,
+      includeResult: true,
+      recentEvents: 100,
+    }),
+  );
+  assert.equal(
+    fullStatus.recentEvents.some((event: { type: string }) => event.type === "run.progress"),
+    false,
+    "the complete status read must not smuggle progress in through recentEvents",
+  );
+  assert.ok(fullStatus.eventsOmitted > 0, "the omitted progress is counted");
+
+  const waited = parseTool(
+    await call(production, "worker_wait", {
+      workerId: worker.id,
+      sinceSeq: 0,
+      timeoutMs: 5_000,
+    }),
+  );
+  assert.equal(
+    waited.events.some((event: { type: string }) => event.type === "run.progress"),
+    false,
+    "a failed tool call is still tool detail, not wait output",
+  );
+  assert.ok(waited.eventsOmitted > 0);
+
+  const withProgress = parseTool(
+    await call(production, "worker_wait", {
+      workerId: worker.id,
+      sinceSeq: 0,
+      timeoutMs: 5_000,
+      includeProgress: true,
+    }),
+  );
+  assert.ok(
+    withProgress.events.some(
+      (event: { type: string; data?: { isError?: boolean } }) =>
+        event.type === "run.progress" && event.data?.isError === true,
+    ),
+    "includeProgress=true still exposes the failed tool call",
+  );
 });
 
 test("production notification defaults filter unacked before the limit and never hide new records", async (t) => {

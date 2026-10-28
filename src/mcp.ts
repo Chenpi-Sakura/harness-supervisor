@@ -6,6 +6,20 @@ import { SupervisorError, errorMessage } from "./errors.js";
 import { SupervisorClient } from "./ipc/client.js";
 import { resolveStateDir, NotifyTargetSchema } from "./ipc/protocol.js";
 import {
+  EVENTS_BUDGET_BYTES,
+  MAX_COMPACT_EVENTS,
+  MAX_PENDING_MESSAGE_CHARS,
+  MAX_RESULT_PREVIEW_CHARS,
+  STATUS_BUDGET_BYTES,
+  compactPendingInput,
+  compactStatus,
+  lifecycleEvents,
+  readCompactEvents,
+  resultPreview,
+  singleEventView,
+  textPreview,
+} from "./context-budget.js";
+import {
   formatToolError,
   presentAcceptedWorker,
   presentEvents,
@@ -162,11 +176,12 @@ function fail(error: unknown) {
 
 function compactWaitEvents(events: WorkerEvent[], includeProgress: boolean) {
   if (includeProgress) return { events, eventsOmitted: 0 };
-  const visible = events.filter((event) => {
-    if (event.type !== "run.progress") return true;
-    const kind = event.data?.kind;
-    return kind === "queue_cleared" || (kind === "tool_end" && event.data?.isError === true);
-  });
+  // `queue_cleared` is a cancellation fact (how many queued messages were
+  // dropped), not a tool call. Every other run.progress event is tool or
+  // assistant detail and must be requested explicitly.
+  const visible = events.filter(
+    (event) => event.type !== "run.progress" || event.data?.kind === "queue_cleared",
+  );
   return { events: visible, eventsOmitted: events.length - visible.length };
 }
 
@@ -235,11 +250,11 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   spawn:
     "Start an independent native harness process (Pi by default) in its own working directory. Returns when the prompt is accepted, not when the task completes. Keep the returned id/lastSeq and observe with worker_wait or worker_status. Pass notifyTarget only for a verified destination; omission snapshots the daemon default for new workers.",
   status:
-    "Return the current status, full result or error, pending input and lastSeq cursor. Recent events are returned only when recentEvents is explicitly set.",
+    "Return the current status, a bounded result preview (chars/truncated), a bounded pending input and the lastSeq cursor. The default response stays within 2 KiB and includes at most 10 compact lifecycle events; run.progress is never included. includeResult=true returns the full result, includeInput=true returns the complete pending input; each is independent and the other face stays a bounded preview. Both still exclude run.progress; use worker_events for tool calls.",
   list:
     "List managed workers (newest first) with id, name, runtime, status and lastSeq. State persists across daemon restarts.",
   events:
-    "Read stored normalized events after sinceSeq. Use the returned nextSeq as the next cursor; pass sinceSeq=0 for full history. This is a non-blocking read; use worker_wait to block.",
+    "Read lifecycle events. Without sinceSeq this is a compact tail snapshot: the newest lifecycle events, no run.progress, staying within 4 KiB. Use the returned nextSeq as the cursor; pass sinceSeq for strict incremental reads, seq=<n> to read one stored event in full (including run.progress), or includeProgress=true for the complete event stream. Never assume a truncated response is complete: eventsOmitted and progressOmitted say what was left out.",
   wait:
     "Bounded long-poll (default 20s, maximum 120s). MCP is pull-based: the supervisor never wakes the main agent by itself, although optional codex-queue notifications can start a turn when the host has that thread loaded. Without sinceSeq it checks current state and the latest events first, then waits from the current tail. Returns early when terminal, awaiting_input, or a requested types event appears. Ordinary run.progress is omitted unless includeProgress=true or types includes run.progress. Pass sinceSeq for strict cursor delivery. Timeout is not failure.",
   send:
@@ -264,13 +279,13 @@ const DEVELOPMENT_DESCRIPTIONS: ToolDescriptions = {
   spawn:
     "Start an independent native harness process (Pi by default) in its own working directory. Returns as soon as the prompt is accepted, NOT when the task completes. Save the returned worker id and lastSeq; use worker_wait for progress/completion. Do not spawn a duplicate worker for the same task while this one is active. The worker survives this MCP client disconnecting because the supervisor daemon owns it.",
   status:
-    "Return the current lifecycle status, lastSeq cursor, recent incremental events, pending input request, result/error, and the last harness stderr tail. Status 'running' means the prompt is being processed; only terminal statuses (completed, failed, cancelled, crashed, orphaned, interrupted) end the task.",
+    "Return the current lifecycle status, lastSeq cursor, recent incremental events, pending input request, result/error, and the last harness stderr tail. Status 'running' means the prompt is being processed; only terminal statuses (completed, failed, cancelled, crashed, orphaned, interrupted) end the task. Development mode returns the full stored view; the compact default and the includeResult/includeInput switches apply to production mode.",
   list:
     "List workers managed by the supervisor, newest first. State persists across daemon restarts.",
   events:
-    "Read normalized events after a sequence cursor. Use the returned nextSeq as the next sinceSeq. Pass sinceSeq=0 for full stored history. This is a fast, non-blocking read; use worker_wait when you want to block for progress or completion.",
+    "Read normalized events after a sequence cursor. Use the returned nextSeq as the next sinceSeq. Pass sinceSeq=0 for full stored history. This is a fast, non-blocking read; use worker_wait when you want to block for progress or completion. The default response is a compact tail snapshot (newest lifecycle events, no run.progress); pass includeProgress=true for every stored event, or seq=<n> for one event in full.",
   wait:
-    "Bounded long-poll. MCP tools are pull-based: this call returns only when the host invokes it; the supervisor never wakes the main agent by itself (optional codex-queue notifications can start a turn only while the host has that thread loaded). Default 20s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. Normal run.progress events are omitted by default to keep context small; queue_cleared and tool-error progress are retained. Pass includeProgress=true (or request types=['run.progress']) for full progress, or use worker_events for complete history. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
+    "Bounded long-poll. MCP tools are pull-based: this call returns only when the host invokes it; the supervisor never wakes the main agent by itself (optional codex-queue notifications can start a turn only while the host has that thread loaded). Default 20s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. Normal run.progress events are omitted by default to keep context small; only queue_cleared (a cancellation fact) is retained, so tool calls and tool errors require includeProgress=true. Pass includeProgress=true (or request types=['run.progress']) for full progress, or use worker_events for complete history. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
   send:
     "Queue a steering message (delivered before the next model turn) or a follow-up (delivered after the current run) through the native harness. Only valid while the worker is running; if it already reached a terminal state this returns INVALID_STATE, and you should not spawn a replacement automatically. This does not answer extension dialogs; use worker_answer for run.needs_input events. Delivery differs per runtime: Pi applies steering/follow-ups natively, while Qoder 1.1.76 accepts the stream message (run.message_sent) without a verified effect on the running turn, so do not assume the model acted on it. MiniMax Code applies steering through its mcode/session/steer extension and queues follow-ups through mcode/session/queue/enqueue, both of which require a build that advertises them. A real 0.6.12 process accepted a steer sent during an active turn and the agent acted on it (mode 'steered'), but the same call outside an admitted turn is rejected ('Steering requires an admitted, active ACP prompt Turn'), so a steering message can reach a running turn and still be dropped when the turn has ended; check the worker state before assuming it was delivered. Pass requestId to make a retry after a timeout replay the recorded outcome instead of enqueueing the same text twice; if the daemon crashed mid-send the outcome is reported as UNCERTAIN, because the harness may already have received the message.",
   answer:
@@ -367,16 +382,82 @@ server.registerTool(
     inputSchema: {
       workerId: z.string().min(1),
       recentEvents: z.number().int().min(0).max(100).optional(),
+      includeResult: z
+        .boolean()
+        .optional()
+        .describe(
+          "Return the full result text (production only). The pending input stays a bounded preview; pass includeInput=true as well for both. Still no run.progress",
+        ),
+      includeInput: z
+        .boolean()
+        .optional()
+        .describe(
+          "Return the complete pending input (production only). The result stays a preview; pass includeResult=true as well for both. Still no run.progress",
+        ),
     },
   },
   async (args) => {
     try {
+      if (mode === "development") {
+        const includeRecentEvents = args.recentEvents !== undefined;
+        const result = await client.request<WorkerStatusResult>("status", {
+          workerId: args.workerId,
+          recentEvents: includeRecentEvents ? args.recentEvents : 20,
+        });
+        return ok(presentStatus(result, mode, { includeRecentEvents }));
+      }
+      if (args.includeResult !== true && args.includeInput !== true) {
+        const result = await client.request<WorkerStatusResult>("status", {
+          workerId: args.workerId,
+          recentEvents: args.recentEvents ?? 100,
+        });
+        return ok(
+          compactStatus(result, {
+            budgetBytes: STATUS_BUDGET_BYTES,
+            eventLimit: Math.min(args.recentEvents ?? MAX_COMPACT_EVENTS, MAX_COMPACT_EVENTS),
+          }),
+        );
+      }
+      // The two faces are independent: asking for the full result must not also
+      // return the full pending input, and asking for the full input must not
+      // return the full result. Only the requested face is exempt from the
+      // default budget; the other one keeps a bounded preview.
       const includeRecentEvents = args.recentEvents !== undefined;
       const result = await client.request<WorkerStatusResult>("status", {
         workerId: args.workerId,
-        recentEvents: includeRecentEvents ? args.recentEvents : mode === "production" ? 0 : 20,
+        recentEvents: includeRecentEvents ? args.recentEvents : 0,
       });
-      return ok(presentStatus(result, mode, { includeRecentEvents }));
+      let progressOmitted = 0;
+      if (includeRecentEvents) {
+        // The complete read still must not smuggle tool calls in through
+        // `recentEvents`: the caller asked for the full result/input, not progress.
+        const visible = lifecycleEvents(result.recentEvents);
+        progressOmitted = result.recentEvents.length - visible.length;
+        result.recentEvents = visible;
+      }
+      const presented = presentStatus(result, mode, { includeRecentEvents }) as {
+        worker: { result?: unknown; error?: unknown; pendingInput?: unknown; [key: string]: unknown };
+        eventsOmitted?: number;
+      };
+      if (progressOmitted > 0) presented.eventsOmitted = progressOmitted;
+      if (args.includeResult !== true) {
+        if (result.worker.result) {
+          presented.worker.result = resultPreview(
+            result.worker.result,
+            MAX_RESULT_PREVIEW_CHARS,
+          );
+        }
+        if (result.worker.error !== undefined) {
+          presented.worker.error = textPreview(result.worker.error, MAX_RESULT_PREVIEW_CHARS);
+        }
+      }
+      if (args.includeInput !== true && result.worker.pendingInput) {
+        presented.worker.pendingInput = compactPendingInput(
+          result.worker.pendingInput,
+          MAX_PENDING_MESSAGE_CHARS,
+        );
+      }
+      return ok(presented);
     } catch (error) {
       return fail(error);
     }
@@ -435,10 +516,48 @@ server.registerTool(
       workerId: z.string().min(1),
       sinceSeq: z.number().int().min(0).optional().describe("Return events with seq > sinceSeq"),
       limit: z.number().int().min(1).max(500).optional(),
+      seq: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Read exactly one stored event by seq, in full (overrides the compact view)"),
+      includeProgress: z
+        .boolean()
+        .optional()
+        .describe("Return the complete stored event stream including run.progress"),
     },
   },
   async (args) => {
     try {
+      if (args.seq !== undefined) {
+        const window = await client.request<ReadEventsResult>("events", {
+          workerId: args.workerId,
+          sinceSeq: Math.max(0, args.seq - 1),
+          limit: 2,
+        });
+        const event = window.events.find((item) => item.seq === args.seq);
+        if (!event) {
+          throw new SupervisorError("NOT_FOUND", `No stored event with seq ${args.seq}`, {
+            workerId: args.workerId,
+            seq: args.seq,
+          });
+        }
+        return ok(singleEventView(window.worker, event));
+      }
+      if (mode === "production" && args.includeProgress !== true) {
+        return ok(
+          await readCompactEvents(
+            (options) =>
+              client.request<ReadEventsResult>("events", {
+                workerId: args.workerId,
+                sinceSeq: options.sinceSeq,
+                limit: options.limit,
+              }),
+            { sinceSeq: args.sinceSeq, limit: args.limit, budgetBytes: EVENTS_BUDGET_BYTES },
+          ),
+        );
+      }
       const result = await client.request<ReadEventsResult>("events", {
         workerId: args.workerId,
         sinceSeq: args.sinceSeq ?? 0,

@@ -1,0 +1,244 @@
+{
+  "dist": "D:\\Projects\\Harness-Supervisor\\.smoke-stage1\\dist",
+  "progressSeq": 6,
+  "rows": [
+    {
+      "interface": "mcp",
+      "label": "mcp status default (30 tools)",
+      "chars": 1699,
+      "bytes": 2047,
+      "events": 7,
+      "progress": 0,
+      "resultPreview": true,
+      "resultText": false,
+      "eventsOmitted": 80
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp status includeResult (30 tools)",
+      "chars": 3836,
+      "bytes": 5894,
+      "events": 0,
+      "progress": 0,
+      "resultPreview": false,
+      "resultText": true
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp status default (long history)",
+      "chars": 2030,
+      "bytes": 2048,
+      "events": 2,
+      "progress": 0,
+      "resultPreview": true,
+      "resultText": false,
+      "eventsOmitted": 98
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp events default (30 tools)",
+      "chars": 610,
+      "bytes": 610,
+      "events": 7,
+      "progress": 0,
+      "resultPreview": false,
+      "resultText": false,
+      "progressOmitted": 80,
+      "eventsOmitted": 0
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp events default (long history)",
+      "chars": 293,
+      "bytes": 293,
+      "events": 2,
+      "progress": 0,
+      "resultPreview": false,
+      "resultText": false,
+      "progressOmitted": 898,
+      "eventsOmitted": 0
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp events includeProgress (30 tools)",
+      "chars": 20172,
+      "bytes": 22326,
+      "events": 87,
+      "progress": 80,
+      "resultPreview": false,
+      "resultText": false
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp events seq=6",
+      "chars": 343,
+      "bytes": 343,
+      "eventType": "run.progress",
+      "hasData": true
+    },
+    {
+      "interface": "cli",
+      "label": "status w-mvngpfbh-53b2077b --json",
+      "status": 0,
+      "chars": 1699,
+      "bytes": 2047
+    },
+    {
+      "interface": "cli",
+      "label": "status w-mvngpfbh-53b2077b --json --full",
+      "status": 0,
+      "chars": 15433,
+      "bytes": 20029
+    },
+    {
+      "interface": "cli",
+      "label": "events w-mvngpfbh-53b2077b --json",
+      "status": 0,
+      "chars": 610,
+      "bytes": 610
+    },
+    {
+      "interface": "cli",
+      "label": "events w-mvngpfbh-53b2077b --json --full",
+      "status": 0,
+      "chars": 36957,
+      "bytes": 41553
+    },
+    {
+      "interface": "cli",
+      "label": "events w-mvngpfbh-53b2077b --seq 6 --json",
+      "status": 0,
+      "chars": 435,
+      "bytes": 435
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp status includeInput (report)",
+      "chars": 1267,
+      "bytes": 1267,
+      "resultText": false,
+      "resultPreview": true,
+      "resultChars": 8040,
+      "resultTruncated": true,
+      "inputText": false,
+      "inputPreview": false,
+      "events": 0,
+      "progress": 0
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp status includeResult (ask)",
+      "chars": 843,
+      "bytes": 843,
+      "resultText": false,
+      "resultPreview": false,
+      "inputText": false,
+      "inputPreview": true,
+      "inputChars": 2000,
+      "inputTruncated": true,
+      "inputPreviewLength": 400,
+      "events": 0,
+      "progress": 0
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp status includeInput (ask)",
+      "chars": 2401,
+      "bytes": 2401,
+      "resultText": false,
+      "resultPreview": false,
+      "inputText": true,
+      "inputPreview": false,
+      "inputChars": 2000,
+      "events": 0,
+      "progress": 0
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp status both (report)",
+      "chars": 8293,
+      "bytes": 8293,
+      "resultText": true,
+      "resultLength": 8040,
+      "resultPreview": false,
+      "resultTruncated": false,
+      "inputText": false,
+      "inputPreview": false,
+      "events": 0,
+      "progress": 0
+    },
+    {
+      "interface": "mcp",
+      "label": "mcp status includeResult recentEvents=100 (report)",
+      "chars": 17374,
+      "bytes": 17374,
+      "resultText": true,
+      "resultLength": 8040,
+      "resultPreview": false,
+      "resultTruncated": false,
+      "inputText": false,
+      "inputPreview": false,
+      "events": 8,
+      "progress": 0,
+      "eventsOmitted": 4
+    }
+  ],
+  "checks": [
+    {
+      "name": "mcp status default <= 2048 bytes",
+      "pass": true
+    },
+    {
+      "name": "mcp events default <= 4096 bytes",
+      "pass": true
+    },
+    {
+      "name": "mcp events default has no progress",
+      "pass": true
+    },
+    {
+      "name": "cli status default <= 2048 bytes",
+      "pass": true
+    },
+    {
+      "name": "cli events default <= 4096 bytes",
+      "pass": true
+    },
+    {
+      "name": "cli status --full restores the full result",
+      "pass": true
+    },
+    {
+      "name": "mcp includeResult is larger than the preview",
+      "pass": true
+    },
+    {
+      "name": "includeResult returns the complete result",
+      "pass": true
+    },
+    {
+      "name": "includeResult keeps the pending input a preview",
+      "pass": true
+    },
+    {
+      "name": "includeResult still marks the clipped question",
+      "pass": true
+    },
+    {
+      "name": "includeInput keeps the result a preview",
+      "pass": true
+    },
+    {
+      "name": "includeInput alone stays within the compact budget",
+      "pass": true
+    },
+    {
+      "name": "includeInput returns the complete question",
+      "pass": true
+    },
+    {
+      "name": "includeResult with recentEvents stays compact and progress-free",
+      "pass": true
+    }
+  ]
+}

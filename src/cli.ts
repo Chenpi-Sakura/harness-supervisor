@@ -13,6 +13,15 @@ import type {
   UsageSummary,
 } from "./metrics.js";
 import type { NotifyTarget, WorkerEvent, WorkerStatus, WorkerSummary } from "./types.js";
+import type { ReadEventsResult, WorkerStatusResult } from "./types.js";
+import {
+  EVENTS_BUDGET_BYTES,
+  compactStatus,
+  readCompactEvents,
+  singleEventView,
+  type CompactEvent,
+  type CompactEventsResult,
+} from "./context-budget.js";
 import { VERSION } from "./version.js";
 import { silentLogger } from "./util/logger.js";
 
@@ -46,10 +55,13 @@ Workers:
         [--task <taskId>]
         [--notify-thread <verified-thread-id> | --notify-none]
   list [--status running,failed] [--limit 50] [--json]
-  status <workerId> [--json]
-  events <workerId> [--since <seq>] [--limit 100] [--json]
+  status <workerId> [--full] [--json]
+  events <workerId> [--since <seq>] [--limit 100] [--seq <n>] [--full] [--json]
+         Compact by default: bounded result preview, lifecycle events only.
+         --full restores the complete stored output; --seq reads one event.
   wait <workerId> [--since <seq>] [--timeout-ms 30000] [--until terminal|event]
-       [--types run.completed,run.failed] [--json]
+       [--types run.completed,run.failed] [--include-progress] [--json]
+       Tool calls are omitted by default; --include-progress restores them.
   send <workerId> --message <text> [--mode steer|follow-up] [--request-id <key>]
   answer <workerId> --request-id <id> (--value <v> | --confirmed | --denied | --cancelled)
   cancel <workerId> [--timeout-ms 10000]
@@ -171,6 +183,14 @@ function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+/**
+ * Compact payloads are budgeted on their serialized size. Pretty printing adds
+ * whitespace that would push the same content back over the budget.
+ */
+function printJsonCompact(value: unknown): void {
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
 function tokenFieldText(field: TokenFieldSummary): string {
   const total = field.knownRecords + field.missingRecords;
   return field.value === null
@@ -281,6 +301,77 @@ function printEvents(events: WorkerEvent[]): void {
   }
 }
 
+/**
+ * Compact defaults exist to keep the main agent's context small. The CLI shows
+ * the same bounded view so that shelling out cannot bypass the budget.
+ */
+function printCompactStatus(value: Record<string, unknown>): void {
+  const worker = value.worker as Record<string, unknown>;
+  const lines = [
+    `${worker.id}  ${worker.status}  runtime=${worker.runtime}  lastSeq=${worker.lastSeq}`,
+  ];
+  if (worker.name) lines.push(`  name: ${worker.name}`);
+  if (worker.statusReason) lines.push(`  reason: ${worker.statusReason}`);
+  const result = worker.result as
+    | { preview: string; chars: number; truncated: boolean; storedTruncated?: boolean }
+    | undefined;
+  const error = worker.error as typeof result | undefined;
+  const body = result ?? error;
+  if (body) {
+    const label = result ? "result" : "error";
+    const stored = body.storedTruncated ? " (stored text itself was clipped)" : "";
+    lines.push(
+      `  ${label}: ${body.chars} chars${body.truncated ? ` (preview only; --full for the stored text)` : ""}${stored}`,
+    );
+    for (const line of body.preview.split("\n")) lines.push(`    ${line}`);
+  }
+  const pending = worker.pendingInput as
+    | {
+        method: string;
+        requestId: string;
+        title?: string;
+        message?: { preview: string; chars: number; truncated: boolean };
+        options?: string[];
+        optionsTotal?: number;
+      }
+    | undefined;
+  if (pending) {
+    lines.push(`  pending input: ${pending.method} ${pending.requestId} ${pending.title ?? ""}`.trim());
+    if (pending.message) {
+      lines.push(
+        `    message: ${pending.message.chars} chars${pending.message.truncated ? " (preview only; --full for the complete input)" : ""}`,
+      );
+      for (const line of pending.message.preview.split("\n")) lines.push(`      ${line}`);
+    }
+    if (pending.options) {
+      lines.push(
+        `    options: ${pending.options.join(" | ")}${pending.optionsTotal ? ` (${pending.optionsTotal} total)` : ""}`,
+      );
+    }
+  }
+  const events = (value.recentEvents ?? []) as CompactEvent[];
+  if (events.length > 0) {
+    const omitted = typeof value.eventsOmitted === "number" ? value.eventsOmitted : 0;
+    lines.push(`  recent events (${events.length}${omitted > 0 ? `, ${omitted} omitted` : ""}):`);
+    for (const event of events) {
+      lines.push(`    #${event.seq} ${event.type}${event.summary ? ` ${event.summary}` : ""}`);
+    }
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+function printCompactEvents(value: CompactEventsResult): void {
+  process.stdout.write(`${value.worker.id}  ${value.worker.status}  lastSeq=${value.worker.lastSeq}\n`);
+  for (const event of value.events) {
+    process.stdout.write(
+      `#${String(event.seq).padStart(4, "0")} ${event.type}${event.summary ? ` ${event.summary}` : ""}\n`,
+    );
+  }
+  process.stdout.write(
+    `events=${value.events.length} omitted=${value.eventsOmitted} progressOmitted=${value.progressOmitted} cursor=${value.nextSeq} hasMore=${value.hasMore}\n`,
+  );
+}
+
 function exitForStatus(worker: WorkerSummary): void {
   process.exitCode = EXIT_CODES[worker.status] ?? 0;
 }
@@ -316,10 +407,19 @@ async function waitLoop(
   overallTimeoutMs: number,
   sinceSeq = 0,
   print: boolean,
-): Promise<{ worker: WorkerSummary; events: WorkerEvent[]; nextSeq: number; timedOut: boolean; terminal: boolean }> {
+  includeProgress = false,
+): Promise<{
+  worker: WorkerSummary;
+  events: WorkerEvent[];
+  nextSeq: number;
+  timedOut: boolean;
+  terminal: boolean;
+  eventsOmitted: number;
+}> {
   const deadline = Date.now() + overallTimeoutMs;
   let cursor = sinceSeq;
   const seen: WorkerEvent[] = [];
+  let eventsOmitted = 0;
   let last;
   while (Date.now() < deadline) {
     const remaining = Math.max(1000, Math.min(120_000, deadline - Date.now()));
@@ -331,21 +431,29 @@ async function waitLoop(
       { timeoutMs: remaining + 10_000 },
     );
     cursor = last.nextSeq;
-    if (last.events.length) {
-      seen.push(...last.events);
-      if (print) printEvents(last.events);
+    // Tool calls are not wait output. `queue_cleared` is a cancellation fact
+    // (how many queued messages were dropped), so it stays visible.
+    const visible = includeProgress
+      ? last.events
+      : last.events.filter(
+          (event) => event.type !== "run.progress" || event.data?.kind === "queue_cleared",
+        );
+    eventsOmitted += last.events.length - visible.length;
+    if (visible.length) {
+      seen.push(...visible);
+      if (print) printEvents(visible);
     }
     if (last.terminal) {
-      return { ...last, events: seen };
+      return { ...last, events: seen, eventsOmitted };
     }
     if (last.worker.status === "awaiting_input") {
-      return { ...last, events: seen, timedOut: false };
+      return { ...last, events: seen, timedOut: false, eventsOmitted };
     }
   }
   if (!last) {
     throw new SupervisorError("TIMEOUT", "Timed out waiting for worker");
   }
-  return { ...last, events: seen, timedOut: true };
+  return { ...last, events: seen, timedOut: true, eventsOmitted };
 }
 
 async function main(): Promise<void> {
@@ -373,6 +481,9 @@ async function main(): Promise<void> {
         status: { type: "string" },
         limit: { type: "string" },
         since: { type: "string" },
+        seq: { type: "string" },
+        full: { type: "boolean" },
+        "include-progress": { type: "boolean" },
         "timeout-ms": { type: "string" },
         until: { type: "string" },
         types: { type: "string" },
@@ -521,6 +632,7 @@ async function main(): Promise<void> {
             intArg(values["timeout-ms"], "timeout-ms", 600_000) ?? 600_000,
             0,
             !json,
+            boolArg(values["include-progress"]),
           );
           if (json) printJson(waited);
           else {
@@ -559,6 +671,16 @@ async function main(): Promise<void> {
       case "status": {
         const workerId = positionals[1];
         if (!workerId) throw new SupervisorError("BAD_REQUEST", "workerId is required");
+        if (!boolArg(values.full)) {
+          const result = await client.request<WorkerStatusResult>("status", {
+            workerId,
+            recentEvents: 100,
+          });
+          const compact = compactStatus(result);
+          if (json) printJsonCompact(compact);
+          else printCompactStatus(compact);
+          return;
+        }
         const result = await client.request("status", { workerId, recentEvents: 20 });
         if (json) printJson(result);
         else {
@@ -575,23 +697,52 @@ async function main(): Promise<void> {
       case "events": {
         const workerId = positionals[1];
         if (!workerId) throw new SupervisorError("BAD_REQUEST", "workerId is required");
-        const result = await client.request<{
-          worker: WorkerSummary;
-          events: WorkerEvent[];
-          nextSeq: number;
-          hasMore: boolean;
-        }>("events", {
-          workerId,
-          sinceSeq: intArg(values.since, "since", 0),
-          limit: intArg(values.limit, "limit", 100),
-        });
-        if (json) printJson(result);
-        else {
-          printEvents(result.events);
-          process.stdout.write(
-            `\ncursor=${result.nextSeq} hasMore=${result.hasMore} status=${result.worker.status}\n`,
-          );
+        const seq = intArg(values.seq, "seq", 0) ?? 0;
+        if (seq > 0) {
+          const window = await client.request<ReadEventsResult>("events", {
+            workerId,
+            sinceSeq: Math.max(0, seq - 1),
+            limit: 2,
+          });
+          const event = window.events.find((item) => item.seq === seq);
+          if (!event) {
+            throw new SupervisorError("NOT_FOUND", `No stored event with seq ${seq}`, {
+              workerId,
+              seq,
+            });
+          }
+          if (json) printJson(singleEventView(window.worker, event));
+          else printEvents([event]);
+          return;
         }
+        const explicitSince = values.since === undefined ? undefined : intArg(values.since, "since", 0);
+        const explicitLimit = values.limit === undefined ? undefined : intArg(values.limit, "limit", 100);
+        if (boolArg(values.full)) {
+          const result = await client.request<ReadEventsResult>("events", {
+            workerId,
+            sinceSeq: explicitSince ?? 0,
+            limit: explicitLimit ?? 100,
+          });
+          if (json) printJson(result);
+          else {
+            printEvents(result.events);
+            process.stdout.write(
+              `\ncursor=${result.nextSeq} hasMore=${result.hasMore} status=${result.worker.status}\n`,
+            );
+          }
+          return;
+        }
+        const compact = await readCompactEvents(
+          (options) =>
+            client.request<ReadEventsResult>("events", {
+              workerId,
+              sinceSeq: options.sinceSeq,
+              limit: options.limit,
+            }),
+          { sinceSeq: explicitSince, limit: explicitLimit, budgetBytes: EVENTS_BUDGET_BYTES },
+        );
+        if (json) printJsonCompact(compact);
+        else printCompactEvents(compact);
         return;
       }
       case "wait": {
@@ -624,9 +775,17 @@ async function main(): Promise<void> {
           },
           { timeoutMs: timeoutMs + 10_000 },
         );
-        if (json) printJson(result);
+        const visible = boolArg(values["include-progress"])
+          ? result.events
+          : result.events.filter(
+              (event) => event.type !== "run.progress" || event.data?.kind === "queue_cleared",
+            );
+        const output = boolArg(values["include-progress"])
+          ? result
+          : { ...result, events: visible, eventsOmitted: result.events.length - visible.length };
+        if (json) printJson(output);
         else {
-          printEvents(result.events);
+          printEvents(visible);
           process.stdout.write(
             `\nstatus=${result.worker.status} terminal=${result.terminal} timedOut=${result.timedOut} cursor=${result.nextSeq}\n`,
           );

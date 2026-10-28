@@ -82,11 +82,86 @@ test("CLI starts the supervisor, spawns a worker, steers it, and reads terminal 
 
   const status = await cli(["status", worker.id, "--json"], { env });
   const statusResult = JSON.parse(status.stdout) as {
-    worker: { status: string };
+    worker: { status: string; result?: { preview?: string; chars?: number; text?: string } };
     recentEvents: Array<{ type: string }>;
   };
   assert.equal(statusResult.worker.status, "completed");
   assert.ok(statusResult.recentEvents.some((event) => event.type === "run.completed"));
+  assert.equal(
+    statusResult.worker.result?.text,
+    undefined,
+    "CLI status is compact by default and does not dump the full result",
+  );
+  assert.equal(typeof statusResult.worker.result?.preview, "string");
+  assert.equal(typeof statusResult.worker.result?.chars, "number");
+  assert.ok(
+    Buffer.byteLength(status.stdout, "utf8") <= 2048,
+    "CLI status stays within the 2 KiB default budget",
+  );
+
+  const fullStatus = await cli(["status", worker.id, "--json", "--full"], { env });
+  const fullResult = JSON.parse(fullStatus.stdout) as {
+    worker: { result?: { text: string } };
+    recentEvents: Array<{ type: string }>;
+  };
+  assert.match(fullResult.worker.result?.text ?? "", /STEERED:steer from CLI/);
+  assert.equal(
+    fullResult.worker.result?.text?.length,
+    statusResult.worker.result?.chars,
+    "--full returns exactly the result the preview measured",
+  );
+
+  const compactEvents = await cli(["events", worker.id, "--json"], { env });
+  const compactRead = JSON.parse(compactEvents.stdout) as {
+    events: Array<{ seq: number; type: string }>;
+    progressOmitted: number;
+  };
+  assert.equal(
+    compactRead.events.some((event) => event.type === "run.progress"),
+    false,
+    "CLI events is compact by default",
+  );
+  assert.ok(
+    Buffer.byteLength(compactEvents.stdout, "utf8") <= 4096,
+    "CLI events stays within the 4 KiB default budget",
+  );
+  assert.ok(compactRead.progressOmitted > 0, "the fixture run stores progress events");
+
+  const fullEvents = await cli(["events", worker.id, "--json", "--full"], { env });
+  const fullRead = JSON.parse(fullEvents.stdout) as {
+    events: Array<{ seq: number; type: string }>;
+    nextSeq: number;
+  };
+  const progressEvent = fullRead.events.find((event) => event.type === "run.progress");
+  assert.ok(progressEvent, "--full still returns the complete stored stream");
+  assert.ok(fullEvents.stdout.length > compactEvents.stdout.length);
+
+  const single = await cli(["events", worker.id, "--seq", String(progressEvent!.seq), "--json"], { env });
+  const singleResult = JSON.parse(single.stdout) as {
+    event: { seq: number; type: string; data?: unknown };
+  };
+  assert.equal(singleResult.event.seq, progressEvent!.seq, "--seq reads exactly one stored event");
+  assert.equal(singleResult.event.type, "run.progress");
+  assert.equal(typeof singleResult.event.data, "object");
+
+  const waitedDefault = await cli(["wait", worker.id, "--since", "0", "--json"], { env, timeout: 30_000 });
+  const waitDefault = JSON.parse(waitedDefault.stdout) as {
+    events: Array<{ type: string }>;
+    eventsOmitted?: number;
+  };
+  assert.equal(
+    waitDefault.events.some((event) => event.type === "run.progress"),
+    false,
+    "CLI wait is tool-call free by default",
+  );
+  assert.ok((waitDefault.eventsOmitted ?? 0) > 0, "the omitted progress is counted");
+
+  const waitedFull = await cli(
+    ["wait", worker.id, "--since", "0", "--include-progress", "--json"],
+    { env, timeout: 30_000 },
+  );
+  const waitFull = JSON.parse(waitedFull.stdout) as { events: Array<{ type: string }> };
+  assert.ok(waitFull.events.some((event) => event.type === "run.progress"));
 });
 
 test("CLI spawn --wait returns one final JSON document", async (t) => {

@@ -1,6 +1,6 @@
 # Worker 通知绑定预检与等待策略（下一版本必做）
 
-> 状态：需求已确认，待实施。与 [notification-context-budget.md](./notification-context-budget.md) 阶段 1 并行，互不依赖。
+> 状态：已实施（2026-10-28）。实现见 `src/supervisor.ts` 的 `attachNotificationBinding()`、`src/mcp-presentation.ts` 的 `presentAcceptedWorker()`；测试见 `test/integration/notification-binding.test.ts` 与 `test/unit/mcp-presentation.test.ts`。与 [notification-context-budget.md](./notification-context-budget.md) 阶段 1 并行，互不依赖。
 
 ## 1. 背景
 
@@ -73,3 +73,26 @@ HS 明确**不推断调用者身份**（不读“最近会话”，不猜 Thread
 - 与阶段 1（读取分层）**并行**，不依赖 V1–V3；
 - 属于阶段 2（N1/N3 写入约束与归因）的前置体验改进，但不改变其安全结论；
 - 不引入新的投递通道，不改动 `turn/steer` 相关实验。
+
+## 7. 实施记录（2026-10-28）
+
+`worker_spawn` / `worker_resume` 的响应新增 `notificationBinding`：
+
+```json
+{
+  "target": { "channel": "codex-queue", "codexThreadId": "..." },
+  "source": "explicit | daemon-default | preserved",
+  "wake": "bound | unbound",
+  "observation": "wake | wait",
+  "warnings": ["..."]
+}
+```
+
+- `source=explicit`：调用方显式传入 `notifyTarget`（包括显式 `channel=none`）。
+- `source=daemon-default`：spawn 省略目标，使用 daemon 默认值。
+- `source=preserved`：resume 省略目标，保留原绑定。
+- `wake=unbound` 时 `warnings` 必非空，说明本次 Worker 不会唤醒本对话，并建议 `worker_wait` 或收件箱；`observation` 同时为 `wait`。
+- `wake=bound` 只表示目标已绑定，不表示主 Agent 一定被唤醒；投递仍是 at-least-once。
+- CLI 非 JSON 输出会打印绑定与警告；`--json` 原样包含该字段。
+- 不推断调用者身份：daemon 环境里的 `CODEX_THREAD_ID` 不会被当作本次绑定；测试固定了该行为。
+- 不改通知投递、ACK、幂等与重试；resume 的显式目标仍是“未来事件接管”，不取消或重启正在运行的任务。

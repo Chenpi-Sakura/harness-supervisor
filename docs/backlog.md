@@ -30,6 +30,8 @@ Qoder steer/follow-up 继续按现有真实证据标为未验证生效；只有�
 
 当前措施：按用户明确授权将本机 HS 的 MiniMax 原生权限配置由 Ask、Auto 切为 Full access，并恢复同一 Worker。此配置影响该 Daemon 后续启动、恢复的 MiniMax Worker；不把全权限设为项目通用默认。自验已完成，记录见 `evidence/mcode-selftest-261023.md`。
 
+2026-10-28 追加：只改本机配置并不够——HS 每次新建/恢复会话都会通过 `session/set_config_option` 写入 `permissionMode`，旧的代码默认 `default` 会把 Full access 再次覆盖。现已把代码默认改为 `bypassPermissions`；需要 Ask 时显式设置 `HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=default`。设置失败会显式报 `UNSUPPORTED`，不静默降级。
+
 0.4.3 迭代落实投递前失效检查、每 Worker 短窗口、精简唤醒指针和 MiniMax 原生消息边界分离。已被宿主接受的旧提醒无法撤回；真正不同的待办仍分别投递，未实现“所有通知只唤醒一次”的保证。
 
 优化方向与剩余边界：

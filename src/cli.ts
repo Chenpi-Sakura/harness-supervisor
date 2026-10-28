@@ -12,7 +12,7 @@ import type {
   UsageRecord,
   UsageSummary,
 } from "./metrics.js";
-import type { NotifyTarget, WorkerEvent, WorkerStatus, WorkerSummary } from "./types.js";
+import type { NotificationBinding, NotifyTarget, WorkerEvent, WorkerStatus, WorkerSummary } from "./types.js";
 import type { ReadEventsResult, WorkerStatusResult } from "./types.js";
 import {
   EVENTS_BUDGET_BYTES,
@@ -153,6 +153,21 @@ function workerNotifyTarget(values: CliValues): NotifyTarget | undefined {
   if (thread) return { channel: "codex-queue", codexThreadId: thread };
   if (boolArg(values["notify-none"])) return { channel: "none" };
   return undefined;
+}
+
+function printNotificationBinding(binding: NotificationBinding | undefined): void {
+  if (!binding) return;
+  if (binding.wake === "bound") {
+    const thread = binding.target.codexThreadId ? ` (${binding.target.codexThreadId})` : "";
+    process.stdout.write(
+      `Notification: bound to ${binding.target.channel}${thread}; source=${binding.source}. Delivery is at-least-once, not proof of wake-up.\n`,
+    );
+    return;
+  }
+  process.stdout.write(
+    `Notification: unbound (source=${binding.source}); this worker will not wake this conversation.\n`,
+  );
+  for (const warning of binding.warnings) process.stdout.write(`  Warning: ${warning}\n`);
 }
 
 function parseList(value: unknown): string[] | undefined {
@@ -619,6 +634,7 @@ async function main(): Promise<void> {
         if (json && !boolArg(values.wait)) printJson(result);
         if (!json) {
           printWorker(result);
+          printNotificationBinding(result.notificationBinding);
           if (!boolArg(values.wait)) {
             process.stdout.write(
               `\nUse "status ${result.id}" or "wait ${result.id}" to follow this worker.\n`,
@@ -881,7 +897,10 @@ async function main(): Promise<void> {
           { timeoutMs: 90_000 },
         );
         if (json) printJson(result);
-        else printWorker(result);
+        else {
+          printWorker(result);
+          printNotificationBinding(result.notificationBinding);
+        }
         return;
       }
       case "inbox": {

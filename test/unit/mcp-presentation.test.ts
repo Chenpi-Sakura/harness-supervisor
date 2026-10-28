@@ -4,6 +4,7 @@ import { SupervisorError } from "../../src/errors.js";
 import {
   MCP_MODE_ENV,
   formatToolError,
+  presentAcceptedWorker,
   presentEvents,
   presentInfo,
   presentNotifications,
@@ -19,6 +20,46 @@ import type {
   WorkerEvent,
   WorkerSummary,
 } from "../../src/types.js";
+
+test("accepted worker presentation keeps the notification binding", () => {
+  const worker = {
+    id: "w-1",
+    runtime: "pi",
+    status: "running",
+    lastSeq: 2,
+    notifyTarget: { channel: "codex-queue", codexThreadId: "thread-a" },
+    notificationBinding: {
+      target: {
+        channel: "codex-queue",
+        codexThreadId: "thread-a",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      source: "explicit",
+      wake: "bound",
+      observation: "wake",
+      warnings: [],
+    },
+  } as unknown as WorkerSummary;
+  const view = presentAcceptedWorker(worker, "production") as {
+    notificationBinding: {
+      target: Record<string, unknown>;
+      source: string;
+      wake: string;
+      observation: string;
+      warnings: string[];
+    };
+  };
+  assert.equal(view.notificationBinding.source, "explicit");
+  assert.equal(view.notificationBinding.wake, "bound");
+  assert.equal(view.notificationBinding.observation, "wake");
+  assert.equal(view.notificationBinding.target.codexThreadId, "thread-a");
+  assert.equal(
+    "updatedAt" in view.notificationBinding.target,
+    false,
+    "the binding target uses the same compact shape as notifyTarget",
+  );
+  assert.deepEqual(view.notificationBinding.warnings, []);
+});
 
 test("explicit history marks superseded input as non-actionable in production", () => {
   const result: NotificationsResult = {

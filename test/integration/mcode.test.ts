@@ -42,7 +42,7 @@ async function startMcodeHarness(
       // permission cases would silently see no approval request at all. The
       // Ask mode is pinned here, and a test that needs another mode states it
       // explicitly.
-      HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default",
+      HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "bypassPermissions",
       ...extraEnv,
     },
   });
@@ -113,7 +113,7 @@ test("MiniMax Code supervisor requests use string ids so agent requests cannot c
   // The fake agent is hostile on purpose: when the client uses a numeric id it
   // reuses that exact number for its own permission request, which is the
   // worst-case collision.
-  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission" });
+  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission", HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default" });
   const worker = await spawnMcode(client, cwd, "needs approval");
   await waitForStatus(client, worker.id, ["awaiting_input"], 15_000);
 
@@ -143,7 +143,7 @@ test("MiniMax Code supervisor requests use string ids so agent requests cannot c
 });
 
 test("MiniMax Code permission request can be answered with the always-allow option", async (t) => {
-  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission" });
+  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission", HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default" });
   const worker = await spawnMcode(client, cwd, "needs approval");
 
   const awaiting = await waitForStatus(client, worker.id, ["awaiting_input"], 15_000);
@@ -199,7 +199,7 @@ test("MiniMax Code tool calls are surfaced as progress events", async (t) => {
 });
 
 test("MiniMax Code permission request becomes awaiting_input and is answerable", async (t) => {
-  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission" });
+  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission", HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default" });
   const worker = await spawnMcode(client, cwd, "needs approval");
 
   const awaiting = await waitForStatus(client, worker.id, ["awaiting_input"], 15_000);
@@ -225,7 +225,9 @@ test("MiniMax Code permission request becomes awaiting_input and is answerable",
 
 test("native permission withdrawal clears the live input and suppresses its inbox reminder", async (t) => {
   const { client, cwd } = await startMcodeHarness(t, {
-    FAKE_MCODE_SCENARIO: "permission", FAKE_MCODE_WITHDRAW_PERMISSION: "1",
+    FAKE_MCODE_SCENARIO: "permission",
+    HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default",
+    FAKE_MCODE_WITHDRAW_PERMISSION: "1",
   });
   const worker = await spawnMcode(client, cwd, "withdraw this approval");
   const awaiting = await waitForStatus(client, worker.id, ["awaiting_input"], 10000);
@@ -243,7 +245,7 @@ test("native permission withdrawal clears the live input and suppresses its inbo
 });
 
 test("MiniMax Code permission request can be denied by option label", async (t) => {
-  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission" });
+  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission", HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default" });
   const worker = await spawnMcode(client, cwd, "needs approval");
 
   const awaiting = await waitForStatus(client, worker.id, ["awaiting_input"], 15_000);
@@ -264,10 +266,24 @@ test("MiniMax Code permission request can be denied by option label", async (t) 
   assert.equal(final.worker.result?.text, "FAKE_MCODE_DENIED");
 });
 
+test("MiniMax Code defaults to bypassPermissions without approval prompts", async (t) => {
+  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission" });
+  const worker = await spawnMcode(client, cwd, "needs approval");
+  const final = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(final.worker.status, "completed");
+  assert.equal(final.worker.result?.text, "FAKE_MCODE_OK");
+  const events = await eventsOf(client, worker.id, 0);
+  assert.equal(
+    events.events.some((event) => event.type === "run.needs_input"),
+    false,
+    "the default full-permission mode must not ask for approval",
+  );
+});
+
 test("MiniMax Code worker switches the session into the Ask permission mode", async (t) => {
   // MiniMax Code itself starts in bypassPermissions, so a permission request
   // only appears when the supervisor switches the session to the Ask mode.
-  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission" });
+  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "permission", HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default" });
   const worker = await spawnMcode(client, cwd, "needs approval");
 
   const awaiting = await waitForStatus(client, worker.id, ["awaiting_input"], 15_000);

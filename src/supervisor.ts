@@ -39,6 +39,8 @@ import {
   type HarnessSession,
   type HarnessSpawnSpec,
   type NotificationsResult,
+  type NotificationBinding,
+  type NotificationBindingSource,
   type NotificationDeliveryState,
   type NotifyTarget,
   type PendingInput,
@@ -497,9 +499,14 @@ export class Supervisor {
     this.assertInitialized();
     this.assertAcceptingWork();
     const requestId = validateIdempotencyKey(options.requestId);
-    if (!requestId) return this.spawnOnce(input);
-    return this.withIdempotency("spawn", requestId, input, (workerId) =>
-      this.spawnOnce(input, workerId),
+    const result = requestId
+      ? await this.withIdempotency("spawn", requestId, input, (workerId) =>
+          this.spawnOnce(input, workerId),
+        )
+      : await this.spawnOnce(input);
+    return this.attachNotificationBinding(
+      result,
+      input.notifyTarget !== undefined ? "explicit" : "daemon-default",
     );
   }
 
@@ -766,9 +773,14 @@ export class Supervisor {
     this.assertInitialized();
     this.assertAcceptingWork();
     const requestId = validateIdempotencyKey(options.requestId);
-    if (!requestId) return this.resumeOnce(workerId, input);
-    return this.withIdempotency("resume", requestId, { workerId, input }, (workerIdOut) =>
-      this.resumeOnce(workerId, input, workerIdOut),
+    const result = requestId
+      ? await this.withIdempotency("resume", requestId, { workerId, input }, (workerIdOut) =>
+          this.resumeOnce(workerId, input, workerIdOut),
+        )
+      : await this.resumeOnce(workerId, input);
+    return this.attachNotificationBinding(
+      result,
+      input.notifyTarget !== undefined ? "explicit" : "preserved",
     );
   }
 
@@ -2088,6 +2100,42 @@ export class Supervisor {
       throw new SupervisorError("INTERNAL", "Harness session is not available");
     }
     return runtime.session;
+  }
+
+  private attachNotificationBinding(
+    worker: WorkerSummary,
+    source: NotificationBindingSource,
+  ): WorkerSummary {
+    const target = validateNotifyTarget(worker.notifyTarget ?? { channel: "none" });
+    const wakeable = target.channel === "codex-queue" && Boolean(target.codexThreadId);
+    const warnings: string[] = [];
+    if (!wakeable) {
+      if (target.channel === "codex-queue") {
+        warnings.push(
+          "The bound codex-queue target has no thread id, so this worker cannot wake a conversation.",
+        );
+      } else if (source === "explicit") {
+        warnings.push(
+          "This worker is explicitly bound to channel 'none'; it will not wake this conversation. Use worker_wait or read the notification inbox.",
+        );
+      } else if (source === "daemon-default") {
+        warnings.push(
+          "No notifyTarget was passed and the daemon default is channel 'none'; this worker will not wake this conversation. Use worker_wait or read the notification inbox, and do not tell the user it will notify automatically.",
+        );
+      } else {
+        warnings.push(
+          "This worker has no wake target (resume preserved an unbound binding). Use worker_wait or read the notification inbox.",
+        );
+      }
+    }
+    const binding: NotificationBinding = {
+      target,
+      source,
+      wake: wakeable ? "bound" : "unbound",
+      observation: wakeable ? "wake" : "wait",
+      warnings,
+    };
+    return { ...worker, notificationBinding: binding };
   }
 
   private summary(record: WorkerRecord): WorkerSummary {

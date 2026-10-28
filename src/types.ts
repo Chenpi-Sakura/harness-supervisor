@@ -125,6 +125,27 @@ export interface WorkerRecord {
 export interface WorkerSummary extends WorkerRecord {
   resumeAvailable: boolean;
   pidAlive: boolean | null;
+  /**
+   * Effective notification binding for this worker, present on spawn/resume
+   * responses only. It is computed, never persisted: `source` would otherwise
+   * become a second truth for the same target.
+   */
+  notificationBinding?: NotificationBinding;
+}
+
+export type NotificationBindingSource = "explicit" | "daemon-default" | "preserved";
+
+export interface NotificationBinding {
+  /** The target actually persisted for this worker. */
+  target: NotifyTarget;
+  /** Where the target came from; `preserved` means resume kept an old binding. */
+  source: NotificationBindingSource;
+  /** Whether a wakeable route is bound; it is not a guarantee of wake-up. */
+  wake: "bound" | "unbound";
+  /** Suggested way to observe: `wait` when no wake route is bound. */
+  observation: "wake" | "wait";
+  /** Empty when bound; always explains an unbound result. */
+  warnings: string[];
 }
 
 export type WorkerEventType =

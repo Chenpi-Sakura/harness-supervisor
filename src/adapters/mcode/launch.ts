@@ -144,29 +144,31 @@ export function validateMcodeExtraArgs(extraArgs: string[] | undefined): void {
   }
 }
 
-export const MCODE_PERMISSION_MODES = ["default", "auto", "bypassPermissions"] as const;
+export const MCODE_PERMISSION_MODES = ["bypassPermissions", "auto", "default"] as const;
+
+export const MCODE_DEFAULT_PERMISSION_MODE: McodePermissionMode = "bypassPermissions";
 
 export type McodePermissionMode = (typeof MCODE_PERMISSION_MODES)[number];
 
 /**
  * Resolves the permission mode for a MiniMax Code worker.
  *
- * MiniMax Code itself defaults to `bypassPermissions`, which would let a
- * worker act without ever asking the supervisor. HS defaults to `default`
- * ("Ask") so permission requests surface as `awaiting_input` and can be
- * answered through the normal supervisor flow.
+ * MiniMax Code itself defaults to `bypassPermissions`. HS keeps that native
+ * full-permission default (the user explicitly authorized full execution) and
+ * only switches to Ask/auto when explicitly configured, so normal file and
+ * command work does not become an approval prompt.
  */
 export function resolveMcodePermissionMode(
   env: NodeJS.ProcessEnv = process.env,
 ): McodePermissionMode {
   const raw = env.HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE?.trim();
-  if (!raw) return "default";
+  if (!raw) return MCODE_DEFAULT_PERMISSION_MODE;
   const normalized = raw.replace(/-/g, "").toLowerCase();
   const match = MCODE_PERMISSION_MODES.find((mode) => mode.toLowerCase() === normalized);
   if (!match) {
     throw new SupervisorError(
       "BAD_REQUEST",
-      `Unsupported MiniMax Code permission mode: ${raw}. Allowed: ${MCODE_PERMISSION_MODES.join(", ")}.`,
+      `Unsupported MiniMax Code permission mode: ${raw}. Allowed: ${MCODE_PERMISSION_MODES.join(", ")} (default: ${MCODE_DEFAULT_PERMISSION_MODE}).`,
     );
   }
   return match;

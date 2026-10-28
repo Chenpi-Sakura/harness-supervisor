@@ -46,8 +46,8 @@ test("MiniMax Code extraArgs cannot override supervisor-managed flags", () => {
   assert.doesNotThrow(() => validateMcodeExtraArgs(["--add-dir", "D:/work"]));
 });
 
-test("MiniMax Code permission mode defaults to Ask and rejects unknown modes", () => {
-  assert.equal(resolveMcodePermissionMode({}), "default");
+test("MiniMax Code permission mode defaults to bypassPermissions and explicit values win", () => {
+  assert.equal(resolveMcodePermissionMode({}), "bypassPermissions");
   assert.equal(
     resolveMcodePermissionMode({ HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "bypassPermissions" }),
     "bypassPermissions",
@@ -56,12 +56,17 @@ test("MiniMax Code permission mode defaults to Ask and rejects unknown modes", (
     resolveMcodePermissionMode({ HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "auto" }),
     "auto",
   );
+  assert.equal(
+    resolveMcodePermissionMode({ HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default" }),
+    "default",
+    "Ask remains available when explicitly requested",
+  );
   assert.throws(
     () =>
       resolveMcodePermissionMode({
         HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "yolo",
       }),
-    /Unsupported MiniMax Code permission mode/,
+    /Unsupported MiniMax Code permission mode.*default: bypassPermissions/,
   );
 });
 

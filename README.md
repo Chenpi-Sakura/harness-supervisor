@@ -273,6 +273,23 @@ node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-threa
 
 旧客户端省略 `notifyTarget` 仍可调用；这是向后兼容的默认值快照，不保证它能识别发起会话。恢复历史通知时只信事件中的历史目标；无历史目标的旧事件不会投递给新接管者。通知 `delivered` 仅表示队列接受；`ack` 表示消费者已处理。崩溃窗口可能重复投递，消费者应按稳定通知 ID 去重。
 
+`spawn` / `resume` 的响应现在带 `notificationBinding`，把生效目标、来源和降级说清楚：
+
+```json
+{
+  "target": { "channel": "none" },
+  "source": "daemon-default",
+  "wake": "unbound",
+  "observation": "wait",
+  "warnings": ["No notifyTarget was passed and the daemon default is channel 'none'; this worker will not wake this conversation. ..."]
+}
+```
+
+- `source` 为 `explicit`（显式传入）、`daemon-default`（spawn 省略、取全局默认）或 `preserved`（resume 省略、保留原绑定）。
+- `wake=unbound` 时 `warnings` 必非空，`observation=wait`：应使用 `worker_wait` 或收件箱，不能对用户声称会自动通知。
+- `wake=bound` 只表示目标已绑定；投递仍是 at-least-once，不保证主 Agent 一定被唤醒。
+- `CODEX_THREAD_ID` 等进程环境不会被自动当作调用者身份；必须显式传入已核实的 Thread ID。
+
 ### Worker 报告协议与命令守卫
 
 HS 是唯一受支持的 Worker 通知生产路径。`spawn` / `resume` 发送的任务提示会前置固定协议块：Worker 以最终答复结束本次运行，不得调用 `codex queue` 或其他宿主接口向父会话注入报告，也不得为此另起 Codex 会话；需要决策时使用自带 harness 的 permission/input。
@@ -412,7 +429,7 @@ node dist/src/cli.js spawn --runtime mcode --cwd ./repo --prompt "..."
 - **传输是 ndJSON，不是 LSP 帧**：每行一个 JSON-RPC 2.0 消息；`session/cancel` 是 notification，`session/prompt` 是 request 并阻塞到 turn 结束。
 - **Windows 上不能用 npm 的 `.cmd` shim**：Node 拒绝直接 spawn `.cmd`/`.bat`，HS 因此一律以 `node <cli.js> acp` 启动。
 - **会话句柄**：MiniMax Code 把对话存在自己的 SQLite 里，没有逐会话文件；HS 在 worker 的 session 目录写一份 `mcode-session.json` 句柄（首行含 `{type:"session",id}`），用于满足 resume 契约并校验会话身份。
-- **权限模式**：MiniMax Code 默认 `bypassPermissions`，工具调用不会询问。HS 默认把会话切到 Ask（`default`），让权限请求表现为 `awaiting_input` 并可通过 `worker_answer` 回答；可用 `HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=auto|bypassPermissions|default` 覆盖。注意该设置在 MiniMax Code 侧是**进程级**的。
+- **权限模式**：MiniMax Code 默认 `bypassPermissions`。HS 现在也默认 `bypassPermissions`（与原生默认一致，符合用户明确授权），正常文件读写与命令执行不再逐项询问；需要审批时显式设置 `HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=default`，权限请求会表现为 `awaiting_input` 并可通过 `worker_answer` 回答。优先级：Adapter 选项 > 该环境变量 > 默认 `bypassPermissions`。注意该设置在 MiniMax Code 侧是**进程级**的；设置失败会以 `UNSUPPORTED` 失败，不会静默回退。
 - **能力声明是真实的**：`initialize` 返回的 `_meta["minimax-code/extensions"].methods` 决定 steer / follow-up 是否可用，缺失时报 `UNSUPPORTED` 而不是假装成功。
 - **id 空间是分离的**：MiniMax Code 的反向请求（权限确认）从 0 开始编号，HS 自己的请求用 `hs-<n>` 字符串 id，因此双方 id 不会互相撞号 —— 否则一次权限请求可能被误当成对 HS 请求的回答，让 turn 被静默判定为已结束。
 - **哪些命令会被拦不是读写之分**：Ask 模式下实测 `ls` 与 `echo x > f.txt` 都没有触发许可，而后续的 `Get-Content` 验证命令才触发。真实规则由 MiniMax Code 运行时的风险分类决定，HS 侧无法预先断言某个动作会被拦。

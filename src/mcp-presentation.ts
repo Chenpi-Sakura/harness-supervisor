@@ -209,6 +209,12 @@ export function presentAcceptedWorker(worker: WorkerSummary, mode: McpPresentati
   };
   if (worker.name !== undefined) out.name = worker.name;
   if (worker.taskId !== undefined) out.taskId = worker.taskId;
+  if (worker.notificationBinding) {
+    out.notificationBinding = {
+      ...worker.notificationBinding,
+      target: targetOf(worker.notificationBinding.target),
+    };
+  }
   if (isTerminal(worker.status) || worker.status === "awaiting_input") {
     if (worker.result) out.result = resultOf(worker.result);
     if (worker.pendingInput) out.pendingInput = pendingOf(worker.pendingInput);

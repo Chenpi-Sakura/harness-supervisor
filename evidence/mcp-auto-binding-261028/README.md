@@ -90,9 +90,13 @@ duration_ms 663301
 
 原始输出：`full-regression.txt`（2 个 skip 是需要显式 `RUN_REAL_PI=1` 的真实 Pi 付费测试）。
 
-## 剩余验证（需两个真实 Codex Desktop 对话）
+## Desktop 双对话验收（已通过）
 
-本证据使用 `codex exec`（真实 Codex MCP client），不是 Desktop UI。Desktop 两对话的最终验收步骤见交付报告；必须由用户在真实 Desktop 会话中执行，不能用 CLI 结果冒充 Desktop UI 验收。
+2026-10-28 由用户在真实 Codex Desktop 中完成 A/B 双对话测试：两个对话均在不传 `notifyTarget` 的情况下得到 `source=caller`，绑定到各自不同的 Thread，完成通知分别到达正确对话且都被实际唤醒处理；A 先、B 后，与 daemon 入队顺序一致。两个 Worker 的 `done.txt` 内容分别正确。
+
+详细记录：`desktop-two-conversation.md`。
+
+这证明本次 Desktop 运行中“自动绑定 + 通知唤醒”可用，但不替代其他 Desktop 版本、休眠或网络异常场景的验证；投递仍是 at-least-once。
 
 ## 边界
 

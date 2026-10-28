@@ -280,7 +280,7 @@ CLI 不经过 Codex 的 MCP 调用，因此在 shell 中仍需显式传 `--notif
 - `wake=bound` 只表示目标已绑定；投递仍是 at-least-once，不保证主 Agent 一定被唤醒。
 - 自动绑定的 Thread ID 来自宿主注入的 `_meta`，是路由提示而非认证凭据；HS 校验格式和重复字段一致性，但不把它当作安全边界。
 
-对于可独立推进的长程任务：派发一次、检查 `notificationBinding.wake`；只有在宿主确实支持唤醒该 Thread 时才结束当前回合，等待完成/失败/需要输入的通知，不再周期性调用 `worker_wait` / `worker_status` / `worker_events`。宿主唤醒行为不确定、未绑定或投递失败时，明确降级并用 `worker_wait` 或收件箱接回结果。Codex Desktop 的双对话唤醒尚未完成真实验收；在此之前不要把“已绑定”当作“必定唤醒”。这是默认协作规范，不是对所有宿主行为的强制保证。
+对于可独立推进的长程任务：派发一次、检查 `notificationBinding.wake`；只有在宿主确实支持唤醒该 Thread 时才结束当前回合，等待完成/失败/需要输入的通知，不再周期性调用 `worker_wait` / `worker_status` / `worker_events`。宿主唤醒行为不确定、未绑定或投递失败时，明确降级并用 `worker_wait` 或收件箱接回结果。2026-10-28 已在 Codex Desktop 的双对话实测中验证自动绑定、互不串线和完成通知唤醒（见 `evidence/mcp-auto-binding-261028/desktop-two-conversation.md`）；这仍只是单次实测，不把“已绑定”推广为“任何宿主、任何情况下都必定唤醒”。这是默认协作规范，不是对所有宿主行为的强制保证。
 
 ### Worker 报告协议与命令守卫
 

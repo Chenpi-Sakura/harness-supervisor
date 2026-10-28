@@ -82,3 +82,16 @@ node .smoke-061\dist\src\cli.js down
 - 通过：A/B 均 `source=caller`、target 各自正确且不同、通知不串线、Spawn 后无轮询。
 - 未通过：任一 binding 缺失/错误、目标相同、需要手填 Thread ID、或通知串线。
 - CLI 的 `codex exec` 证据只证明 MCP 协议与绑定逻辑；Desktop UI 结果以本清单为准。
+
+## 8. 实际结果（2026-10-28）
+
+**通过。**
+
+- A：`source=caller`、`wake=bound`、target `01a164b6-bb26-74a3-bb57-bc6a2c48a8ac`，Worker `w-mvs0epcb-0e8a6d9b`。
+- B：`source=caller`、`wake=bound`、target `01a164b6-e971-74c2-9e18-b0b298d2bf85`，Worker `w-mvs0ey86-c5fae774`。
+- 两个 target 不同；A 先收到通知，B 后收到，未串线。
+- 两条通知均被 Codex queue 接受且最终 `delivered`（`attempts=1`）。
+- 两个 Worker 均 completed，`done.txt` 分别为 `HS_A_DONE` / `HS_B_DONE`。
+- Spawn 后到通知前未观察到重复轮询；通知到达后各读取一次状态取结果。
+
+完整记录：`desktop-two-conversation.md`。

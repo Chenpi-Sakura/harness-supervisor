@@ -1,0 +1,30 @@
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\codex-hook-install.test.js (644.3888ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\codex-notification-gate.test.js (214.6871ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\context-budget.test.js (188.8216ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\fsx.test.js (200.499ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\idempotency.test.js (218.4692ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\ipc-protocol.test.js (699.8576ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\jsonl.test.js (162.3957ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\launch.test.js (159.0049ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\mcode-acp-session.test.js (180.1332ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\mcode-launch.test.js (196.312ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\mcp-presentation.test.js (167.8073ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\metrics.test.js (210.489ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\notify.test.js (189.1499ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\process.test.js (193.8506ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\qoder-launch.test.js (150.8075ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\redact.test.js (164.8803ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\store.test.js (171.4463ms)
+✔ D:\Projects\Harness-Supervisor\.smoke-phase2\dist\test\unit\supervisor-withdrawal.test.js (215.6259ms)
+✔ prepareWorkerGuard installs shims and an env for one worker (149.1787ms)
+✔ the codex shim denies queue, logs it, and forwards other commands (804.452ms)
+✔ the shim refuses to recurse when the real CLI path is missing (343.9049ms)
+✔ worker protocol prefixes a task once and can be disabled (0.7788ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5984.2828

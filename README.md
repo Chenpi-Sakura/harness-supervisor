@@ -273,6 +273,21 @@ node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-threa
 
 旧客户端省略 `notifyTarget` 仍可调用；这是向后兼容的默认值快照，不保证它能识别发起会话。恢复历史通知时只信事件中的历史目标；无历史目标的旧事件不会投递给新接管者。通知 `delivered` 仅表示队列接受；`ack` 表示消费者已处理。崩溃窗口可能重复投递，消费者应按稳定通知 ID 去重。
 
+### Worker 报告协议与命令守卫
+
+HS 是唯一受支持的 Worker 通知生产路径。`spawn` / `resume` 发送的任务提示会前置固定协议块：Worker 以最终答复结束本次运行，不得调用 `codex queue` 或其他宿主接口向父会话注入报告，也不得为此另起 Codex 会话；需要决策时使用自带 harness 的 permission/input。
+
+运行时再加一层最小护栏：Daemon 启动时若在 PATH 中找到 Codex CLI，就在 `<stateDir>/worker-guard/bin` 生成 `codex` shim，并只把该目录前置到 **Worker 进程**的 PATH。`codex queue` 返回退出码 2、向工具 stderr 写一行说明，并在 `<stateDir>/worker-guard/worker-guard.jsonl` 追加 `{ts, workerId, argv, cwd}`；其他子命令转发给真实 CLI。Daemon 自身的 PATH 与通知投递不受影响。若 Codex 是后来才安装的，重启 Daemon 后护栏才会生成。
+
+```powershell
+# 暂时关闭护栏（仅诊断/兼容）
+$env:HARNESS_SUPERVISOR_WORKER_GUARD = '0'
+# 关闭任务提示中的协议块（仅诊断/兼容）
+$env:HARNESS_SUPERVISOR_WORKER_PROTOCOL = '0'
+```
+
+**边界**：这是护栏与审计，不是安全边界。Worker 使用绝对路径、其他宿主接口、修改 PATH 或覆盖 shim 都能绕过；同一 OS 用户下 HS 无法仅凭 PATH 阻止。Pi 已用真实进程和 shell 验证拦截与放行；Qoder 与 MiniMax Code 复用同一环境注入，但其工具 shell 的 PATH 解析未单独验证。护栏失败（找不到 Codex、目录不可写）只记 `daemon.log`，不阻断 Worker 启动。
+
 ### 通知降噪与结果读取（0.4.3）
 
 唤醒消息只携带 Worker、事件类型、序号和读取提示，不重复发送命令参数或完整报告。收到提醒后先用 `worker_status` 取得**当前** `pendingInput` 或最终 `result`，处理后确认收件箱通知；不要根据晚到的消息直接回答旧 requestId。

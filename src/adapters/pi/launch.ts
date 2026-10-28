@@ -7,6 +7,8 @@ export interface PiLaunch {
   file: string;
   args: string[];
   description: string;
+  /** Per-worker environment override; defaults to the daemon's environment. */
+  env?: NodeJS.ProcessEnv;
 }
 
 function parseArgsEnv(raw: string | undefined): string[] {

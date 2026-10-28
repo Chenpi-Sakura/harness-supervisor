@@ -429,6 +429,8 @@ export interface HarnessSpawnSpec {
   tools?: string[];
   thinking?: string;
   extraArgs?: string[];
+  /** Extra environment for this worker process only (never the daemon's own). */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface HarnessAdapter {

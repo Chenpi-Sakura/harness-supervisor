@@ -18,6 +18,7 @@ import type { HarnessAdapter } from "./types.js";
 import { Deferred, clampInt } from "./util/async.js";
 import { ensureDir } from "./util/fsx.js";
 import { createLogger, type Logger } from "./util/logger.js";
+import { prepareWorkerGuard } from "./worker-guard.js";
 import { VERSION, TOOL_NAME } from "./version.js";
 
 export interface DaemonOptions {
@@ -81,6 +82,17 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       logger.warn(`MiniMax Code ACP diagnostic for ${workerId}`, { message });
     },
   });
+  const workerGuard = await prepareWorkerGuard(stateDir, logger).catch((error: unknown) => {
+    // A guard failure must never prevent the daemon from starting workers.
+    logger.warn("Worker command guard setup failed", { error: errorMessage(error) });
+    return null;
+  });
+  if (workerGuard) {
+    logger.info("Worker command guard installed", {
+      realBin: workerGuard.realBin,
+      dir: workerGuard.dir,
+    });
+  }
   const supervisor = new Supervisor({
     store,
     adapters: new Map<string, HarnessAdapter>([
@@ -91,6 +103,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     logger,
     supervisorId,
     stateDir,
+    ...(workerGuard ? { workerEnv: (workerId: string) => workerGuard.envFor(workerId) } : {}),
     limits: {
       maxWorkers: intEnv("HARNESS_SUPERVISOR_MAX_WORKERS", 8, 1, 64),
       maxWaitMs: intEnv("HARNESS_SUPERVISOR_MAX_WAIT_MS", 120_000, 1000, 600_000),

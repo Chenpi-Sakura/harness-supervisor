@@ -6,6 +6,7 @@
  * Scenario tags are embedded in the prompt, e.g. "[scenario:slow]".
  */
 import { randomBytes, randomUUID } from "node:crypto";
+import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 
@@ -176,6 +177,27 @@ function finalText(scenario, prompt) {
   return parts.join(" ");
 }
 
+function execReport() {
+  // Runs one shell command in the worker's own environment. Used to verify the
+  // PATH-level worker command guard end to end, without a model call.
+  const command = process.env.FAKE_PI_EXEC;
+  if (!command) return "";
+  try {
+    const stdout = execSync(command, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15_000,
+    });
+    return `EXEC_OK:${stdout.trim()}`;
+  } catch (error) {
+    const status = typeof error?.status === "number" ? error.status : 1;
+    const stderr = Buffer.isBuffer(error?.stderr)
+      ? error.stderr.toString("utf8")
+      : String(error?.stderr ?? "");
+    return `EXEC_FAIL:${status}:${stderr.trim()}`;
+  }
+}
+
 async function runPrompt(prompt) {
   const scenario = scenarioFrom(prompt);
   currentScenario = scenario;
@@ -270,7 +292,7 @@ async function runPrompt(prompt) {
     return;
   }
 
-  const text = finalText(scenario, prompt);
+  const text = [finalText(scenario, prompt), execReport()].filter(Boolean).join("\n");
   emit({ type: "turn_start" });
   const partial = assistantMessage("", "pending");
   emit({ type: "message_start", message: partial });

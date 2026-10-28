@@ -57,6 +57,8 @@
 - shim、提示词、环境变量都只是护栏，**不是操作系统级安全边界**。
 - 若需要真正阻止其他进程写入，必须先验证宿主是否提供可用的权限隔离能力；未验证前不做承诺。
 
+**当前实现（2026-10-28，阶段 2）**：`spawn` / `resume` 的任务提示前置固定协议块；Worker 进程的 PATH 前置 `codex` shim，只拒绝 `queue` 子命令并写 `worker-guard.jsonl`，其他子命令转发。护栏失败不阻断 Worker，绝对路径可绕过（已在测试中固定该边界）。真实验证范围与限制见 [`evidence/worker-write-guard-261028.md`](../evidence/worker-write-guard-261028.md)。
+
 ### 4.2 N2 双向最小化
 
 - **推送**：唤醒消息只带 workerId、事件类型、`seq` 和下一步动作，不带正文、不带旧 `requestId`。

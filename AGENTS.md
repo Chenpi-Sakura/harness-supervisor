@@ -133,6 +133,15 @@ HS 不负责替代原生 Harness 的规划、推理、编码、工具调用和�
 - 普通进度不应导致主 Agent 频繁参与。
 - 遇到真正需要决策的阻塞时，应及时返回可识别的状态。
 
+### Worker 报告协议
+
+- **HS 是唯一受支持的 Worker 通知生产路径。** Worker 不得使用 `codex queue` 或其他宿主写入接口直接向父会话注入报告，也不得为此另起 Codex 会话。
+- 进度与工具执行只进入 HS 事件记录；需要决策时使用原生 input/permission；完成或失败以最终答复结束，由 HS 统一整理并转发。
+- 所有 `spawn` / `resume` 的任务提示都会前置固定协议块（`src/worker-protocol.ts`）。`HARNESS_SUPERVISOR_WORKER_PROTOCOL=0` 仅用于兼容与诊断，不是常规工作流开关。
+- 每个 Worker 进程的环境会前置 `<stateDir>/worker-guard/bin` 的 PATH；`codex queue` 被拒绝并写入 `worker-guard.jsonl`，其他子命令转发给真实 Codex CLI。
+- **该守卫与提示词都只是护栏，不是安全边界。** 绝对路径、其他宿主接口、修改 PATH 或 shim 都可绕过，不得描述为操作系统级隔离。
+- 守卫失败（找不到 Codex、目录不可写）不阻断 Worker 启动，只在 `daemon.log` 记录；不为单次拒绝新增服务、消息总线或第二套生命周期状态机。
+
 ### 等待机制
 
 - `worker_wait` 是有界等待，不是后台永久订阅。

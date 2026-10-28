@@ -17,6 +17,7 @@ import {
 } from "./notify.js";
 import { Retention, type PruneOptions, type PruneResult } from "./retention.js";
 import { Store } from "./store.js";
+import { withWorkerProtocol } from "./worker-protocol.js";
 import {
   MetricsStore,
   type MetricsReport,
@@ -152,6 +153,12 @@ export interface SupervisorOptions {
   stateDir: string;
   startedAt?: string;
   limits?: Partial<SupervisorLimits>;
+  /**
+   * Per-worker environment additions (for example the command guard). It is
+   * merged into the worker process only; the daemon's own environment and its
+   * notification delivery are never changed.
+   */
+  workerEnv?: (workerId: string) => NodeJS.ProcessEnv;
   notify?: {
     channel?: "none" | "codex-queue";
     codexThreadId?: string;
@@ -173,6 +180,7 @@ export class Supervisor {
   readonly metrics: MetricsStore;
   private readonly adapters: Map<string, HarnessAdapter>;
   private readonly logger: Logger;
+  private readonly workerEnv?: (workerId: string) => NodeJS.ProcessEnv;
   private readonly runtimes = new Map<string, Runtime>();
   private readonly resuming = new Set<string>();
   private pendingSpawns = 0;
@@ -185,6 +193,7 @@ export class Supervisor {
     this.store = options.store;
     this.adapters = options.adapters;
     this.logger = options.logger;
+    this.workerEnv = options.workerEnv;
     this.supervisorId = options.supervisorId;
     this.stateDir = options.stateDir;
     this.startedAt = options.startedAt ?? new Date().toISOString();
@@ -659,7 +668,9 @@ export class Supervisor {
         await this.ensureCancelled(runtime);
         return this.summary(record);
       }
-      const disposition = await this.requireSession(runtime).prompt(input.prompt);
+      const disposition = await this.requireSession(runtime).prompt(
+        withWorkerProtocol(input.prompt),
+      );
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -909,7 +920,9 @@ export class Supervisor {
         await this.ensureCancelled(runtime);
         return this.summary(record);
       }
-      const disposition = await this.requireSession(runtime).prompt(input.prompt);
+      const disposition = await this.requireSession(runtime).prompt(
+        withWorkerProtocol(input.prompt),
+      );
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -1884,6 +1897,7 @@ export class Supervisor {
       cwd: record.cwd,
       sessionDir: path.join(this.store.sessionsDir, record.id),
       ...record.config,
+      ...(this.workerEnv ? { env: this.workerEnv(record.id) } : {}),
     };
     const callbacks: HarnessCallbacks = {
       onEvent: (event) => {

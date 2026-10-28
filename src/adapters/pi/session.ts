@@ -110,7 +110,7 @@ export class PiRpcSession implements HarnessSession {
   static async start(options: PiRpcSessionOptions): Promise<PiRpcSession> {
     const child = spawn(options.launch.file, [...options.launch.args, ...options.args], {
       cwd: options.cwd,
-      env: process.env,
+      env: options.launch.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       detached: process.platform !== "win32",

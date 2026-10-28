@@ -53,7 +53,7 @@ export class McodeAdapter implements HarnessAdapter {
     validateMcodeExtraArgs(spec.extraArgs);
     await ensureDir(spec.sessionDir);
     return McodeAcpSession.start({
-      launch: this.resolveLaunch(),
+      launch: this.launchFor(spec),
       args: this.buildArgs(spec),
       cwd: spec.cwd,
       sessionDir: spec.sessionDir,
@@ -104,7 +104,7 @@ export class McodeAdapter implements HarnessAdapter {
     }
     await ensureDir(spec.sessionDir);
     return McodeAcpSession.start({
-      launch: this.resolveLaunch(),
+      launch: this.launchFor(spec),
       args: this.buildArgs(spec),
       cwd: spec.cwd,
       sessionDir: spec.sessionDir,
@@ -127,6 +127,12 @@ export class McodeAdapter implements HarnessAdapter {
       this.launch = this.options.launch ?? resolveMcodeLaunch();
     }
     return this.launch;
+  }
+
+  /** Per-worker environment (command guard, worker id) never mutates the daemon env. */
+  private launchFor(spec: HarnessSpawnSpec): McodeLaunch {
+    const base = this.resolveLaunch();
+    return spec.env ? { ...base, env: { ...base.env, ...spec.env } } : base;
   }
 
   private resolvePermissionMode(): McodePermissionMode {

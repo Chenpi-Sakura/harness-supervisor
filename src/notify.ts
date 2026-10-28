@@ -593,9 +593,12 @@ export class Notifier {
     if (!this.staleReason) return;
     for (const record of this.records.values()) {
       if (record.ackAt) continue;
-      if (this.inFlight.has(record.id)) continue;
       const state = record.delivery.state;
       if (state !== "pending" && state !== "failed") continue;
+      // A failed record's host call is already over; the in-flight flag may only
+      // cover its final persist. Skipping it would leave a dead request readable
+      // as actionable for that window. A pending record may still be delivered.
+      if (state === "pending" && this.inFlight.has(record.id)) continue;
       const reason = this.checkStale(record);
       if (!reason) continue;
       this.markSuperseded(

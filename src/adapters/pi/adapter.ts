@@ -46,7 +46,7 @@ export class PiAdapter implements HarnessAdapter {
     validateExtraArgs(spec.extraArgs);
     await ensureDir(spec.sessionDir);
     return PiRpcSession.start({
-      launch: this.resolveLaunch(),
+      launch: this.launchFor(spec),
       args: this.buildArgs(spec),
       cwd: spec.cwd,
       callbacks,
@@ -87,7 +87,7 @@ export class PiAdapter implements HarnessAdapter {
     }
     await ensureDir(spec.sessionDir);
     return PiRpcSession.start({
-      launch: this.resolveLaunch(),
+      launch: this.launchFor(spec),
       args: this.buildArgs(spec, resolved),
       cwd: spec.cwd,
       callbacks,
@@ -107,6 +107,12 @@ export class PiAdapter implements HarnessAdapter {
       this.launch = this.options.launch ?? resolvePiLaunch();
     }
     return this.launch;
+  }
+
+  /** Per-worker environment (command guard, worker id) never mutates the daemon env. */
+  private launchFor(spec: HarnessSpawnSpec): PiLaunch {
+    const base = this.resolveLaunch();
+    return spec.env ? { ...base, env: { ...process.env, ...spec.env } } : base;
   }
 
   private buildArgs(spec: HarnessSpawnSpec, sessionFile?: string): string[] {

@@ -56,7 +56,7 @@ export class QoderAdapter implements HarnessAdapter {
     await ensureDir(spec.sessionDir);
     const sessionId = randomUUID();
     return QoderCliSession.start({
-      launch: this.resolveLaunch(),
+      launch: this.launchFor(spec),
       args: this.buildArgs(spec, sessionId),
       cwd: spec.cwd,
       callbacks,
@@ -107,7 +107,7 @@ export class QoderAdapter implements HarnessAdapter {
     }
     await ensureDir(spec.sessionDir);
     return QoderCliSession.start({
-      launch: this.resolveLaunch(),
+      launch: this.launchFor(spec),
       args: this.buildArgs(spec, resumeId, true),
       cwd: spec.cwd,
       callbacks,
@@ -131,6 +131,12 @@ export class QoderAdapter implements HarnessAdapter {
       this.launch = this.options.launch ?? resolveQoderLaunch();
     }
     return this.launch;
+  }
+
+  /** Per-worker environment (command guard, worker id) never mutates the daemon env. */
+  private launchFor(spec: HarnessSpawnSpec): QoderLaunch {
+    const base = this.resolveLaunch();
+    return spec.env ? { ...base, env: { ...base.env, ...spec.env } } : base;
   }
 
   private buildArgs(spec: HarnessSpawnSpec, sessionId: string, resume = false): string[] {

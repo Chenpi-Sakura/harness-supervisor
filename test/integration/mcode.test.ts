@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { SupervisorClient } from "../../src/ipc/client.js";
 import type { WorkerSummary } from "../../src/types.js";
+import { WORKER_PROTOCOL_MARKER } from "../../src/worker-protocol.js";
 import { sleep } from "../../src/util/async.js";
 import {
   FAKE_MCODE_ENTRY,
@@ -72,7 +73,12 @@ test("MiniMax Code worker runs over ACP, streams the assistant message and compl
 
   const final = await waitTerminal(client, worker.id, 20_000);
   assert.equal(final.worker.status, "completed");
-  assert.equal(final.worker.result?.text, "FAKE_MCODE_OK:hello");
+  const resultText = final.worker.result?.text ?? "";
+  assert.ok(
+    resultText.startsWith(`FAKE_MCODE_OK:${WORKER_PROTOCOL_MARKER}\n`),
+    "the native prompt carries the worker protocol block",
+  );
+  assert.ok(resultText.endsWith("\n\nhello"), "the original task stays at the end");
   assert.ok(final.worker.sessionId, "session id must be recorded");
   assert.ok(final.worker.sessionFile, "session file must be recorded");
   assert.equal(existsSync(final.worker.sessionFile!), true);

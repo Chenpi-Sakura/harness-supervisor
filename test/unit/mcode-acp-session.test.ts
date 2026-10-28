@@ -82,7 +82,7 @@ async function runAgainstStub(
 }
 
 test("ACP prompt survives the control request deadline while waiting for native input", async (t) => {
-  const { session, events } = await runAgainstStub(t, {}, 500);
+  const { session, events } = await runAgainstStub(t, {}, 2000);
   await session.prompt("long-running audit");
   const pending = await pendingInput(events);
   await new Promise(resolve => setTimeout(resolve, 900));
@@ -97,7 +97,9 @@ test("ACP prompt survives the control request deadline while waiting for native 
 });
 
 test("control RPCs still time out without terminating the ongoing prompt", async (t) => {
-  const { session, events } = await runAgainstStub(t, { STUB_IGNORE_STEER: "1" }, 500);
+  // 500ms also covered the initialize handshake, which can exceed that under a
+  // loaded full-suite run and turn this timeout test into a startup failure.
+  const { session, events } = await runAgainstStub(t, { STUB_IGNORE_STEER: "1" }, 2000);
   await session.prompt("working");
   const pending = await pendingInput(events);
   await assert.rejects(session.steer("adjust"), (error: unknown) =>

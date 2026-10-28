@@ -111,7 +111,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up          # 在本机启动 daemon
-node dist/src/cli.js info        # 核对 version=0.5.0 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.6.0 与 stateDir
 ```
 
 依赖：Node.js >= 22.19（`node -v` 核对）；Pi >= 1.3。若 `npm ci` 因网络镜像失败，改用 `npm install` 后以 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -157,7 +157,7 @@ MCP server 有两种**呈现模式**，只影响当前 MCP 进程如何返回结
 
 配置优先级：命令行 `--mode` > 环境变量 `HARNESS_SUPERVISOR_MCP_MODE` > 默认 `production`。非法值会在 MCP 启动时明确报错退出，不会静默降级，也不使用 `NODE_ENV`。
 
-`production` 还要求共享 daemon 为 **0.4.0 或更高**；新 MCP 连接后会检查 daemon 版本，旧 daemon 必须先备份状态、确认无活动 Worker，再由人工升级并重启（见“从 0.3.x 升级”），不能只改 MCP 配置。
+`production` 还要求共享 daemon 为 **0.4.0 或更高**；新 MCP 连接后会检查 daemon 版本，旧 daemon 必须先备份状态、确认无活动 Worker，再由人工升级并重启，不能只改 MCP 配置。
 
 ```toml
 # ~/.codex/config.toml（示例：本机 clone 主目录为 D:/Projects/Harness-Supervisor）
@@ -205,20 +205,6 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 ```
 
 `supervisor_info` 在 production 下包含 `version`、`mcpMode`、必要限制、`runtimes`（各 runtime 的精简能力说明：Qoder 未经真实验证的 steer/follow-up 限制、MiniMax Code 的 steer 边界）和通知投递边界；不包含 daemon PID/stateDir 等诊断字段。
-
-#### 从 0.3.x 升级
-
-- 0.4.0 新增 **MiniMax Code** runtime（ACP over ndJSON，`mcode acp`），并把 MCP 的 daemon 版本闸门提到 **0.4.0**。新 MCP 连上 0.3.x 的旧 daemon 时，production 会在启动时明确报错并退出（旧 daemon 里没有 mcode 这个 runtime）。处理顺序同样是：备份状态目录、确认没有活动 Worker、升级代码，然后由人工停止并重新启动 daemon。
-- 不需要迁移状态目录、Worker 记录、通知或 session 文件；新增 runtime 只是多一个可选的 `spawn --runtime mcode`，不改变其他 runtime 的行为。
-
-#### 从 0.2.x 升级
-
-- 升级到 0.3.0 后 MCP 默认变为 `production`。依赖旧完整字段的客户端请加 `--mode development` 或设置 `HARNESS_SUPERVISOR_MCP_MODE=development`。
-- **必须同时升级 Daemon，不能只改 MCP 配置。** 0.3.0 的 production 需要新的 IPC 能力（`unacknowledgedOnly` 与只读 `notification_target_get`）。新 MCP 在连接后检查 daemon 版本；若 daemon 低于 0.4.0，production 会在启动时明确报错并退出，不会自动重启或替换 daemon。正确处理顺序是：备份状态目录（默认 `~/.harness-supervisor`）、确认没有活动 Worker、升级代码，然后由人工停止并重新启动 daemon。
-- **旧 daemon 的 development 兼容入口仍然可以连接，但只有旧语义。** 旧 daemon 不支持跨状态“未确认”收件箱过滤，development 默认仍是 `pending`；`supervisor_wake_target` 无参读取会改用旧 `notifications` 返回的 `target`，只返回默认目标，不外露收件箱记录。此时不能获得 production 的新过滤与诊断边界保证，应尽快安排升级 daemon。
-- 不需要迁移状态目录、Worker 记录、通知或 session 文件；模式只改变本进程的返回，不改变已持久化的路由和事件。这里的“无状态迁移”不等于“无需升级 daemon”。
-- `supervisor_wake_target` 无参调用现在只返回实际默认目标，不再附带收件箱内容（两种模式一致）。
-- 两模式共用同一套 daemon 与 IPC 行为；切换模式不会改变 `accepted != completed`、原生输入回答、`requestId` 重试语义或通知投递限制。
 
 
 ## 接口
@@ -405,38 +391,6 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | Qoder CLI | 实验性 | 单轮、取消、AskUserQuestion、resume 已真实验证；默认 `bypass_permissions`（1.1.79 实测：真实 Worker 完成文件写入/读取且无审批），可用显式配置覆盖。steer / follow-up 在当前版本被接受但未生效，权限 allow/deny 仅部分验证。任务度量可读取 `result.usage`，但全零报告按未知处理 |
 
 用量采集边界：Pi 只在 assistant message 原生提供 `usage` 时记录；Qoder 只在 `result.usage` 存在时记录；MiniMax Code 最新 0.6.13 实测 ACP 只提供上下文 `used`/`size` 与 `cost=0 USD`，prompt result 不含 usage，其 headless `exec --output-format json` 虽有结构化 usage，但 HS 走 ACP 且不读取私有会话库，因此报告中保持未知。主 Agent 用量不会从宿主会话自动读取，必须显式补录。
-
-### Qoder 权限模式
-
-当前安装的 Qoder CLI **1.1.79** 的 `--permission-mode` 只接受 `bypass_permissions`、`dont_ask`、`auto`。HS 默认显式传 `bypass_permissions`（用户明确授权的完整执行权限），不再用 `auto` 覆盖 `~/.qoder/settings.json` 的 `general.defaultPermissionMode`，也不会进入自动权限判断服务；后者返回 403 时 Qoder 会退化成逐项询问，正是本修复要消除的行为。
-
-优先级：`QoderAdapterOptions.permissionMode`（嵌入/测试） > `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE` > 默认 `bypass_permissions`。`bypass` / `yolo` 是等价别名；`accept_edits` / `default` / `plan` 仍被接受以兼容旧 CLI，但 1.1.79 不支持，传入会在启动时被 Qoder 拒绝。
-
-Qoder 的 `system/init` 会回报实际生效的 `permissionMode`。若与请求不一致，HS 直接让启动失败并报告 requested/effective，不会静默降级为 `auto` 或逐项审批；若 init 未回报，HS 记录诊断但无法确认实际模式。注意 `bypass_permissions` 会跳过 Qoder 的权限确认，是高风险设置；HS 仍不提供文件系统沙箱。真实验证见 [`evidence/qoder-permission-mode-261028/`](evidence/qoder-permission-mode-261028/)。
-
-### MiniMax Code 接入
-
-MiniMax Code 的 CLI 以 **Agent Client Protocol（ACP）** 暴露原生会话能力，HS 通过 `mcode acp` 子进程接入：
-
-```bash
-npm install -g @minimax-ai/code   # 提供 mcode CLI
-# 若 mcode 不在 PATH，可显式指定包入口
-export HARNESS_SUPERVISOR_MCODE_ENTRY="C:/Users/<you>/AppData/Roaming/npm/node_modules/@minimax-ai/code/cli.js"
-
-node dist/src/cli.js spawn --runtime mcode --cwd ./repo --prompt "..."
-```
-
-几个与实现相关的事实：
-
-- **传输是 ndJSON，不是 LSP 帧**：每行一个 JSON-RPC 2.0 消息；`session/cancel` 是 notification，`session/prompt` 是 request 并阻塞到 turn 结束。
-- **Windows 上不能用 npm 的 `.cmd` shim**：Node 拒绝直接 spawn `.cmd`/`.bat`，HS 因此一律以 `node <cli.js> acp` 启动。
-- **会话句柄**：MiniMax Code 把对话存在自己的 SQLite 里，没有逐会话文件；HS 在 worker 的 session 目录写一份 `mcode-session.json` 句柄（首行含 `{type:"session",id}`），用于满足 resume 契约并校验会话身份。
-- **权限模式**：MiniMax Code 默认 `bypassPermissions`。HS 现在也默认 `bypassPermissions`（与原生默认一致，符合用户明确授权），正常文件读写与命令执行不再逐项询问；需要审批时显式设置 `HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=default`，权限请求会表现为 `awaiting_input` 并可通过 `worker_answer` 回答。优先级：Adapter 选项 > 该环境变量 > 默认 `bypassPermissions`。注意该设置在 MiniMax Code 侧是**进程级**的；设置失败会以 `UNSUPPORTED` 失败，不会静默回退。
-- **能力声明是真实的**：`initialize` 返回的 `_meta["minimax-code/extensions"].methods` 决定 steer / follow-up 是否可用，缺失时报 `UNSUPPORTED` 而不是假装成功。
-- **id 空间是分离的**：MiniMax Code 的反向请求（权限确认）从 0 开始编号，HS 自己的请求用 `hs-<n>` 字符串 id，因此双方 id 不会互相撞号 —— 否则一次权限请求可能被误当成对 HS 请求的回答，让 turn 被静默判定为已结束。
-- **哪些命令会被拦不是读写之分**：Ask 模式下实测 `ls` 与 `echo x > f.txt` 都没有触发许可，而后续的 `Get-Content` 验证命令才触发。真实规则由 MiniMax Code 运行时的风险分类决定，HS 侧无法预先断言某个动作会被拦。
-
-详细的能力差异与验证记录见归档文档与 `evidence/`。
 
 ## 边界
 

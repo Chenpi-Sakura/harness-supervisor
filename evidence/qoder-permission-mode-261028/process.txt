@@ -1,0 +1,2 @@
+PID 87472  qodercli-1.1.79.exe
+CommandLine: C:\Users\Lenovo\.qoder\bin\qodercli\qodercli.exe --print --output-format stream-json --input-format stream-json --permission-prompt-tool stdio --permission-mode bypass_permissions --session-id 52977824-37c0-4f98-abf7-beb0359a5803

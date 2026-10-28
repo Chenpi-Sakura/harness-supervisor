@@ -1,0 +1,283 @@
+{
+  "worker": {
+    "schemaVersion": 1,
+    "id": "w-mvrnpdge-f7c65da9",
+    "runtime": "qoder",
+    "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-qoder-e2e-be23484c\\work",
+    "promptPreview": "Create a file named hs-qoder-permission-check.txt in the current working directory with exactly the text QODER_BYPASS_OK, then read it back. Do not modify any other file. Reply with the file content.",
+    "status": "completed",
+    "createdAt": "2026-10-28T05:11:04.286Z",
+    "updatedAt": "2026-10-28T05:11:59.470Z",
+    "lastSeq": 19,
+    "eventCount": 19,
+    "stats": {
+      "turns": 3,
+      "toolCalls": 2,
+      "toolErrors": 0
+    },
+    "capabilities": {
+      "runtime": "qoder",
+      "steer": true,
+      "followUp": true,
+      "cancel": true,
+      "resume": true,
+      "pause": false,
+      "interactiveInput": true,
+      "notes": "Qoder CLI stream-json over stdio (--print --input-format stream-json). Steering and follow-ups send priority next/later user messages; the CLI accepts them (the supervisor records run.message_sent) but a real 1.1.76 run did not apply an accepted steer to the running turn, so treat message_sent as 'accepted by the stream, not rejected' rather than 'the model saw it'. Cancellation uses the interrupt control request plus process termination and was validated in a real run (queued follow-up never executed). Permission prompts are surfaced as awaiting_input and answered through the can_use_tool control protocol; AskUserQuestion was validated in a real run, while a Bash tool call under permission mode default ran without any can_use_tool request, so allow/deny was not exercised end to end. Resume uses --resume <session-id> and verifies the returned session id. Qoder sessions live in the user's Qoder config directory. Permission mode is requested explicitly (default bypass_permissions, override HARNESS_SUPERVISOR_QODER_PERMISSION_MODE) and a runtime-reported mismatch fails startup instead of falling back to auto. There is no sandbox: cwd is not a file-isolation boundary."
+    },
+    "config": {},
+    "resumeCount": 0,
+    "supervisorId": "9040ebb0-7ee8-4173-b7b2-dcf68405a598",
+    "notifyTarget": {
+      "channel": "none"
+    },
+    "taskId": "t-mvrnpdgf-470c620f",
+    "pid": 87472,
+    "sessionId": "52977824-37c0-4f98-abf7-beb0359a5803",
+    "sessionFile": "C:\\Users\\Lenovo\\.qoder\\projects\\C--Users-Lenovo-AppData-Local-Temp-hs-qoder-e2e-be23484c-work\\52977824-37c0-4f98-abf7-beb0359a5803.jsonl",
+    "startedAt": "2026-10-28T05:11:13.499Z",
+    "endedAt": "2026-10-28T05:11:59.469Z",
+    "exit": {
+      "code": 0,
+      "signal": null,
+      "at": "2026-10-28T05:11:59.469Z"
+    },
+    "result": {
+      "text": "File created and read back successfully. Content:\n\n```\nQODER_BYPASS_OK\n```",
+      "truncated": false
+    },
+    "pidAlive": false,
+    "resumeAvailable": true
+  },
+  "events": [
+    {
+      "seq": 1,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:04.300Z",
+      "type": "worker.starting",
+      "notifyTarget": {
+        "channel": "none"
+      },
+      "data": {
+        "runtime": "qoder",
+        "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-qoder-e2e-be23484c\\work",
+        "resumed": false
+      }
+    },
+    {
+      "seq": 2,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:11.712Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "session_init",
+        "detail": "DeepSeek-Flash (bypassPermissions)"
+      }
+    },
+    {
+      "seq": 3,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:13.224Z",
+      "type": "worker.started",
+      "notifyTarget": {
+        "channel": "none"
+      },
+      "data": {
+        "pid": 87472,
+        "runtime": "qoder"
+      }
+    },
+    {
+      "seq": 4,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:13.478Z",
+      "type": "worker.session",
+      "notifyTarget": {
+        "channel": "none"
+      },
+      "data": {
+        "sessionId": "52977824-37c0-4f98-abf7-beb0359a5803",
+        "sessionFile": "C:\\Users\\Lenovo\\.qoder\\projects\\C--Users-Lenovo-AppData-Local-Temp-hs-qoder-e2e-be23484c-work\\52977824-37c0-4f98-abf7-beb0359a5803.jsonl",
+        "fileExists": false
+      }
+    },
+    {
+      "seq": 5,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:13.499Z",
+      "type": "run.started",
+      "notifyTarget": {
+        "channel": "none"
+      },
+      "data": {
+        "pid": 87472,
+        "resumed": false
+      }
+    },
+    {
+      "seq": 6,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:13.499Z",
+      "type": "run.accepted",
+      "notifyTarget": {
+        "channel": "none"
+      },
+      "data": {
+        "disposition": "started"
+      }
+    },
+    {
+      "seq": 7,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:17.136Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "assistant_message",
+        "preview": "I'll create the file and read it back."
+      }
+    },
+    {
+      "seq": 8,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:17.471Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "tool_start",
+        "tool": "Write",
+        "detail": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-qoder-e2e-be23484c\\work\\hs-qoder-permission-check.txt"
+      }
+    },
+    {
+      "seq": 9,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:19.237Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "tool_end",
+        "tool": "Write",
+        "preview": "File created successfully at: C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-qoder-e2e-be23484c\\work\\hs-qoder-permission-check.txt The file state is current in your context; no need to read it back.",
+        "isError": false,
+        "durationMs": 1766
+      }
+    },
+    {
+      "seq": 10,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:21.233Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "tool_start",
+        "tool": "Read",
+        "detail": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-qoder-e2e-be23484c\\work\\hs-qoder-permission-check.txt"
+      }
+    },
+    {
+      "seq": 11,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:21.243Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "tool_end",
+        "tool": "Read",
+        "preview": "1\tQODER_BYPASS_OK",
+        "isError": false,
+        "durationMs": 1
+      }
+    },
+    {
+      "seq": 12,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:57.632Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "assistant_message",
+        "preview": "File created and read back successfully. Content:\n\n```\nQODER_BYPASS_OK\n```"
+      }
+    },
+    {
+      "seq": 13,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:58.505Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "usage",
+        "detail": "{\"input_tokens\":0,\"output_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":0,\"total_cost_usd\":0,\"total_credits\":0}"
+      }
+    },
+    {
+      "seq": 14,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:58.546Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "turn_complete"
+      }
+    },
+    {
+      "seq": 15,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:58.570Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "turn_complete"
+      }
+    },
+    {
+      "seq": 16,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:58.587Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "turn_complete"
+      }
+    },
+    {
+      "seq": 17,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:58.860Z",
+      "type": "run.usage",
+      "notifyTarget": {
+        "channel": "none"
+      },
+      "data": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0
+      }
+    },
+    {
+      "seq": 18,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:59.469Z",
+      "type": "run.completed",
+      "notifyTarget": {
+        "channel": "none"
+      },
+      "data": {
+        "sessionFile": "C:\\Users\\Lenovo\\.qoder\\projects\\C--Users-Lenovo-AppData-Local-Temp-hs-qoder-e2e-be23484c-work\\52977824-37c0-4f98-abf7-beb0359a5803.jsonl",
+        "aborted": false,
+        "stopReason": "end_turn",
+        "forcedCleanup": false,
+        "text": "File created and read back successfully. Content:\n\n```\nQODER_BYPASS_OK\n```",
+        "truncated": false
+      }
+    },
+    {
+      "seq": 19,
+      "workerId": "w-mvrnpdge-f7c65da9",
+      "ts": "2026-10-28T05:11:59.470Z",
+      "type": "worker.exited",
+      "notifyTarget": {
+        "channel": "none"
+      },
+      "data": {
+        "code": 0,
+        "signal": null,
+        "forced": false
+      }
+    }
+  ],
+  "nextSeq": 19,
+  "hasMore": false
+}

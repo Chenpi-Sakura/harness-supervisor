@@ -19,6 +19,7 @@ import {
   expectedQoderSessionFile,
   locateQoderSessionFile,
   qoderConfigRoots,
+  sameQoderPermissionMode,
   waitForQoderSessionFile,
   type QoderLaunch,
 } from "./launch.js";
@@ -30,6 +31,8 @@ export interface QoderSessionOptions {
   callbacks: HarnessCallbacks;
   sessionId: string;
   resumeId?: string;
+  /** Requested --permission-mode; an init-time mismatch fails startup. */
+  permissionMode?: string;
   requestedSessionFile?: string;
   modelId?: string;
   onStderr?: (text: string) => void;
@@ -93,6 +96,7 @@ export class QoderCliSession implements HarnessSession {
   private readonly launch: QoderLaunch;
   private readonly resumeId?: string;
   private readonly requestedSessionFile?: string;
+  private readonly requestedPermissionMode?: string;
   private readonly modelId?: string;
   private readonly decoder: JsonlDecoder;
   private readonly stderrDecoder = new StringDecoder("utf8");
@@ -134,6 +138,7 @@ export class QoderCliSession implements HarnessSession {
     this.launch = options.launch;
     this.resumeId = options.resumeId;
     this.requestedSessionFile = options.requestedSessionFile;
+    this.requestedPermissionMode = options.permissionMode;
     this.modelId = options.modelId;
 
     this.decoder = new JsonlDecoder(
@@ -625,6 +630,34 @@ export class QoderCliSession implements HarnessSession {
       this.sessionId = sessionId;
       if (!this.initSeen) {
         this.initSeen = true;
+        const effectivePermissionMode =
+          typeof record.permissionMode === "string" ? record.permissionMode : undefined;
+        if (
+          this.requestedPermissionMode &&
+          effectivePermissionMode &&
+          !sameQoderPermissionMode(effectivePermissionMode, this.requestedPermissionMode)
+        ) {
+          // Do not silently accept a downgrade: a different mode means the
+          // authorized full-permission run did not start, and continuing would
+          // turn every tool call into an approval prompt.
+          this.started.reject(
+            new SupervisorError(
+              "UNSUPPORTED",
+              `qodercli reported permission mode "${effectivePermissionMode}" but "${this.requestedPermissionMode}" was requested. The worker was not started; HS does not fall back to auto or per-call approval.`,
+              {
+                requested: this.requestedPermissionMode,
+                effective: effectivePermissionMode,
+                stderrTail: this.stderrTail(),
+              },
+            ),
+          );
+          return;
+        }
+        if (this.requestedPermissionMode && !effectivePermissionMode) {
+          this.diagnostic(
+            `qodercli init did not report permissionMode; cannot confirm "${this.requestedPermissionMode}" took effect`,
+          );
+        }
         this.emit({
           type: "progress",
           kind: "session_init",

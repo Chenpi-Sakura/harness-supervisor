@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -34,6 +35,14 @@ const cwd = process.cwd();
 const configRoot = process.env.QODERCN_CONFIG_DIR ?? process.env.QODER_CONFIG_DIR ?? path.join(cwd, ".qoder-fake");
 const sessionFile = path.join(configRoot, "projects", encodeProjectDir(cwd), `${sessionId}.jsonl`);
 const permissionMode = argValue("--permission-mode") ?? "auto";
+// Lets a test simulate a runtime that accepted the flag but reports a different
+// effective mode in its init record (a silent downgrade).
+const effectivePermissionMode =
+  process.env.FAKE_QODER_EFFECTIVE_PERMISSION_MODE ?? permissionMode;
+const argvLog = process.env.FAKE_QODER_ARGV_LOG;
+if (argvLog) {
+  appendFileSync(argvLog, `${JSON.stringify(process.argv.slice(2))}\n`, "utf8");
+}
 const notLoggedIn = process.env.FAKE_QODER_NOT_LOGGED_IN === "1";
 const preemptiveAuthFail = process.env.FAKE_QODER_PREEMPTIVE_AUTH_FAIL === "1";
 const lateSession = process.env.FAKE_QODER_LATE_SESSION === "1";
@@ -362,7 +371,7 @@ function handleControlRequest(record: InputRecord): void {
       tools: ["Bash", "Read", "Edit"],
       mcp_servers: [],
       model: "fake-qoder-model",
-      permissionMode,
+      permissionMode: effectivePermissionMode,
       slash_commands: [],
       output_style: "default",
       skills: [],

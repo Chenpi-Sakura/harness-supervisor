@@ -13,12 +13,28 @@ export interface QoderLaunch {
 }
 
 export const QODER_PERMISSION_MODES = [
-  "default",
-  "accept_edits",
+  // Qoder CLI 1.1.79 advertises exactly these three values for
+  // --permission-mode. The legacy values below are kept for older CLI builds
+  // and explicit configuration; an unsupported value is rejected by the CLI at
+  // startup instead of being silently mapped to another mode.
+  "bypass_permissions",
   "auto",
   "dont_ask",
+  "accept_edits",
+  "default",
   "plan",
 ] as const;
+
+export const QODER_DEFAULT_PERMISSION_MODE: QoderPermissionMode = "bypass_permissions";
+
+/**
+ * Qoder accepts snake_case on the command line but reports camelCase in its
+ * system/init record (`bypass_permissions` -> `bypassPermissions`). Compare the
+ * normalized form so a confirmed mode is not mistaken for a downgrade.
+ */
+export function sameQoderPermissionMode(a: string, b: string): boolean {
+  return a.replace(/[_-]/g, "").toLowerCase() === b.replace(/[_-]/g, "").toLowerCase();
+}
 
 export type QoderPermissionMode = (typeof QODER_PERMISSION_MODES)[number];
 
@@ -114,8 +130,9 @@ export function resolveQoderPermissionMode(
   env: NodeJS.ProcessEnv = process.env,
 ): QoderPermissionMode {
   const raw = env.HARNESS_SUPERVISOR_QODER_PERMISSION_MODE?.trim();
-  if (!raw) return "auto";
+  if (!raw) return QODER_DEFAULT_PERMISSION_MODE;
   const normalized = raw.replace(/-/g, "_").toLowerCase();
+  if (normalized === "bypass" || normalized === "yolo") return "bypass_permissions";
   if (normalized === "accept" || normalized === "acceptedits") return "accept_edits";
   if (normalized === "dontask") return "dont_ask";
   if ((QODER_PERMISSION_MODES as readonly string[]).includes(normalized)) {
@@ -123,7 +140,7 @@ export function resolveQoderPermissionMode(
   }
   throw new SupervisorError(
     "BAD_REQUEST",
-    `Unsupported Qoder permission mode: ${raw}. Allowed: ${QODER_PERMISSION_MODES.join(", ")}. bypass_permissions/yolo is deliberately not supported.`,
+    `Unsupported Qoder permission mode: ${raw}. Allowed: ${QODER_PERMISSION_MODES.join(", ")} (default: ${QODER_DEFAULT_PERMISSION_MODE}).`,
   );
 }
 

@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { SupervisorClient } from "../../src/ipc/client.js";
@@ -98,6 +98,85 @@ test("Qoder worker runs through stream-json, persists a session, and exposes too
 
   const list = await client.request<WorkerSummary[]>("list", {});
   assert.equal(list.length, 1, "one spawn must create exactly one worker");
+});
+
+async function qoderArgv(t: TestContext, env: Record<string, string> = {}): Promise<{
+  client: SupervisorClient;
+  cwd: string;
+  args: string[];
+}> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-qoder-argv-"));
+  const argvLog = path.join(dir, "argv.jsonl");
+  const { client, cwd } = await startQoderHarness(t, {
+    FAKE_QODER_ARGV_LOG: argvLog,
+    ...env,
+  });
+  const worker = await spawnQoder(client, cwd, "[scenario:basic] permission mode");
+  const final = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(final.worker.status, "completed");
+  const calls = (await readFile(argvLog, "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as string[]);
+  assert.ok(calls.length >= 1, "the fake CLI must record its argv");
+  return { client, cwd, args: calls[0]! };
+}
+
+test("Qoder starts workers with bypass_permissions and the init record confirms it", async (t) => {
+  const { client, args } = await qoderArgv(t);
+  const flag = args.indexOf("--permission-mode");
+  assert.ok(flag >= 0, "HS must pass --permission-mode explicitly");
+  assert.equal(args[flag + 1], "bypass_permissions");
+  assert.equal(
+    args.filter((arg) => arg === "--permission-mode").length,
+    1,
+    "the mode is passed exactly once",
+  );
+
+  const worker = (await client.request<WorkerSummary[]>("list", {}))[0]!;
+  const events = await eventsOf(client, worker.id, 0);
+  const init = events.events.find(
+    (event) => event.type === "run.progress" && event.data?.kind === "session_init",
+  );
+  assert.match(String(init?.data?.detail ?? ""), /bypass_permissions/);
+  assert.equal(
+    events.events.some((event) => event.type === "run.needs_input"),
+    false,
+    "a full-permission run must not ask for approval",
+  );
+});
+
+test("an explicit Qoder permission mode wins over the default", async (t) => {
+  const { args } = await qoderArgv(t, { HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "auto" });
+  const flag = args.indexOf("--permission-mode");
+  assert.equal(args[flag + 1], "auto");
+});
+
+test("a Qoder permission downgrade fails startup instead of falling back", async (t) => {
+  const { client, cwd } = await startQoderHarness(t, {
+    FAKE_QODER_EFFECTIVE_PERMISSION_MODE: "auto",
+  });
+  await assert.rejects(
+    spawnQoder(client, cwd, "[scenario:basic] downgrade"),
+    /permission mode "auto".*"bypass_permissions" was requested/,
+  );
+  const list = await client.request<WorkerSummary[]>("list", {});
+  assert.equal(
+    list.some((worker) => worker.status === "starting" || worker.status === "running"),
+    false,
+    "a failed startup must not leave a live worker",
+  );
+});
+
+test("Qoder accepts the camelCase init form of the requested mode", async (t) => {
+  const { client, cwd } = await startQoderHarness(t, {
+    FAKE_QODER_EFFECTIVE_PERMISSION_MODE: "bypassPermissions",
+  });
+  const worker = await spawnQoder(client, cwd, "[scenario:basic] camelCase mode");
+  const final = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(final.worker.status, "completed");
+  assert.equal(final.worker.result?.text, "FAKE_QODER_OK");
 });
 
 test("Qoder records a session file that appears after the first turn in another config root", async (t) => {

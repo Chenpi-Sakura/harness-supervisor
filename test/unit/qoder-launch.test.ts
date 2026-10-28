@@ -9,6 +9,7 @@ import {
   qoderConfigRoots,
   resolveQoderLaunch,
   resolveQoderPermissionMode,
+  sameQoderPermissionMode,
   sessionIdFromFile,
   validateQoderExtraArgs,
 } from "../../src/adapters/qoder/launch.js";
@@ -35,23 +36,44 @@ test("Qoder launch strips desktop SDK entrypoint state and keeps the child stand
   assert.equal(launch.env.QODERCN_SESSION_TYPE, undefined);
 });
 
-test("Qoder permission modes default to auto and reject bypass modes", () => {
-  assert.equal(resolveQoderPermissionMode({}), "auto");
+test("Qoder permission mode defaults to bypass_permissions and explicit values win", () => {
+  assert.equal(resolveQoderPermissionMode({}), "bypass_permissions");
+  assert.equal(
+    resolveQoderPermissionMode({
+      HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "bypass_permissions",
+    }),
+    "bypass_permissions",
+  );
+  assert.equal(
+    resolveQoderPermissionMode({ HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "yolo" }),
+    "bypass_permissions",
+    "the yolo alias maps to the supported full-permission value",
+  );
+  assert.equal(
+    resolveQoderPermissionMode({ HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "auto" }),
+    "auto",
+    "an explicit mode must not be replaced by the default",
+  );
+  assert.equal(
+    resolveQoderPermissionMode({ HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "dont_ask" }),
+    "dont_ask",
+  );
   assert.equal(
     resolveQoderPermissionMode({ HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "accept_edits" }),
     "accept_edits",
+    "legacy values stay available for older CLI builds",
   );
   assert.throws(
-    () =>
-      resolveQoderPermissionMode({
-        HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "bypass_permissions",
-      }),
-    /bypass_permissions\/yolo is deliberately not supported/,
+    () => resolveQoderPermissionMode({ HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "sometimes" }),
+    /Unsupported Qoder permission mode.*default: bypass_permissions/,
   );
-  assert.throws(
-    () => resolveQoderPermissionMode({ HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "yolo" }),
-    /Unsupported Qoder permission mode/,
-  );
+});
+
+test("Qoder compares snake_case flags with camelCase init reports", () => {
+  assert.equal(sameQoderPermissionMode("bypass_permissions", "bypassPermissions"), true);
+  assert.equal(sameQoderPermissionMode("dont_ask", "dontAsk"), true);
+  assert.equal(sameQoderPermissionMode("accept_edits", "acceptEdits"), true);
+  assert.equal(sameQoderPermissionMode("bypass_permissions", "auto"), false);
 });
 
 test("Qoder extraArgs cannot override supervisor-managed or safety-sensitive flags", () => {

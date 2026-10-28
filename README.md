@@ -383,9 +383,17 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | --- | --- | --- |
 | Pi | 完整 | 原生 RPC；steer / follow-up / cancel / resume / 扩展对话框均可映射 |
 | MiniMax Code | 实验性 | ACP over ndJSON（`mcode acp`）。spawn / 完成 / 取消 / resume 已在真实 0.6.12 上验证（历史证据；最新 0.6.13 本轮只做了单轮 ACP 与 Token 探测，未重跑全部交互）；权限问答在 Ask 模式下对真实进程验证过（是否触发询问由运行时风险分类决定，并非每次都出现）。steer 与 follow-up 依赖 `mcode/session/steer`、`mcode/session/queue/enqueue` 扩展，未声明该扩展的构建会明确报 `UNSUPPORTED`；真实进程上 `queue/enqueue` 可用，steer 在**活跃 turn 内**已验证有效（agent 照做，事件记为 `mode=steered`），turn 结束后再发会被拒，因此 steer 的送达依赖 turn 是否还活着。ACP 的 `session/prompt` 会阻塞到 turn 结束且拒绝并发第二个 prompt |
-| Qoder CLI | 实验性 | 单轮、取消、AskUserQuestion、resume 已真实验证；steer / follow-up 在当前版本被接受但未生效，权限 allow/deny 仅部分验证。任务度量可读取 `result.usage`，但全零报告按未知处理 |
+| Qoder CLI | 实验性 | 单轮、取消、AskUserQuestion、resume 已真实验证；默认 `bypass_permissions`（1.1.79 实测：真实 Worker 完成文件写入/读取且无审批），可用显式配置覆盖。steer / follow-up 在当前版本被接受但未生效，权限 allow/deny 仅部分验证。任务度量可读取 `result.usage`，但全零报告按未知处理 |
 
 用量采集边界：Pi 只在 assistant message 原生提供 `usage` 时记录；Qoder 只在 `result.usage` 存在时记录；MiniMax Code 最新 0.6.13 实测 ACP 只提供上下文 `used`/`size` 与 `cost=0 USD`，prompt result 不含 usage，其 headless `exec --output-format json` 虽有结构化 usage，但 HS 走 ACP 且不读取私有会话库，因此报告中保持未知。主 Agent 用量不会从宿主会话自动读取，必须显式补录。
+
+### Qoder 权限模式
+
+当前安装的 Qoder CLI **1.1.79** 的 `--permission-mode` 只接受 `bypass_permissions`、`dont_ask`、`auto`。HS 默认显式传 `bypass_permissions`（用户明确授权的完整执行权限），不再用 `auto` 覆盖 `~/.qoder/settings.json` 的 `general.defaultPermissionMode`，也不会进入自动权限判断服务；后者返回 403 时 Qoder 会退化成逐项询问，正是本修复要消除的行为。
+
+优先级：`QoderAdapterOptions.permissionMode`（嵌入/测试） > `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE` > 默认 `bypass_permissions`。`bypass` / `yolo` 是等价别名；`accept_edits` / `default` / `plan` 仍被接受以兼容旧 CLI，但 1.1.79 不支持，传入会在启动时被 Qoder 拒绝。
+
+Qoder 的 `system/init` 会回报实际生效的 `permissionMode`。若与请求不一致，HS 直接让启动失败并报告 requested/effective，不会静默降级为 `auto` 或逐项审批；若 init 未回报，HS 记录诊断但无法确认实际模式。注意 `bypass_permissions` 会跳过 Qoder 的权限确认，是高风险设置；HS 仍不提供文件系统沙箱。真实验证见 [`evidence/qoder-permission-mode-261028/`](evidence/qoder-permission-mode-261028/)。
 
 ### MiniMax Code 接入
 

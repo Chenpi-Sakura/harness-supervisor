@@ -38,7 +38,7 @@ const CAPABILITIES: RuntimeCapabilities = {
   pause: false,
   interactiveInput: true,
   notes:
-    "Qoder CLI stream-json over stdio (--print --input-format stream-json). Steering and follow-ups send priority next/later user messages; the CLI accepts them (the supervisor records run.message_sent) but a real 1.1.76 run did not apply an accepted steer to the running turn, so treat message_sent as 'accepted by the stream, not rejected' rather than 'the model saw it'. Cancellation uses the interrupt control request plus process termination and was validated in a real run (queued follow-up never executed). Permission prompts are surfaced as awaiting_input and answered through the can_use_tool control protocol; AskUserQuestion was validated in a real run, while a Bash tool call under permission mode default ran without any can_use_tool request, so allow/deny was not exercised end to end. Resume uses --resume <session-id> and verifies the returned session id. Qoder sessions live in the user's Qoder config directory. There is no sandbox: cwd is not a file-isolation boundary.",
+    "Qoder CLI stream-json over stdio (--print --input-format stream-json). Steering and follow-ups send priority next/later user messages; the CLI accepts them (the supervisor records run.message_sent) but a real 1.1.76 run did not apply an accepted steer to the running turn, so treat message_sent as 'accepted by the stream, not rejected' rather than 'the model saw it'. Cancellation uses the interrupt control request plus process termination and was validated in a real run (queued follow-up never executed). Permission prompts are surfaced as awaiting_input and answered through the can_use_tool control protocol; AskUserQuestion was validated in a real run, while a Bash tool call under permission mode default ran without any can_use_tool request, so allow/deny was not exercised end to end. Resume uses --resume <session-id> and verifies the returned session id. Qoder sessions live in the user's Qoder config directory. Permission mode is requested explicitly (default bypass_permissions, override HARNESS_SUPERVISOR_QODER_PERMISSION_MODE) and a runtime-reported mismatch fails startup instead of falling back to auto. There is no sandbox: cwd is not a file-isolation boundary.",
 };
 
 export class QoderAdapter implements HarnessAdapter {
@@ -55,12 +55,14 @@ export class QoderAdapter implements HarnessAdapter {
     validateQoderExtraArgs(spec.extraArgs);
     await ensureDir(spec.sessionDir);
     const sessionId = randomUUID();
+    const permissionMode = this.resolvePermissionMode();
     return QoderCliSession.start({
       launch: this.launchFor(spec),
-      args: this.buildArgs(spec, sessionId),
+      args: this.buildArgs(spec, sessionId, false, permissionMode),
       cwd: spec.cwd,
       callbacks,
       sessionId,
+      permissionMode,
       modelId: spec.model,
       onStderr: this.options.onStderr
         ? (text) => this.options.onStderr?.(spec.workerId, text)
@@ -106,13 +108,15 @@ export class QoderAdapter implements HarnessAdapter {
       );
     }
     await ensureDir(spec.sessionDir);
+    const permissionMode = this.resolvePermissionMode();
     return QoderCliSession.start({
       launch: this.launchFor(spec),
-      args: this.buildArgs(spec, resumeId, true),
+      args: this.buildArgs(spec, resumeId, true, permissionMode),
       cwd: spec.cwd,
       callbacks,
       sessionId: resumeId,
       resumeId,
+      permissionMode,
       requestedSessionFile: resolved,
       modelId: spec.model,
       onStderr: this.options.onStderr
@@ -139,7 +143,16 @@ export class QoderAdapter implements HarnessAdapter {
     return spec.env ? { ...base, env: { ...base.env, ...spec.env } } : base;
   }
 
-  private buildArgs(spec: HarnessSpawnSpec, sessionId: string, resume = false): string[] {
+  private resolvePermissionMode(): QoderPermissionMode {
+    return this.options.permissionMode ?? resolveQoderPermissionMode(process.env);
+  }
+
+  private buildArgs(
+    spec: HarnessSpawnSpec,
+    sessionId: string,
+    resume = false,
+    permissionMode = this.resolvePermissionMode(),
+  ): string[] {
     if (spec.provider) {
       throw new SupervisorError(
         "UNSUPPORTED",
@@ -147,8 +160,6 @@ export class QoderAdapter implements HarnessAdapter {
         { provider: spec.provider },
       );
     }
-    const permissionMode =
-      this.options.permissionMode ?? resolveQoderPermissionMode(process.env);
     const args = [
       "--print",
       "--output-format",

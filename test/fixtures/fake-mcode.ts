@@ -195,7 +195,8 @@ function handlePrompt(id: number | string, params: Record<string, unknown>): voi
         });
       });
     }
-    later(10, finish);
+    // Keep the turn alive briefly so a test can send a steer while it is running.
+    later(Number(process.env.FAKE_MCODE_FINISH_MS ?? "10"), finish);
   });
 }
 

@@ -352,7 +352,12 @@ test("MiniMax Code steering uses the mcode/session/steer extension", async (t) =
 });
 
 test("MiniMax Code reports unsupported steering when the build lacks the extension", async (t) => {
-  const { client, cwd } = await startMcodeHarness(t, { FAKE_MCODE_SCENARIO: "noext" });
+  const { client, cwd } = await startMcodeHarness(t, {
+    FAKE_MCODE_SCENARIO: "noext",
+    // Without this the turn can finish between the status read and the send,
+    // turning the expected UNSUPPORTED into a terminal-state error.
+    FAKE_MCODE_FINISH_MS: "1500",
+  });
   const worker = await spawnMcode(client, cwd, "keep going");
   await waitForStatus(client, worker.id, ["running"], 15_000);
 

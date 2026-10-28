@@ -68,6 +68,8 @@ HS **不通过进程环境、“最近会话”或全局 Thread ID 推断调用�
 | 已绑定通知目标的异步任务 | 在宿主确实支持唤醒时返回 `observation: "wake"`；不进行无意义的重复轮询 |
 | 用户明确要求立即等待结果 | 正常使用 `worker_wait`，不盲目结束回合 |
 
+2026-10-28 真实 Codex Desktop A/B 双对话已通过：两次 `worker_spawn` 均未传 `notifyTarget`，均返回 `source=caller` 且绑定到不同 Thread；完成通知分别到达正确对话并被实际唤醒处理，未串线。详见 `evidence/mcp-auto-binding-261028/desktop-two-conversation.md`。该结果只覆盖本次运行，投递仍是 at-least-once。
+
 ## 6. 与路线的关系
 
 - 与阶段 1（读取分层）**并行**，不依赖 V1–V3；

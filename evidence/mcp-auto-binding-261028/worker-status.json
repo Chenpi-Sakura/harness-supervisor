@@ -1,0 +1,221 @@
+{
+  "worker": {
+    "schemaVersion": 1,
+    "id": "w-mvrx0ccw-4856efeb",
+    "runtime": "pi",
+    "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-061-e2e-d29735\\work",
+    "promptPreview": "[scenario:slow] auto bind E2E",
+    "status": "completed",
+    "createdAt": "2026-10-28T09:31:32.624Z",
+    "updatedAt": "2026-10-28T09:31:34.794Z",
+    "lastSeq": 12,
+    "eventCount": 12,
+    "stats": {
+      "turns": 1,
+      "toolCalls": 1,
+      "toolErrors": 0
+    },
+    "capabilities": {
+      "runtime": "pi",
+      "steer": true,
+      "followUp": true,
+      "cancel": true,
+      "resume": true,
+      "pause": false,
+      "interactiveInput": true,
+      "notes": "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported."
+    },
+    "config": {},
+    "resumeCount": 0,
+    "supervisorId": "c787a6f6-d57c-4d88-9f5e-8d261f7f38a6",
+    "notifyTarget": {
+      "channel": "codex-queue",
+      "codexThreadId": "01a181d9-43d6-7512-af49-4b5512f9fb3f"
+    },
+    "taskId": "t-mvrx0ccx-15da7d35",
+    "pid": 116124,
+    "sessionId": "5a3feebd-4238-437e-97e4-460546acfce4",
+    "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-061-e2e-d29735\\state\\sessions\\w-mvrx0ccw-4856efeb\\fake_c9977c7c-9e37-40b7-b6d2-0c86839a1c59.jsonl",
+    "startedAt": "2026-10-28T09:31:32.926Z",
+    "endedAt": "2026-10-28T09:31:34.794Z",
+    "exit": {
+      "code": 0,
+      "signal": null,
+      "at": "2026-10-28T09:31:34.794Z"
+    },
+    "result": {
+      "text": "FAKE_PI_OK",
+      "truncated": false
+    },
+    "pidAlive": false,
+    "resumeAvailable": true
+  },
+  "recentEvents": [
+    {
+      "seq": 1,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:32.638Z",
+      "type": "worker.starting",
+      "notifyTarget": {
+        "channel": "codex-queue",
+        "codexThreadId": "01a181d9-43d6-7512-af49-4b5512f9fb3f"
+      },
+      "data": {
+        "runtime": "pi",
+        "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-061-e2e-d29735\\work",
+        "resumed": false
+      }
+    },
+    {
+      "seq": 2,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:32.715Z",
+      "type": "worker.started",
+      "notifyTarget": {
+        "channel": "codex-queue",
+        "codexThreadId": "01a181d9-43d6-7512-af49-4b5512f9fb3f"
+      },
+      "data": {
+        "pid": 116124,
+        "runtime": "pi"
+      }
+    },
+    {
+      "seq": 3,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:32.912Z",
+      "type": "worker.session",
+      "notifyTarget": {
+        "channel": "codex-queue",
+        "codexThreadId": "01a181d9-43d6-7512-af49-4b5512f9fb3f"
+      },
+      "data": {
+        "sessionId": "5a3feebd-4238-437e-97e4-460546acfce4",
+        "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-061-e2e-d29735\\state\\sessions\\w-mvrx0ccw-4856efeb\\fake_c9977c7c-9e37-40b7-b6d2-0c86839a1c59.jsonl",
+        "fileExists": false
+      }
+    },
+    {
+      "seq": 4,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:32.926Z",
+      "type": "run.accepted",
+      "notifyTarget": {
+        "channel": "codex-queue",
+        "codexThreadId": "01a181d9-43d6-7512-af49-4b5512f9fb3f"
+      },
+      "data": {
+        "disposition": "started"
+      }
+    },
+    {
+      "seq": 5,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:32.944Z",
+      "type": "run.started",
+      "notifyTarget": {
+        "channel": "codex-queue",
+        "codexThreadId": "01a181d9-43d6-7512-af49-4b5512f9fb3f"
+      },
+      "data": {
+        "pid": 116124,
+        "resumed": false
+      }
+    },
+    {
+      "seq": 6,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:32.954Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "tool_start",
+        "tool": "bash",
+        "detail": "echo fake-harness"
+      }
+    },
+    {
+      "seq": 7,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:34.748Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "tool_end",
+        "tool": "bash",
+        "isError": false,
+        "durationMs": 1800
+      }
+    },
+    {
+      "seq": 8,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:34.758Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "assistant_message",
+        "preview": "FAKE_PI_OK"
+      }
+    },
+    {
+      "seq": 9,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:34.767Z",
+      "type": "run.progress",
+      "data": {
+        "kind": "turn_complete"
+      }
+    },
+    {
+      "seq": 10,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:34.777Z",
+      "type": "run.usage",
+      "notifyTarget": {
+        "channel": "codex-queue",
+        "codexThreadId": "01a181d9-43d6-7512-af49-4b5512f9fb3f"
+      },
+      "data": {
+        "inputTokens": 10,
+        "outputTokens": 5,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "reportedTotalTokens": 15,
+        "provider": "fake",
+        "modelId": "fake-model"
+      }
+    },
+    {
+      "seq": 11,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:34.794Z",
+      "type": "run.completed",
+      "notifyTarget": {
+        "channel": "codex-queue",
+        "codexThreadId": "01a181d9-43d6-7512-af49-4b5512f9fb3f"
+      },
+      "data": {
+        "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-061-e2e-d29735\\state\\sessions\\w-mvrx0ccw-4856efeb\\fake_c9977c7c-9e37-40b7-b6d2-0c86839a1c59.jsonl",
+        "aborted": false,
+        "stopReason": "stop",
+        "forcedCleanup": false,
+        "text": "FAKE_PI_OK",
+        "truncated": false
+      }
+    },
+    {
+      "seq": 12,
+      "workerId": "w-mvrx0ccw-4856efeb",
+      "ts": "2026-10-28T09:31:34.794Z",
+      "type": "worker.exited",
+      "notifyTarget": {
+        "channel": "codex-queue",
+        "codexThreadId": "01a181d9-43d6-7512-af49-4b5512f9fb3f"
+      },
+      "data": {
+        "code": 0,
+        "signal": null,
+        "forced": false
+      }
+    }
+  ],
+  "stderrTail": "fake-pi: ready session=C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-061-e2e-d29735\\state\\sessions\\w-mvrx0ccw-4856efeb\\fake_c9977c7c-9e37-40b7-b6d2-0c86839a1c59.jsonl resumed=false\n"
+}

@@ -22,7 +22,7 @@ export class OldDaemonFixture {
   private server: net.Server | null = null;
   private readonly sockets = new Set<net.Socket>();
 
-  constructor(stateDir: string) {
+  constructor(stateDir: string, private readonly version = "0.2.0") {
     this.stateDir = path.resolve(stateDir);
   }
 
@@ -109,7 +109,7 @@ export class OldDaemonFixture {
         ok: true,
         result: {
           name: "harness-supervisor",
-          version: "0.2.0",
+          version: this.version,
           pid: process.pid,
           stateDir: this.stateDir,
           supervisorId: "old-fixture-supervisor",
@@ -131,6 +131,54 @@ export class OldDaemonFixture {
             note: "old fixture",
           },
           runtimes: [],
+        },
+      };
+    }
+    if (method === "spawn") {
+      const input = params as Record<string, unknown>;
+      const now = new Date().toISOString();
+      return {
+        ok: true,
+        result: {
+          schemaVersion: 1,
+          id: "w-old-fixture",
+          runtime: typeof input.runtime === "string" ? input.runtime : "pi",
+          cwd: typeof input.cwd === "string" ? input.cwd : this.stateDir,
+          status: "running",
+          createdAt: now,
+          updatedAt: now,
+          lastSeq: 1,
+          eventCount: 1,
+          stats: { turns: 0, toolCalls: 0, toolErrors: 0 },
+          capabilities: {
+            runtime: "pi",
+            steer: false,
+            followUp: false,
+            cancel: false,
+            resume: false,
+            pause: false,
+            interactiveInput: false,
+            notes: "old fixture",
+          },
+          config: {},
+          resumeCount: 0,
+          supervisorId: "old-fixture-supervisor",
+          notifyTarget: input.notifyTarget ?? { channel: "none" },
+          notificationBinding: {
+            target: input.notifyTarget ?? { channel: "none" },
+            source: "daemon-default",
+            wake:
+              (input.notifyTarget as { channel?: string } | undefined)?.channel === "codex-queue"
+                ? "bound"
+                : "unbound",
+            observation:
+              (input.notifyTarget as { channel?: string } | undefined)?.channel === "codex-queue"
+                ? "wake"
+                : "wait",
+            warnings: [],
+          },
+          pidAlive: true,
+          resumeAvailable: false,
         },
       };
     }

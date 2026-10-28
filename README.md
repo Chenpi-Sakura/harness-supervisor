@@ -111,7 +111,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up          # 在本机启动 daemon
-node dist/src/cli.js info        # 核对 version=0.6.0 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.6.1 与 stateDir
 ```
 
 依赖：Node.js >= 22.19（`node -v` 核对）；Pi >= 1.3。若 `npm ci` 因网络镜像失败，改用 `npm install` 后以 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -217,7 +217,7 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 | `worker_status` | 状态、pending input、结果/错误；production 默认不带最近事件/诊断 |
 | `worker_list` | 列出 Worker（持久化，跨重启） |
 | `worker_events` | 按 `sinceSeq` 增量读取事件 |
-| `worker_wait` | 有界等待（默认 20s，最大 120s）；默认省略普通进度 |
+| `worker_wait` | 有界等待（默认 30s，最大 120s）；默认省略普通进度 |
 | `worker_send` | 运行中追加 steer / follow-up |
 | `worker_answer` | 回答输入请求或权限询问 |
 | `worker_cancel` | 取消并确认终态；不影响其他 Worker |
@@ -243,6 +243,10 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 {"notifyTarget":{"channel":"codex-queue","codexThreadId":"<verified-origin-thread-id>"}}
 ```
 
+0.6.1 起，MCP 的 `worker_spawn` 在省略 `notifyTarget` 时会读取 Codex 每次工具调用的 `_meta.threadId`，自动绑定到**发起本次调用**的 Codex 对话。优先级：显式 `notifyTarget` > 自动识别到的当前对话 > daemon 全局默认值。多个 Codex 对话并行派发时，每个工具调用带自己的 Thread ID，Worker 各自保存独立快照，不会串线。自动绑定只接受规范 UUID；缺失、格式错误或与同一 `_meta` 中的 `x-codex-turn-metadata.thread_id` 冲突时，不猜测，退回 daemon 默认并给出 `warnings`。
+
+自动绑定需要 **daemon 0.6.1 或更高**。旧 daemon 仍可正常 `worker_spawn`，但 MCP 不会发送新字段，并在 `notificationBinding.warnings` 中说明“未自动绑定”；升级 daemon 后需重启 MCP/Codex 会话，版本判断才会刷新。
+
 每个 Worker 在创建时持久化绑定，每条重要事件和通知保存各自的目标快照。全局 `notify-target` / `supervisor_wake_target` 只作为**新 Worker 的默认值**。已有 Worker、已排队或失败待重试的通知都不会随默认值迁移。未配置目标时只写收件箱；旧版本无绑定的 Worker 和无目标的通知同样保留在收件箱，不推测原始会话。
 
 ```powershell
@@ -255,7 +259,7 @@ node dist/src/cli.js resume <workerId> --prompt '继续任务'
 node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-thread <new-thread-id>
 ```
 
-本机 shell 的 `CODEX_THREAD_ID` 已实测存在，但共享 MCP server 的进程环境不等于逐请求身份。本实现不自动读取 MCP 进程环境来替调用方绑定，不扫描“最近 Session”。调用方须传入已核实的 Thread ID；若宿主不提供，则明确使用收件箱降级。不要在并行会话中先改全局默认值再 spawn 来模拟绑定。
+CLI 不经过 Codex 的 MCP 调用，因此在 shell 中仍需显式传 `--notify-thread`（或使用 `--notify-none`）。HS 不会读取 MCP 进程环境、`CODEX_THREAD_ID`、最近 Session 或全局 Thread ID 来猜测调用者；MCP 的自动绑定只使用该次工具调用自带的 `_meta.threadId`。`worker_resume` 不自动绑定新对话：省略目标时保留原绑定，显式目标只影响后续事件。已有 Worker、已排队或失败待重试的通知不会随默认值迁移。
 
 旧客户端省略 `notifyTarget` 仍可调用；这是向后兼容的默认值快照，不保证它能识别发起会话。恢复历史通知时只信事件中的历史目标；无历史目标的旧事件不会投递给新接管者。通知 `delivered` 仅表示队列接受；`ack` 表示消费者已处理。崩溃窗口可能重复投递，消费者应按稳定通知 ID 去重。
 
@@ -271,10 +275,12 @@ node dist/src/cli.js resume <workerId> --prompt '接管后继续' --notify-threa
 }
 ```
 
-- `source` 为 `explicit`（显式传入）、`daemon-default`（spawn 省略、取全局默认）或 `preserved`（resume 省略、保留原绑定）。
+- `source` 为 `explicit`（显式传入）、`caller`（从当前 MCP 调用的 `_meta.threadId` 自动绑定）、`daemon-default`（无调用者身份时取全局默认）或 `preserved`（resume 省略、保留原绑定）。
 - `wake=unbound` 时 `warnings` 必非空，`observation=wait`：应使用 `worker_wait` 或收件箱，不能对用户声称会自动通知。
 - `wake=bound` 只表示目标已绑定；投递仍是 at-least-once，不保证主 Agent 一定被唤醒。
-- `CODEX_THREAD_ID` 等进程环境不会被自动当作调用者身份；必须显式传入已核实的 Thread ID。
+- 自动绑定的 Thread ID 来自宿主注入的 `_meta`，是路由提示而非认证凭据；HS 校验格式和重复字段一致性，但不把它当作安全边界。
+
+对于可独立推进的长程任务：派发一次、检查 `notificationBinding.wake`；只有在宿主确实支持唤醒该 Thread 时才结束当前回合，等待完成/失败/需要输入的通知，不再周期性调用 `worker_wait` / `worker_status` / `worker_events`。宿主唤醒行为不确定、未绑定或投递失败时，明确降级并用 `worker_wait` 或收件箱接回结果。Codex Desktop 的双对话唤醒尚未完成真实验收；在此之前不要把“已绑定”当作“必定唤醒”。这是默认协作规范，不是对所有宿主行为的强制保证。
 
 ### Worker 报告协议与命令守卫
 

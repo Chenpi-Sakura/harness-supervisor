@@ -92,8 +92,17 @@ async function runMcpProcess(
   return { code, stderr };
 }
 
-async function call(connection: McpConnection, name: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return (await connection.mcp.callTool({ name, arguments: args })) as ToolResult;
+async function call(
+  connection: McpConnection,
+  name: string,
+  args: Record<string, unknown>,
+  meta?: Record<string, unknown>,
+): Promise<ToolResult> {
+  return (await connection.mcp.callTool({
+    name,
+    arguments: args,
+    ...(meta ? { _meta: meta } : {}),
+  } as any)) as ToolResult;
 }
 
 async function waitForIdempotencyRecord(
@@ -1097,6 +1106,42 @@ test("production wait keeps historical completion reports across resume", async 
         event.type === "run.completed" && event.data?.text === "FAKE_PI_OK",
     ),
     "the historical completion event still carries its report",
+  );
+});
+
+test("a 0.6.0 daemon omits caller IPC, keeps spawn working and explains the gap", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-old-daemon-061-"));
+  const old = new OldDaemonFixture(stateDir, "0.6.0");
+  await old.start();
+  t.after(() => old.stop());
+  const cwd = await makeWorkspace();
+  const production = await connectMcp(t, stateDir, {});
+  const thread = "01a181c6-823f-7fe0-92b9-b8cf38c5bb41";
+
+  const spawned = parseTool(
+    await call(
+      production,
+      "worker_spawn",
+      { cwd, prompt: "auto binding against an older daemon" },
+      {
+        threadId: thread,
+        sessionId: thread,
+        "x-codex-turn-metadata": { thread_id: thread },
+      },
+    ),
+  );
+  assert.equal(spawned.notificationBinding.source, "daemon-default");
+  assert.match(
+    spawned.notificationBinding.warnings.join(" "),
+    /predates caller auto-binding/,
+    "the MCP must explain why auto-binding did not happen",
+  );
+  const spawnRequest = old.requests.filter((request) => request.method === "spawn").at(-1);
+  assert.ok(spawnRequest);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(spawnRequest.params, "callerThreadId"),
+    false,
+    "an older daemon's strict spawn schema must not receive the new field",
   );
 });
 

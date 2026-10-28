@@ -73,6 +73,13 @@ const SpawnSchema = z
     prompt: z.string().min(1).max(256 * 1024),
     name: z.string().min(1).max(200).optional(),
     taskId: z.string().min(1).max(120).optional(),
+    // Per-call Codex caller identity (MCP `_meta.threadId`). Only used for
+    // auto-binding when no explicit notifyTarget is supplied.
+    callerThreadId: z
+      .string()
+      .trim()
+      .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+      .optional(),
     ...ConfigFields,
     ...RequestIdField,
     ...NotifyTargetField,

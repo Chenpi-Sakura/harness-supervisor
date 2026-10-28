@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { callerMetaRejection, callerThreadFromMeta } from "./caller-thread.js";
 import { SupervisorError, errorMessage } from "./errors.js";
 import { SupervisorClient } from "./ipc/client.js";
 import { resolveStateDir, NotifyTargetSchema } from "./ipc/protocol.js";
@@ -104,8 +105,10 @@ const client = new SupervisorClient({
 
 const REQUIRED_DAEMON_VERSION = "0.4.0";
 const METRICS_DAEMON_VERSION = "0.5.0";
+const CALLER_BINDING_DAEMON_VERSION = "0.6.1";
 let daemonSupportsNewIpc = false;
 let daemonSupportsMetrics = false;
+let daemonSupportsCallerBinding = false;
 let daemonVersion = "unknown";
 
 function versionTuple(value: unknown): [number, number, number] | null {
@@ -148,6 +151,7 @@ async function assessDaemonCompatibility(): Promise<void> {
   daemonVersion = typeof info.version === "string" ? info.version : "unknown";
   daemonSupportsNewIpc = daemonAtLeast(info.version, REQUIRED_DAEMON_VERSION);
   daemonSupportsMetrics = daemonAtLeast(info.version, METRICS_DAEMON_VERSION);
+  daemonSupportsCallerBinding = daemonAtLeast(info.version, CALLER_BINDING_DAEMON_VERSION);
   if (daemonSupportsNewIpc) return;
   if (mode === "production") {
     throw new SupervisorError("UNSUPPORTED", upgradeAdvice(daemonVersion));
@@ -222,15 +226,15 @@ const ConfigShape = {
 
 const NotifyTargetShape = {
   notifyTarget: NotifyTargetSchema.optional().describe(
-    "Explicit notification destination. Pass {channel:'codex-queue',codexThreadId:<verified originating thread id>} or {channel:'none'} for inbox-only. Spawn snapshots the current daemon default if omitted; resume preserves its original binding if omitted. Never guess the most recent session. MCP does not automatically identify the caller's Codex thread. Explicit resume binding authorizes takeover and affects future events only.",
+    "Explicit notification destination. Pass {channel:'codex-queue',codexThreadId:<verified originating thread id>} or {channel:'none'} for inbox-only. An explicit target overrides auto-binding. Spawn auto-binds to the current Codex thread when the host supplies per-call thread metadata, otherwise it snapshots the daemon default; resume preserves its original binding if omitted. Never guess the most recent session. Explicit resume binding authorizes takeover and affects future events only.",
   ),
 };
 
 const DEVELOPMENT_INSTRUCTIONS =
-  "Harness Supervisor manages native Pi/Qoder/MiniMax Code workers. worker_spawn returns prompt acceptance, never completion. Reuse the worker id; do not spawn duplicates. worker_wait is bounded, omits ordinary progress, and returns when input is needed; answer through worker_answer. MCP event reads are pull-based. Important events also enter a durable inbox; acknowledge processed notification ids. For multiple Codex conversations, pass worker_spawn.notifyTarget with a verified originating thread id. It is persisted per worker and per event. Omission snapshots the daemon default for new workers; worker_resume omission preserves binding, while an explicit target authorizes takeover for future events. supervisor_wake_target only changes the shared default for new workers. No per-request Codex identity is inferred from MCP or the most recent session. Without a known route use channel='none'. codex-queue can trigger a new turn while the host has that target loaded; delivery is at-least-once and never itself proves wake-up. Task metrics are phase 1-2: a spawn auto-creates or links a task, and supervisor_metrics_* expose task and report data. Main-agent usage is never read from the host and must be recorded explicitly; unknown is not zero. Cost, acceptance, rework and intervention are not collected yet.";
+  "Harness Supervisor manages native Pi/Qoder/MiniMax Code workers. worker_spawn returns prompt acceptance, never completion. Reuse the worker id; do not spawn duplicates. worker_wait is bounded, omits ordinary progress, and returns when input is needed; answer through worker_answer. MCP event reads are pull-based. Important events also enter a durable inbox; acknowledge processed notification ids. worker_spawn auto-binds to the current Codex thread when the host supplies per-call thread metadata; an explicit worker_spawn.notifyTarget overrides it, and omission falls back to the daemon default only when no caller identity is available. Bindings are persisted per worker and per event; worker_resume omission preserves the binding, while an explicit target authorizes takeover for future events. supervisor_wake_target only changes the shared default for new workers. Without a known route use channel='none'. codex-queue can trigger a new turn while the host has that target loaded; delivery is at-least-once and never itself proves wake-up. Task metrics are phase 1-2: a spawn auto-creates or links a task, and supervisor_metrics_* expose task and report data. Main-agent usage is never read from the host and must be recorded explicitly; unknown is not zero. Cost, acceptance, rework and intervention are not collected yet.";
 
 const PRODUCTION_INSTRUCTIONS =
-  "Harness Supervisor manages independent native Pi/Qoder/MiniMax Code workers and is pull-based: it never wakes this conversation by itself. worker_spawn/worker_resume return acceptance, not completion; keep the returned id and lastSeq, reuse the worker, and use worker_wait or worker_status for the final state. Every task prompt is prefixed with the HS worker protocol: a worker finishes with its final answer and must not call `codex queue` or otherwise inject into this conversation; its PATH also rejects that subcommand. When a run needs input, answer it with worker_answer using pendingInput.requestId; worker_send only queues steering/follow-up. Pass requestId on side-effecting calls: an identical retry replays, different parameters CONFLICT, and an interrupted request reports UNCERTAIN and is not re-executed. Durable notifications are read with supervisor_notifications (default: all unacknowledged) and acknowledged after processing. Omit notifyTarget to snapshot the daemon default for new workers; resume omission preserves the binding; for parallel conversations pass an explicit verified thread id. worker_spawn/worker_resume report notificationBinding (target, source, wake, observation, warnings): when it says unbound, use worker_wait or read the inbox and tell the user this worker will not wake the conversation; a bound target is still not proof of wake-up. codex-queue delivery can start a turn only while the host has that thread loaded; delivery is at-least-once and is not proof of wake-up. MCP does not infer the caller's thread. Task metrics are phase 1-2: a spawn auto-creates or links a task, and supervisor_metrics_* expose task and report data. Main-agent usage is never read from the host and must be recorded explicitly; unknown is not zero. Cost, acceptance, rework and intervention are not collected yet.";
+  "Harness Supervisor manages independent native Pi/Qoder/MiniMax Code workers and is pull-based: it does not poll; a bound codex-queue target can start a turn when the host has that thread loaded. worker_spawn/worker_resume return acceptance, not completion; keep the returned id and lastSeq, reuse the worker, and when notificationBinding.wake=bound and the host is known to deliver wake-ups for this thread, end the turn and let the completion notification bring you back; otherwise use worker_wait or worker_status. Every task prompt is prefixed with the HS worker protocol: a worker finishes with its final answer and must not call `codex queue` or otherwise inject into this conversation; its PATH also rejects that subcommand. When a run needs input, answer it with worker_answer using pendingInput.requestId; worker_send only queues steering/follow-up. Pass requestId on side-effecting calls: an identical retry replays, different parameters CONFLICT, and an interrupted request reports UNCERTAIN and is not re-executed. Durable notifications are read with supervisor_notifications (default: all unacknowledged) and acknowledged after processing. Omit notifyTarget to snapshot the daemon default for new workers unless the host supplied per-call thread metadata, in which case HS auto-binds to the current Codex thread (source=caller); an explicit notifyTarget wins. resume omission preserves the binding. For a long-running independent task, spawn once, verify notificationBinding.wake=bound, then end the turn instead of polling worker_wait/worker_status/worker_events; use worker_wait when unbound, when the user asks for an immediate result, or after a notification. A bound target is not proof of wake-up. codex-queue delivery can start a turn only while the host has that thread loaded; delivery is at-least-once and is not proof of wake-up. Task metrics are phase 1-2: a spawn auto-creates or links a task, and supervisor_metrics_* expose task and report data. Main-agent usage is never read from the host and must be recorded explicitly; unknown is not zero. Cost, acceptance, rework and intervention are not collected yet.";
 
 interface ToolDescriptions {
   spawn: string;
@@ -250,7 +254,7 @@ interface ToolDescriptions {
 
 const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   spawn:
-    "Start an independent native harness process (Pi by default) in its own working directory. Returns when the prompt is accepted, not when the task completes. Keep the returned id/lastSeq and observe with worker_wait or worker_status. The task prompt is prefixed with the HS worker protocol: finish the run with the final answer and never call `codex queue`. Pass notifyTarget only for a verified destination; omission snapshots the daemon default for new workers. The response includes notificationBinding: effective target, source (explicit / daemon-default), wake (bound / unbound), observation (wake / wait) and warnings. source=daemon-default with channel=none means this worker will not wake this conversation; use worker_wait. A bound target is not a guarantee of wake-up.",
+    "Start an independent native harness process (Pi by default) in its own working directory. Returns when the prompt is accepted, not when the task completes. Keep the returned id/lastSeq and observe with worker_wait or worker_status. The task prompt is prefixed with the HS worker protocol: finish the run with the final answer and never call `codex queue`. When notifyTarget is omitted and the Codex host supplies per-call thread metadata, HS auto-binds this worker to the current Codex thread (source=caller); an explicit notifyTarget always wins, and the daemon default is used only when no caller identity is available. The response includes notificationBinding: effective target, source (explicit / caller / daemon-default), wake (bound / unbound), observation (wake / wait) and warnings. For a long-running independent task with wake=bound and a host known to wake this thread, end the turn after spawn instead of polling; otherwise use worker_wait. A bound target is not a guarantee of wake-up.",
   status:
     "Return the current status, a bounded result preview (chars/truncated), a bounded pending input and the lastSeq cursor. The default response stays within 2 KiB and includes at most 10 compact lifecycle events; run.progress is never included. includeResult=true returns the full result (error belongs to this face), includeInput=true returns the complete pending input; each is independent and the other face stays a bounded preview. In production, status events are always compact summaries (at most 10, even with recentEvents); full event payloads come only from worker_events or seq=<n>. Both explicit faces still exclude run.progress.",
   list:
@@ -258,7 +262,7 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   events:
     "Read lifecycle events. Without sinceSeq this is a compact tail snapshot: the newest lifecycle events, no run.progress, staying within 4 KiB. Use the returned nextSeq as the cursor; pass sinceSeq for strict incremental reads, seq=<n> to read one stored event in full (including run.progress), or includeProgress=true for the complete event stream. Never assume a truncated response is complete: eventsOmitted and progressOmitted say what was left out.",
   wait:
-    "Bounded long-poll (default 20s, maximum 120s). MCP is pull-based: the supervisor never wakes the main agent by itself, although optional codex-queue notifications can start a turn when the host has that thread loaded. Without sinceSeq it checks current state and the latest events first, then waits from the current tail. Returns early when terminal, awaiting_input, or a requested types event appears. Ordinary run.progress is omitted unless includeProgress=true or types includes run.progress. Pass sinceSeq for strict cursor delivery. Timeout is not failure.",
+    "Bounded long-poll (default 30s, maximum 120s). MCP is pull-based: the supervisor never wakes the main agent by itself, although optional codex-queue notifications can start a turn when the host has that thread loaded. Without sinceSeq it checks current state and the latest events first, then waits from the current tail. Returns early when terminal, awaiting_input, or a requested types event appears. Ordinary run.progress is omitted unless includeProgress=true or types includes run.progress. Pass sinceSeq for strict cursor delivery. Timeout is not failure.",
   send:
     "Queue a steering message (before the next model turn) or follow-up (after the current run) through the native harness. Valid only while running; it returns acceptance, not completion. Pi applies both natively. Qoder 1.1.76 accepts the stream message without a verified effect on the running turn. MiniMax Code steers an active turn through its steer extension and was verified to act on it; a steer sent after the turn ended is rejected by the agent. This does not answer extension dialogs; use worker_answer.",
   answer:
@@ -266,7 +270,7 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   cancel:
     "Clear queued messages, abort the run, stop the harness process tree and return the final cancelled state. Other workers are unaffected. An orphaned process left by a supervisor restart returns UNSUPPORTED because its control channel is gone; verify and terminate it out-of-band. Cancellation cannot be undone.",
   resume:
-    "Start a new harness process attached to an existing persisted session and send a new instruction. Only a terminal worker whose old process is gone can resume; the session is verified. It does not continue the interrupted in-memory run or automatically retry the old task. Omit notifyTarget to keep the existing binding (notificationBinding.source=preserved); an explicit target is a takeover for future events only (source=explicit). The response also reports wake, observation and warnings, so an unbound worker is not mistaken for an automatic notification.",
+    "Start a new harness process attached to an existing persisted session and send a new instruction. Only a terminal worker whose old process is gone can resume; the session is verified. It does not continue the interrupted in-memory run or automatically retry the old task. Auto-binding does not apply to resume: omit notifyTarget to keep the existing binding (notificationBinding.source=preserved); an explicit target is a takeover for future events only (source=explicit). The response also reports wake, observation and warnings, so an unbound worker is not mistaken for an automatic notification.",
   info:
     "Show the supervisor version, this MCP process mode, limits, runtimes and the explicit notification-delivery boundary. Delivery is at-least-once and is not proof of wake-up.",
   notifications:
@@ -274,7 +278,7 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   ack:
     "Mark notification ids as processed. Idempotent; unknown ids are reported rather than treated as errors.",
   wakeTarget:
-    "Set the default notification destination for NEW workers; existing workers keep their persisted targets. channel='codex-queue' requires a verified thread id and starts a turn only while the host has that thread loaded. Without arguments it returns the current default target. Use an explicit worker_spawn.notifyTarget for parallel conversations.",
+    "Set the default notification destination for NEW workers; existing workers keep their persisted targets. An explicit worker_spawn.notifyTarget overrides auto-binding; when no caller identity is available, this default is the fallback for new workers. channel='codex-queue' requires a verified thread id and starts a turn only while the host has that thread loaded. Without arguments it returns the current default target.",
 };
 
 const DEVELOPMENT_DESCRIPTIONS: ToolDescriptions = {
@@ -287,7 +291,7 @@ const DEVELOPMENT_DESCRIPTIONS: ToolDescriptions = {
   events:
     "Read normalized events after a sequence cursor. Use the returned nextSeq as the next sinceSeq. Pass sinceSeq=0 for full stored history. This is a fast, non-blocking read; use worker_wait when you want to block for progress or completion. The default response is a compact tail snapshot (newest lifecycle events, no run.progress); pass includeProgress=true for every stored event, or seq=<n> for one event in full.",
   wait:
-    "Bounded long-poll. MCP tools are pull-based: this call returns only when the host invokes it; the supervisor never wakes the main agent by itself (optional codex-queue notifications can start a turn only while the host has that thread loaded). Default 20s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. Normal run.progress events are omitted by default to keep context small; only queue_cleared (a cancellation fact) is retained, so tool calls and tool errors require includeProgress=true. Pass includeProgress=true (or request types=['run.progress']) for full progress, or use worker_events for complete history. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
+    "Bounded long-poll. MCP tools are pull-based: this call returns only when the host invokes it; the supervisor never wakes the main agent by itself (optional codex-queue notifications can start a turn only while the host has that thread loaded). Default 30s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. Normal run.progress events are omitted by default to keep context small; only queue_cleared (a cancellation fact) is retained, so tool calls and tool errors require includeProgress=true. Pass includeProgress=true (or request types=['run.progress']) for full progress, or use worker_events for complete history. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
   send:
     "Queue a steering message (delivered before the next model turn) or a follow-up (delivered after the current run) through the native harness. Only valid while the worker is running; if it already reached a terminal state this returns INVALID_STATE, and you should not spawn a replacement automatically. This does not answer extension dialogs; use worker_answer for run.needs_input events. Delivery differs per runtime: Pi applies steering/follow-ups natively, while Qoder 1.1.76 accepts the stream message (run.message_sent) without a verified effect on the running turn, so do not assume the model acted on it. MiniMax Code applies steering through its mcode/session/steer extension and queues follow-ups through mcode/session/queue/enqueue, both of which require a build that advertises them. A real 0.6.12 process accepted a steer sent during an active turn and the agent acted on it (mode 'steered'), but the same call outside an admitted turn is rejected ('Steering requires an admitted, active ACP prompt Turn'), so a steering message can reach a running turn and still be dropped when the turn has ended; check the worker state before assuming it was delivered. Pass requestId to make a retry after a timeout replay the recorded outcome instead of enqueueing the same text twice; if the daemon crashed mid-send the outcome is reported as UNCERTAIN, because the harness may already have received the message.",
   answer:
@@ -348,8 +352,13 @@ server.registerTool(
       ...NotifyTargetShape,
     },
   },
-  async (args) => {
+  async (args, extra) => {
     try {
+      const caller =
+        args.notifyTarget === undefined ? callerThreadFromMeta(extra?._meta) : undefined;
+      const callerRejection =
+        args.notifyTarget === undefined ? callerMetaRejection(extra?._meta) : undefined;
+      const callerThreadId = daemonSupportsCallerBinding ? caller?.threadId : undefined;
       const result = await client.request(
         "spawn",
         {
@@ -365,10 +374,24 @@ server.registerTool(
           maxDurationMs: args.maxDurationMs,
           requestId: args.requestId,
           notifyTarget: args.notifyTarget,
+          callerThreadId,
         },
         { timeoutMs: 90_000 },
       );
-      return ok(presentAcceptedWorker(result as WorkerSummary, mode));
+      const presented = presentAcceptedWorker(result as WorkerSummary, mode) as {
+        notificationBinding?: { warnings?: string[] };
+      };
+      if (callerRejection && presented.notificationBinding) {
+        presented.notificationBinding.warnings?.push(
+          `Codex caller metadata was present but rejected (${callerRejection}); this worker was not auto-bound. Check the binding target before ending the turn.`,
+        );
+      }
+      if (caller && !daemonSupportsCallerBinding && presented.notificationBinding) {
+        presented.notificationBinding.warnings?.push(
+          `Daemon ${daemonVersion} predates caller auto-binding (requires ${CALLER_BINDING_DAEMON_VERSION}); this worker was not auto-bound. Upgrade and restart the daemon, then restart this MCP server (or Codex session) so the version check reruns; or pass notifyTarget explicitly.`,
+        );
+      }
+      return ok(presented);
     } catch (error) {
       return fail(error);
     }
@@ -602,7 +625,7 @@ server.registerTool(
     },
   },
   async (args) => {
-    const timeoutMs = args.timeoutMs ?? 20_000;
+    const timeoutMs = args.timeoutMs ?? 30_000;
     const until = args.until ?? "terminal";
     const includeProgress =
       args.includeProgress === true || (args.types?.includes("run.progress") ?? false);

@@ -133,7 +133,7 @@ export interface WorkerSummary extends WorkerRecord {
   notificationBinding?: NotificationBinding;
 }
 
-export type NotificationBindingSource = "explicit" | "daemon-default" | "preserved";
+export type NotificationBindingSource = "explicit" | "caller" | "daemon-default" | "preserved";
 
 export interface NotificationBinding {
   /** The target actually persisted for this worker. */
@@ -183,6 +183,12 @@ export interface WorkerEvent {
 
 export interface SpawnInput {
   notifyTarget?: NotifyTarget;
+  /**
+   * Codex thread that issued this MCP call. The MCP layer fills it from the
+   * per-call `_meta.threadId`; explicit notifyTarget still wins. Never persisted
+   * as a separate field: the resolved target is snapshotted in notifyTarget.
+   */
+  callerThreadId?: string;
   runtime?: string;
   cwd: string;
   prompt: string;

@@ -18,6 +18,7 @@ import {
 import { Retention, type PruneOptions, type PruneResult } from "./retention.js";
 import { Store } from "./store.js";
 import { withWorkerProtocol } from "./worker-protocol.js";
+import { isThreadUuid } from "./caller-thread.js";
 import {
   MetricsStore,
   type MetricsReport,
@@ -489,7 +490,7 @@ export class Supervisor {
         codexThreadId: this.notifier.getTarget().codexThreadId,
         workerRouting: true,
         note:
-          "MCP event queries are pull-based. channel/proactive describe the default for NEW workers; explicit spawn.notifyTarget overrides it. Each worker persists its destination, and each important event snapshots that route. Resume preserves it unless explicitly rebound. Legacy unbound records use the inbox only. codex-queue uses the official CLI; whether a new turn starts depends on the host having that thread loaded. Delivery is at-least-once and does not itself prove wake-up.",
+          "MCP event queries are pull-based. channel/proactive describe the fallback default for NEW workers only when no caller thread can be identified; explicit spawn.notifyTarget overrides auto-binding, and an identified Codex caller thread takes precedence over this default. Each worker persists its destination, and each important event snapshots that route. Resume preserves it unless explicitly rebound. Legacy unbound records use the inbox only. codex-queue uses the official CLI; whether a new turn starts depends on the host having that thread loaded. Delivery is at-least-once and does not itself prove wake-up.",
       },
       runtimes: [...this.adapters.values()].map((adapter) => adapter.capabilities),
     };
@@ -499,15 +500,17 @@ export class Supervisor {
     this.assertInitialized();
     this.assertAcceptingWork();
     const requestId = validateIdempotencyKey(options.requestId);
-    const result = requestId
-      ? await this.withIdempotency("spawn", requestId, input, (workerId) =>
-          this.spawnOnce(input, workerId),
-        )
-      : await this.spawnOnce(input);
-    return this.attachNotificationBinding(
-      result,
-      input.notifyTarget !== undefined ? "explicit" : "daemon-default",
-    );
+    const source: NotificationBindingSource =
+      input.notifyTarget !== undefined
+        ? "explicit"
+        : isThreadUuid(input.callerThreadId)
+          ? "caller"
+          : "daemon-default";
+    const run = async (workerIdOut?: { value?: string }) =>
+      this.attachNotificationBinding(await this.spawnOnce(input, workerIdOut), source);
+    return requestId
+      ? await this.withIdempotency("spawn", requestId, input, (workerIdOut) => run(workerIdOut))
+      : await run();
   }
 
   private async spawnOnce(input: SpawnInput, workerIdOut?: { value?: string }): Promise<WorkerSummary> {
@@ -569,7 +572,16 @@ export class Supervisor {
         );
       }
       const current = workerId ? this.store.getWorker(workerId) : undefined;
-      if (current) return this.summary(current);
+      if (current) {
+        const summary = this.summary(current);
+        // Idempotency replays the first acceptance result, not a recomputed
+        // binding: the worker may have been explicitly rebound by resume since.
+        const stored = record.result as WorkerSummary | undefined;
+        if (stored?.notificationBinding) {
+          summary.notificationBinding = stored.notificationBinding;
+        }
+        return summary;
+      }
       return record.result as WorkerSummary;
     }
 
@@ -647,7 +659,12 @@ export class Supervisor {
       config,
       resumeCount: 0,
       supervisorId: this.supervisorId,
-      notifyTarget: validateNotifyTarget(input.notifyTarget ?? this.notifier.getTarget()),
+      notifyTarget: validateNotifyTarget(
+        input.notifyTarget ??
+          (isThreadUuid(input.callerThreadId)
+            ? { channel: "codex-queue", codexThreadId: input.callerThreadId }
+            : this.notifier.getTarget()),
+      ),
       ...(taskBinding.taskId ? { taskId: taskBinding.taskId } : {}),
     };
     await this.store.createWorker(record);
@@ -773,15 +790,18 @@ export class Supervisor {
     this.assertInitialized();
     this.assertAcceptingWork();
     const requestId = validateIdempotencyKey(options.requestId);
-    const result = requestId
+    const source: NotificationBindingSource =
+      input.notifyTarget !== undefined ? "explicit" : "preserved";
+    const run = async (workerIdOut?: { value?: string }) =>
+      this.attachNotificationBinding(
+        await this.resumeOnce(workerId, input, workerIdOut),
+        source,
+      );
+    return requestId
       ? await this.withIdempotency("resume", requestId, { workerId, input }, (workerIdOut) =>
-          this.resumeOnce(workerId, input, workerIdOut),
+          run(workerIdOut),
         )
-      : await this.resumeOnce(workerId, input);
-    return this.attachNotificationBinding(
-      result,
-      input.notifyTarget !== undefined ? "explicit" : "preserved",
-    );
+      : await run();
   }
 
   private async resumeOnce(

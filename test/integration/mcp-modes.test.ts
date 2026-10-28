@@ -201,9 +201,12 @@ test("production hides diagnostics while development keeps the legacy status pay
   assert.equal(spawned.status, "running", "spawn returns acceptance, not completion");
   assert.deepEqual(
     Object.keys(spawned).sort(),
-    ["id", "lastSeq", "notifyTarget", "runtime", "status", "taskId"],
+    ["id", "lastSeq", "notificationBinding", "notifyTarget", "runtime", "status", "taskId"],
   );
   assert.deepEqual(spawned.notifyTarget, { channel: "none" });
+  assert.equal(spawned.notificationBinding.source, "explicit");
+  assert.equal(spawned.notificationBinding.wake, "unbound");
+  assert.equal(spawned.notificationBinding.observation, "wait");
 
   const statusCall = await call(production, "worker_status", { workerId: spawned.id });
   const status = parseTool(statusCall);

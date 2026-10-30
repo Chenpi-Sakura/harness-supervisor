@@ -3,7 +3,10 @@ import test from "node:test";
 import {
   INPUT_TIMEOUT_ENV,
   MCODE_INPUT_TIMEOUT_ENV,
+  PI_INPUT_TIMEOUT_ENV,
+  pickInputTimeoutMs,
   resolveInputTimeoutMs,
+  resolveOptionalInputTimeoutMs,
 } from "../../src/input-timeout.js";
 
 test("input timeout env is bounded and falls back on invalid values", () => {
@@ -47,5 +50,25 @@ test("a runtime-specific timeout overrides the shared value", () => {
     else process.env[INPUT_TIMEOUT_ENV] = previousGeneric;
     if (previousSpecific === undefined) delete process.env[MCODE_INPUT_TIMEOUT_ENV];
     else process.env[MCODE_INPUT_TIMEOUT_ENV] = previousSpecific;
+  }
+});
+
+test("Pi's opt-in cap is disabled by default and uses the stricter timeout", () => {
+  const previous = process.env[PI_INPUT_TIMEOUT_ENV];
+  try {
+    delete process.env[PI_INPUT_TIMEOUT_ENV];
+    assert.equal(resolveOptionalInputTimeoutMs(PI_INPUT_TIMEOUT_ENV), 0);
+    assert.equal(pickInputTimeoutMs(undefined, 0), undefined);
+    assert.equal(pickInputTimeoutMs(120_000, 0), 120_000);
+    process.env[PI_INPUT_TIMEOUT_ENV] = "60000";
+    assert.equal(resolveOptionalInputTimeoutMs(PI_INPUT_TIMEOUT_ENV), 60_000);
+    assert.equal(pickInputTimeoutMs(undefined, 60_000), 60_000);
+    assert.equal(pickInputTimeoutMs(30_000, 60_000), 30_000);
+    assert.equal(pickInputTimeoutMs(120_000, 60_000), 60_000);
+    process.env[PI_INPUT_TIMEOUT_ENV] = "0";
+    assert.equal(resolveOptionalInputTimeoutMs(PI_INPUT_TIMEOUT_ENV), 0);
+  } finally {
+    if (previous === undefined) delete process.env[PI_INPUT_TIMEOUT_ENV];
+    else process.env[PI_INPUT_TIMEOUT_ENV] = previous;
   }
 });

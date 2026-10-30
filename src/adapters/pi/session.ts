@@ -14,6 +14,11 @@ import type {
 import { Deferred, withTimeout } from "../../util/async.js";
 import { JsonlDecoder, serializeJsonLine } from "../../util/jsonl.js";
 import { safeJson, safeText } from "../../util/redact.js";
+import {
+  PI_INPUT_TIMEOUT_ENV,
+  pickInputTimeoutMs,
+  resolveOptionalInputTimeoutMs,
+} from "../../input-timeout.js";
 import type { PiLaunch } from "./launch.js";
 
 export interface PiRpcSessionOptions {
@@ -583,6 +588,13 @@ export class PiRpcSession implements HarnessSession {
       const options = Array.isArray(record.options)
         ? record.options.filter((option): option is string => typeof option === "string")
         : undefined;
+      // Pi's extension owns its dialog timeout. HS forwards it unchanged and
+      // only adds an opt-in cap; a zero/absent native timeout stays "wait
+      // indefinitely" unless HARNESS_SUPERVISOR_PI_INPUT_TIMEOUT_MS is set.
+      const nativeTimeout =
+        typeof record.timeout === "number" && record.timeout > 0 ? record.timeout : undefined;
+      const cap = resolveOptionalInputTimeoutMs(PI_INPUT_TIMEOUT_ENV);
+      const timeoutMs = pickInputTimeoutMs(nativeTimeout, cap);
       const event: PendingInput & { type: "needs_input"; timeoutMs?: number } = {
         type: "needs_input",
         requestId: id,
@@ -594,7 +606,7 @@ export class PiRpcSession implements HarnessSession {
           typeof record.placeholder === "string" ? safeText(record.placeholder, 500) : undefined,
         prefill: typeof record.prefill === "string" ? safeText(record.prefill, 2000) : undefined,
         createdAt: new Date().toISOString(),
-        timeoutMs: typeof record.timeout === "number" ? record.timeout : undefined,
+        timeoutMs,
       };
       this.emit(event);
       return;

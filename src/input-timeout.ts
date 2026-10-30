@@ -8,6 +8,7 @@
  */
 export const INPUT_TIMEOUT_ENV = "HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS";
 export const MCODE_INPUT_TIMEOUT_ENV = "HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS";
+export const PI_INPUT_TIMEOUT_ENV = "HARNESS_SUPERVISOR_PI_INPUT_TIMEOUT_MS";
 
 function parseTimeout(raw: string | undefined, defaultMs: number): number {
   if (raw === undefined || raw.trim() === "") return defaultMs;
@@ -24,4 +25,22 @@ export function resolveInputTimeoutMs(defaultMs: number, specificEnv?: string): 
     return parseTimeout(specific, defaultMs);
   }
   return parseTimeout(process.env[INPUT_TIMEOUT_ENV], defaultMs);
+}
+
+/**
+ * Opt-in cap for runtimes whose native dialog already carries its own
+ * `timeout`. An unset/zero value means "do not add an HS deadline"; the
+ * native timeout, if any, is forwarded unchanged.
+ */
+export function resolveOptionalInputTimeoutMs(specificEnv: string, defaultMs = 0): number {
+  return parseTimeout(process.env[specificEnv], defaultMs);
+}
+
+/** Native timeout wins only when it is stricter than the opt-in HS cap. */
+export function pickInputTimeoutMs(
+  nativeMs: number | undefined,
+  capMs: number,
+): number | undefined {
+  if (capMs > 0) return nativeMs !== undefined ? Math.min(nativeMs, capMs) : capMs;
+  return nativeMs;
 }

@@ -2320,6 +2320,7 @@ export class Supervisor {
     runtime.pendingUiTimer = setTimeout(() => {
       const record = runtime.record;
       if (record.pendingInput?.requestId !== pending.requestId || isTerminal(record.status)) return;
+      if (runtime.cancelRequested || runtime.finalizing) return;
       record.pendingInput = undefined;
       record.status = "running";
       record.statusReason = undefined;
@@ -2328,6 +2329,18 @@ export class Supervisor {
         requestId: pending.requestId,
         note: "The harness input timeout elapsed; the supervisor no longer reports awaiting_input.",
       });
+      // Pi's native dialog may have its own timeout, but an HS-imposed cap (or
+      // a fake/minimal harness) would otherwise leave the extension waiting
+      // forever. Cancel the dialog explicitly; runtimes that already timed out
+      // simply report that no such request exists, which is harmless here.
+      void runtime.session
+        ?.answer(pending.requestId, { cancelled: true })
+        .catch((error: unknown) => {
+          this.logger.debug(`Input expiry could not cancel ${pending.requestId}`, {
+            workerId: record.id,
+            error: errorMessage(error),
+          });
+        });
       void this.store.saveWorker(record).catch(() => undefined);
     }, timeoutMs + 250);
     runtime.pendingUiTimer.unref?.();

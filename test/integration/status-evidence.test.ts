@@ -148,6 +148,27 @@ test("an expired input request is reported as expired and rejects a later answer
     (error: SupervisorError) => error.code === "BAD_REQUEST",
   );
 
+  // Expiry now cancels the native dialog, so a minimal/fake Pi harness can
+  // continue instead of hanging forever. Real Pi extensions may already have
+  // resolved their own timeout; the extra cancel is harmless.
+  const final = await waitTerminal(client, worker.id, 10_000);
+  assert.equal(final.worker.status, "completed");
+});
+
+test("Pi's input cap is opt-in and reaches the pending request", async (t) => {
+  const daemon = await TestDaemon.create("hs-evidence-pi-cap-");
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+  const client = await daemon.start({
+    env: { HARNESS_SUPERVISOR_PI_INPUT_TIMEOUT_MS: "60000" },
+  });
+  const cwd = await makeWorkspace("hs-evidence-pi-cap-work-");
+  const worker = await spawnWorker(client, cwd, "[scenario:ask] cap this dialog");
+  await waitForStatus(client, worker.id, ["awaiting_input"]);
+  const pending = await statusOf(client, worker.id);
+  const remaining = Date.parse(pending.worker.pendingInput!.expiresAt!) - Date.now();
+  assert.ok(remaining > 50_000 && remaining <= 61_000, `unexpected window: ${remaining}ms`);
   await client.request("cancel", { workerId: worker.id, timeoutMs: 8000 }, { timeoutMs: 20_000 });
 });
 

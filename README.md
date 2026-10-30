@@ -111,7 +111,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up          # 在本机启动 daemon
-node dist/src/cli.js info        # 核对 version=0.6.1 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.6.5 与 stateDir
 ```
 
 依赖：Node.js >= 22.19（`node -v` 核对）；Pi >= 1.3。若 `npm ci` 因网络镜像失败，改用 `npm install` 后以 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -198,10 +198,12 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 {"worker":{"id":"w-xxx","runtime":"pi","cwd":"D:/work/demo","status":"awaiting_input","lastSeq":8,"pendingInput":{"requestId":"ui-123","method":"confirm","title":"Approve?","message":"Continue?","createdAt":"2026-10-23T08:37:41.210Z"},"resumeAvailable":false}}
 ```
 
+0.6.5 起同一响应还会带 `lastProgress`、`timeline`、`inputState`（见后文“终态进展、输入有效期与运行段”）。
+
 `supervisor_notifications`（默认返回所有未确认记录，先过滤未确认再应用 `limit`，不会被旧已确认记录遮挡）：
 
 ```json
-{"notifications":[{"id":"w-xxx#10","workerId":"w-xxx","kind":"completed","summary":{"status":"completed","text":"FAKE_PI_OK"},"acked":false}],"counts":{"pending":1,"delivered":0,"failed":0,"unacked":1}}
+{"notifications":[{"id":"w-xxx#10","workerId":"w-xxx","kind":"completed","summary":{"status":"completed","text":"FAKE_PI_OK"},"acked":false}],"counts":{"pending":1,"delivered":0,"failed":0,"unacked":1},"filteredCounts":{"pending":1,"delivered":0,"failed":0,"unacked":1},"globalCounts":{"pending":2,"delivered":3,"failed":0,"unacked":2},"scope":{"state":"pending","workerId":"w-xxx","unacknowledgedOnly":true,"limit":50,"returned":1}}
 ```
 
 `supervisor_info` 在 production 下包含 `version`、`mcpMode`、必要限制、`runtimes`（各 runtime 的精简能力说明：Qoder 未经真实验证的 steer/follow-up 限制、MiniMax Code 的 steer 边界）和通知投递边界；不包含 daemon PID/stateDir 等诊断字段。
@@ -307,6 +309,22 @@ Daemon 默认给新通知留出 1000ms 短窗口，同一 Worker 共用一个定
 
 MiniMax Code 在原生 ACP 提供 messageId 时按最后一条 assistant 消息构建结果，同一消息的分块完整重组，较早过程播报留在进度事件中。不对最终报告增加固定字数上限。缺少 messageId 的旧协议仅能依据工具调用边界分开前后文本，不能可靠分开同一连续流中的多条匿名发言。
 
+### 终态进展、输入有效期与运行段（0.6.5）
+
+`worker_status` 的同一响应现在包含三个由持久化事件派生的字段，默认仍受 2 KiB 预算约束：
+
+- `lastProgress`：最近一条可用的进展文本及其来源事件 `seq`、时间和 `evidence`。`evidence=partial_progress` 只表示 Worker 曾产出这段文本，**不是验收或完成证据**；取消/失败时优先使用终态事件保存的 `partialText`，没有有效文本时返回 `state="none"` 并说明原因。完成状态下最终文本已在 `worker.result` 中，`lastProgress` 只保留事件引用（`textInResult=true`），避免重复占用上下文。
+- `timeline`：`firstStartedAt`、`currentRunStartedAt`、`endedAt`、`resumeCount` 和运行段。`startedAt` 仍表示最近一次运行段的开始；恢复后的 Worker 用 `firstStartedAt` 取最初开始时间。旧的 `startedAt` 含义没有被改写。
+- `inputState`：`pending` / `answered` / `expired` / `withdrawn` / `closed`，并给出 `expiresAt`、`expiresInMs`、`nextActions`。请求过期后 `worker_answer` 返回 `INVALID_STATE` 且 `details.reason=input_expired`；已回答的重复请求返回 `already_answered`；Worker 已结束时提示使用 `worker_resume`，不再让调用方逐个工具试错。
+
+Qoder 的原生控制请求会一直等待回答；此前 HS 适配器自己的 5 分钟计时器会提前拒绝请求。0.6.5 将 Qoder 默认窗口改为 **30 分钟**，可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS`（60000—86400000）覆盖。2026-10-30 真实 Qoder 1.1.79 验证：请求在 04:14:40 创建，04:20:38（5 分 58 秒）回答后仍被接受，Worker 以 `QODER_INPUT_OK` 完成。Pi 仍使用扩展本身提供的 `timeout`；MiniMax Code 保持 5 分钟窗口，因为其宿主等待上限未单独验证。
+
+事件截断边界：`run.progress` 的 `preview` 入库上限 4 KiB、`detail` 8 KiB，取消/失败的 `partialText` 4 KiB；完成文本仍受 `maxEventStringBytes` 限制。超限时事件数据带 `*Truncated`/`*Chars`（旧记录只有可见的 `...[truncated N chars]` 后缀）。单条事件读取只能返回 **HS 已存**的内容；更长的原始输出在 Runtime 自己的 session 文件中，MCP 响应会明确标注 `storedTruncated`。
+
+通知统计现在区分范围：`supervisor_notifications` 返回 `filteredCounts`（与本次 `workerId`/`state`/未确认筛选一致，`limit` 之前）、`globalCounts`（整个收件箱）和 `scope`。旧的 `counts` 字段保持“整个收件箱”语义，不会被未加说明地改成筛选值。
+
+Codex 宿主实时 steer：`turn/steer` 本身已在真实 app-server 活跃回合中验证（错误 `expectedTurnId` 被拒绝，模型最终文本包含 steer token，回合结束后返回 `no active turn to steer`）。但 HS **没有**实现 Desktop 实时 steer：Codex Desktop 使用自己的私有 stdio app-server，共享 app-server 无法接管已有活动 writer 的线程（`already has an active writer`）。因此 `supervisor_info.codexSteer` 明确为 `unavailable`，`codex-queue` 仍是唯一受支持的宿主投递路径。详见 [`docs/codex-steer-261030.md`](docs/codex-steer-261030.md)。
+
 ### 任务度量（0.5.0，阶段一/二）
 
 本节只实现“可信的任务记录与报告”，不是完整的成本分析平台。费用不采集（当前多为积分制，无法直接核对）；首次验收、返工与人工干预尚未采集，报告会以 `notTracked`、`unknownFields` 和警告显式说明，而不是填零。
@@ -394,7 +412,7 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | --- | --- | --- |
 | Pi | 完整 | 原生 RPC；steer / follow-up / cancel / resume / 扩展对话框均可映射 |
 | MiniMax Code | 实验性 | ACP over ndJSON（`mcode acp`）。spawn / 完成 / 取消 / resume 已在真实 0.6.12 上验证（历史证据；最新 0.6.13 本轮只做了单轮 ACP 与 Token 探测，未重跑全部交互）；权限问答在 Ask 模式下对真实进程验证过（是否触发询问由运行时风险分类决定，并非每次都出现）。steer 与 follow-up 依赖 `mcode/session/steer`、`mcode/session/queue/enqueue` 扩展，未声明该扩展的构建会明确报 `UNSUPPORTED`；真实进程上 `queue/enqueue` 可用，steer 在**活跃 turn 内**已验证有效（agent 照做，事件记为 `mode=steered`），turn 结束后再发会被拒，因此 steer 的送达依赖 turn 是否还活着。ACP 的 `session/prompt` 会阻塞到 turn 结束且拒绝并发第二个 prompt |
-| Qoder CLI | 实验性 | 单轮、取消、AskUserQuestion、resume 已真实验证；默认 `bypass_permissions`（1.1.79 实测：真实 Worker 完成文件写入/读取且无审批），可用显式配置覆盖。steer / follow-up 在当前版本被接受但未生效，权限 allow/deny 仅部分验证。任务度量可读取 `result.usage`，但全零报告按未知处理 |
+| Qoder CLI | 实验性 | 单轮、取消、AskUserQuestion、resume 已真实验证；默认 `bypass_permissions`（1.1.79 实测：真实 Worker 完成文件写入/读取且无审批），可用显式配置覆盖。输入请求默认等待 30 分钟（1.1.79 真实 5 分 58 秒回答后仍完成），可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS` 调整。steer / follow-up 在当前版本被接受但未生效，权限 allow/deny 仅部分验证。任务度量可读取 `result.usage`，但全零报告按未知处理 |
 
 用量采集边界：Pi 只在 assistant message 原生提供 `usage` 时记录；Qoder 只在 `result.usage` 存在时记录；MiniMax Code 最新 0.6.13 实测 ACP 只提供上下文 `used`/`size` 与 `cost=0 USD`，prompt result 不含 usage，其 headless `exec --output-format json` 虽有结构化 usage，但 HS 走 ACP 且不读取私有会话库，因此报告中保持未知。主 Agent 用量不会从宿主会话自动读取，必须显式补录。
 
@@ -421,6 +439,9 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | --- | --- |
 | [`docs/v0.2-report.md`](docs/v0.2-report.md) | v0.2 交付报告：通知、幂等、保留策略、Qoder 验证 |
 | [`docs/iteration-261023-report.md`](docs/iteration-261023-report.md) | 2026-10-23 迭代：Worker 通知路由、原生输入闭环、事件历史与幂等可靠性 |
+| [`docs/v0.6.5-report.md`](docs/v0.6.5-report.md) | 0.6.5 交付报告：终态进展、输入有效期、通知统计与 Codex steer 边界 |
+| [`docs/codex-steer-261030.md`](docs/codex-steer-261030.md) | 2026-10-30 Codex app-server `turn/steer` 实验与 Desktop 阻塞分析 |
+| [`evidence/v0.6.5-261030/`](evidence/v0.6.5-261030/) | 0.6.5 真实 Qoder 等待、app-server steer 与回归证据 |
 | [`evidence/metrics-phase12-261025/README.md`](evidence/metrics-phase12-261025/README.md) | 0.5.0 任务度量阶段一/二的测试与烟雾证据 |
 | [`evidence/release-v0.2.0-261023/README.md`](evidence/release-v0.2.0-261023/README.md) | 主目录发布验收、Windows 原子替换修复及部署限制 |
 | [`docs/archive/project-status-2026-10-22.md`](docs/archive/project-status-2026-10-22.md) | 2026-10-22 项目现状审计 |

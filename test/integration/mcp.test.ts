@@ -322,6 +322,24 @@ test("MCP client can spawn, observe, steer, cancel, and outlive its own disconne
     "compact waits must retain queue_cleared progress events",
   );
 
+  const exclusive = (await mcp.callTool({
+    name: "worker_answer",
+    arguments: {
+      workerId: worker.id,
+      requestId: "missing",
+      value: "v",
+      confirmed: true,
+    },
+  })) as ToolResult;
+  assert.equal(exclusive.isError, true, "value+confirmed must fail before reaching the daemon");
+  assert.match(exclusive.content[0]?.text ?? "", /exactly one|invalid/i);
+
+  const falseCancel = (await mcp.callTool({
+    name: "worker_answer",
+    arguments: { workerId: worker.id, requestId: "missing", cancelled: false },
+  })) as ToolResult;
+  assert.equal(falseCancel.isError, true, "cancelled must be true when supplied");
+
   const errorResult = (await mcp.callTool({
     name: "worker_answer",
     arguments: { workerId: worker.id, requestId: "missing", cancelled: true },

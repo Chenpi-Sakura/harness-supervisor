@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-30",
+  "codex": "0.161.0",
+  "transport": "app-server --listen ws://127.0.0.1:47852 (controlled test server)",
+  "threadId": "01a18b07-4a0b-79e3-88bd-8f6178f48bf1",
+  "turnId": "01a18b07-4d9e-7831-a098-dcef63cde5bc",
+  "wrongExpectedTurnId": {
+    "rejected": true,
+    "error": "expected active turn id `00000000-...` but found `01a18b07-...`"
+  },
+  "steer": {
+    "accepted": true,
+    "response": { "turnId": "01a18b07-4d9e-7831-a098-dcef63cde5bc" }
+  },
+  "turnCompleted": {
+    "status": "completed",
+    "finalText": "BASE_DONE HS_STEER_TOKEN_065"
+  },
+  "staleSteer": {
+    "rejected": true,
+    "error": "no active turn to steer"
+  },
+  "conclusion": "The RPC is real: a wrong turn is rejected, a matching steer is accepted, the model actually applied the token, and a steer after completion is rejected."
+}

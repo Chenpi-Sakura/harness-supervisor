@@ -20,6 +20,12 @@ import { Store } from "./store.js";
 import { withWorkerProtocol } from "./worker-protocol.js";
 import { isThreadUuid } from "./caller-thread.js";
 import {
+  buildLastProgress,
+  buildTimeline,
+  findLastProgressEvent,
+} from "./progress-evidence.js";
+import { buildInputState, refreshInputStateTime } from "./input-state.js";
+import {
   MetricsStore,
   type MetricsReport,
   type MetricsReportOptions,
@@ -55,10 +61,13 @@ import {
   type WorkerConfig,
   type WorkerEvent,
   type WorkerEventType,
+  type WorkerInputState,
+  type WorkerLastProgress,
   type WorkerRecord,
   type WorkerStatus,
   type WorkerStatusResult,
   type WorkerSummary,
+  type WorkerTimeline,
 } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
 import { clampInt, Deferred, isPidAlive, newWorkerId, sleep, withTimeout } from "./util/async.js";
@@ -80,6 +89,15 @@ const DEFAULT_LIMITS: SupervisorLimits = {
 
 const MAX_PROMPT_CHARS = 256 * 1024;
 const MAX_MESSAGE_CHARS = 64 * 1024;
+/**
+ * Storage caps for progress text. Presentation is separately capped by the
+ * context budget; these caps only decide what a single-event read can recover
+ * after the fact. The runtime session file remains the source for anything
+ * longer.
+ */
+const MAX_STORED_PROGRESS_DETAIL_CHARS = 8 * 1024;
+const MAX_STORED_PROGRESS_PREVIEW_CHARS = 4 * 1024;
+const MAX_STORED_PARTIAL_TEXT_CHARS = 4 * 1024;
 /**
  * Progress kinds that mean "the harness no longer wants that answer".
  * They are the only progress kinds allowed to clear a pending input request.
@@ -191,6 +209,15 @@ export class Supervisor {
   private shuttingDown = false;
   private metricsReady = false;
   private metricsError: string | undefined;
+  private readonly evidenceCache = new Map<
+    string,
+    {
+      lastSeq: number;
+      lastProgress: WorkerLastProgress;
+      timeline: WorkerTimeline;
+      inputState?: WorkerInputState;
+    }
+  >();
 
   constructor(options: SupervisorOptions) {
     this.store = options.store;
@@ -291,6 +318,9 @@ export class Supervisor {
           : pidAlive
             ? "The recorded PID is alive but its command line does not match this worker (PID reused); the original process is gone and the outcome is unknown"
             : "Supervisor restarted after the harness process was lost; outcome unknown";
+        // No live runtime exists after reconciliation, so an old dialog is not
+        // answerable. Keep the events for evidence; clear the actionable field.
+        record.pendingInput = undefined;
         record.endedAt = now;
         record.updatedAt = now;
         this.store.appendEvent(
@@ -431,9 +461,23 @@ export class Supervisor {
     unacknowledgedOnly?: boolean;
   } = {}): NotificationsResult {
     this.assertInitialized();
+    const notifications = this.notifier.list(filter);
+    const state = filter.state ?? "pending";
+    const limit = Math.max(1, Math.min(filter.limit ?? 100, 500));
     return {
-      notifications: this.notifier.list(filter),
-      counts: this.notifier.counts(),
+      notifications,
+      // Legacy field: always the whole inbox. Kept so older callers never read
+      // a worker-filtered number as if it were global.
+      counts: this.notifier.counts({ state: "all" }),
+      filteredCounts: this.notifier.counts({ ...filter, state }),
+      globalCounts: this.notifier.counts({ state: "all" }),
+      scope: {
+        state,
+        ...(filter.workerId !== undefined ? { workerId: filter.workerId } : {}),
+        unacknowledgedOnly: filter.unacknowledgedOnly === true,
+        limit,
+        returned: notifications.length,
+      },
       target: this.notifier.getTarget(),
     };
   }
@@ -491,6 +535,12 @@ export class Supervisor {
         workerRouting: true,
         note:
           "MCP event queries are pull-based. channel/proactive describe the fallback default for NEW workers only when no caller thread can be identified; explicit spawn.notifyTarget overrides auto-binding, and an identified Codex caller thread takes precedence over this default. Each worker persists its destination, and each important event snapshots that route. Resume preserves it unless explicitly rebound. Legacy unbound records use the inbox only. codex-queue uses the official CLI; whether a new turn starts depends on the host having that thread loaded. Delivery is at-least-once and does not itself prove wake-up.",
+      },
+      codexSteer: {
+        status: "unavailable",
+        verified: { appServerRpc: true, modelApplied: true, desktopActiveTurn: false },
+        reason:
+          "Codex app-server turn/steer was verified against a real active turn, including rejection of a wrong expectedTurnId. HS cannot use it for Codex Desktop: Desktop owns its thread in a private stdio app-server, and the shared app-server refuses to resume a thread with an active writer (\"already has an active writer\"). codex-queue remains the supported delivery path.",
       },
       runtimes: [...this.adapters.values()].map((adapter) => adapter.capabilities),
     };
@@ -708,6 +758,7 @@ export class Supervisor {
       }
       runtime.runAccepted = true;
       record.startedAt = new Date().toISOString();
+      record.firstStartedAt ??= record.startedAt;
       record.status = record.pendingInput ? "awaiting_input" : "running";
       record.statusReason = record.pendingInput ? "harness requested input" : undefined;
       this.store.appendEvent(id, "run.accepted", {
@@ -968,6 +1019,7 @@ export class Supervisor {
       }
       runtime.runAccepted = true;
       record.startedAt = new Date().toISOString();
+      record.firstStartedAt ??= record.startedAt;
       record.promptPreview = safeText(input.prompt, 500);
       record.status = record.pendingInput ? "awaiting_input" : "running";
       record.statusReason = record.pendingInput ? "harness requested input" : undefined;
@@ -1017,14 +1069,58 @@ export class Supervisor {
       .map((record) => this.summary(record));
   }
 
-  status(workerId: string, recentEventLimit = 20): WorkerStatusResult {
+  async status(workerId: string, recentEventLimit = 20): Promise<WorkerStatusResult> {
     this.assertInitialized();
     const record = this.requireWorker(workerId);
+    const evidence = await this.progressEvidence(record);
+    const inputState = refreshInputStateTime(evidence.inputState);
     return {
       worker: this.summary(record),
       recentEvents: this.store.getRecentEvents(workerId, clampInt(recentEventLimit, 0, 100)),
       stderrTail: this.store.stderrTail(workerId),
+      lastProgress: evidence.lastProgress,
+      timeline: evidence.timeline,
+      ...(inputState ? { inputState } : {}),
     };
+  }
+
+  /**
+   * The status view must explain what the worker got to before it stopped.
+   * Recent events answer that for almost every worker; a terminal worker whose
+   * useful text sits beyond the in-memory window is scanned from events.jsonl.
+   * Results are memoized by lastSeq so repeated status reads do not rescan.
+   */
+  private async progressEvidence(
+    record: WorkerRecord,
+  ): Promise<{
+    lastProgress: WorkerLastProgress;
+    timeline: WorkerTimeline;
+    inputState?: WorkerInputState;
+  }> {
+    const cached = this.evidenceCache.get(record.id);
+    if (cached && cached.lastSeq === record.lastSeq) return cached;
+
+    const recent = this.store.getRecentEvents(record.id, 500);
+    let events = recent;
+    const needsOlder = record.eventCount > recent.length;
+    const wantOlderProgress = isTerminal(record.status) && !findLastProgressEvent(recent);
+    const wantOlderSegments = needsOlder && isTerminal(record.status) && record.resumeCount > 0;
+    const wantOlderInput = needsOlder && isTerminal(record.status) && !record.pendingInput;
+    if (needsOlder && (wantOlderProgress || wantOlderSegments || wantOlderInput)) {
+      const all: WorkerEvent[] = [];
+      for await (const event of this.store.scanEvents(record.id)) all.push(event);
+      events = all;
+    }
+    const lastProgress = buildLastProgress(findLastProgressEvent(events), {
+      maxChars: 1000,
+      scannedThroughSeq: record.lastSeq,
+    });
+    const timeline = buildTimeline(record, events, { maxSegments: 20 });
+    const inputState = buildInputState(record, events);
+    const value = { lastSeq: record.lastSeq, lastProgress, timeline, inputState };
+    if (this.evidenceCache.size > 200) this.evidenceCache.clear();
+    this.evidenceCache.set(record.id, value);
+    return value;
   }
 
   async events(workerId: string, options?: { sinceSeq?: number; limit?: number }): Promise<ReadEventsResult> {
@@ -1072,13 +1168,19 @@ export class Supervisor {
         if (timer) clearTimeout(timer);
         unsubscribe?.();
         const data = await this.store.readEvents(workerId, sinceSeq, 500);
+        const current = this.requireWorker(workerId);
+        const evidence = await this.progressEvidence(current);
+        const inputState = refreshInputStateTime(evidence.inputState);
         resolve({
-          worker: this.summary(this.requireWorker(workerId)),
+          worker: this.summary(current),
           events: data.events,
           nextSeq: data.nextSeq,
           hasMore: data.hasMore,
           timedOut,
-          terminal: isTerminal(this.requireWorker(workerId).status),
+          terminal: isTerminal(current.status),
+          lastProgress: evidence.lastProgress,
+          timeline: evidence.timeline,
+          ...(inputState ? { inputState } : {}),
         });
       };
 
@@ -1202,28 +1304,48 @@ export class Supervisor {
     response: ExtensionUiResponse,
   ): Promise<WorkerSummary> {
     this.assertInitialized();
+    // Shape errors are independent of worker state and must be reported as
+    // BAD_REQUEST even when the request has already expired.
+    validateUiResponseShape(response);
     const record = this.requireWorker(workerId);
     const runtime = this.runtimes.get(workerId);
     const pending = record.pendingInput;
     if (!runtime || !runtime.session || !pending) {
-      throw new SupervisorError("INVALID_STATE", "Worker has no pending input request", {
-        status: record.status,
-      });
+      throw this.answerFailure(record, requestId);
     }
     if (pending.requestId !== requestId) {
       throw new SupervisorError("INVALID_STATE", "requestId does not match the pending request", {
+        reason: "request_mismatch",
         pendingRequestId: pending.requestId,
+        status: record.status,
+        nextActions: ["worker_status", "worker_answer"],
       });
     }
     this.assertAcceptingWork();
     if (runtime.cancelRequested || runtime.finalizing) {
       throw new SupervisorError("INVALID_STATE", "Worker is being cancelled", {
+        reason: "worker_cancelling",
         status: record.status,
       });
     }
+    if (pending.expiresAt && Date.now() >= Date.parse(pending.expiresAt)) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        "The input request deadline has passed; the harness is no longer waiting for this answer",
+        {
+          reason: "input_expired",
+          requestId,
+          expiresAt: pending.expiresAt,
+          status: record.status,
+          nextActions: ["worker_status", "worker_resume"],
+        },
+      );
+    }
     if (runtime.answeringRequestId) {
       throw new SupervisorError("INVALID_STATE", "Another answer is already being delivered", {
+        reason: "answer_in_flight",
         requestId: runtime.answeringRequestId,
+        nextActions: ["worker_status"],
       });
     }
     validateUiResponse(pending, response);
@@ -1257,10 +1379,102 @@ export class Supervisor {
       requestId,
       method: pending.method,
       cancelled: "cancelled" in response && response.cancelled === true,
+      outcome:
+        "cancelled" in response
+          ? "cancelled"
+          : "confirmed" in response
+            ? "confirmed"
+            : "value",
     });
     await this.store.saveWorker(record);
     await this.store.flush(workerId);
     return this.summary(record);
+  }
+
+  private answerFailure(record: WorkerRecord, requestId: string): SupervisorError {
+    const input = buildInputState(record, this.store.getRecentEvents(record.id, 500));
+    const common = {
+      requestId,
+      status: record.status,
+      ...(input?.state ? { inputState: input.state } : {}),
+      ...(input?.nextActions ? { nextActions: input.nextActions } : {}),
+    };
+    if (input?.requestId === requestId) {
+      if (input.state === "answered") {
+        return new SupervisorError(
+          "INVALID_STATE",
+          "This input request was already answered; do not deliver the answer twice",
+          {
+            ...common,
+            reason: "already_answered",
+            ...(input.answeredAt ? { answeredAt: input.answeredAt } : {}),
+            ...(input.outcome ? { outcome: input.outcome } : {}),
+          },
+        );
+      }
+      if (input.state === "expired") {
+        return new SupervisorError(
+          "INVALID_STATE",
+          "This input request expired before an answer was delivered; it cannot be answered now",
+          {
+            ...common,
+            reason: "input_expired",
+            ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+          },
+        );
+      }
+      if (input.state === "withdrawn") {
+        return new SupervisorError(
+          "INVALID_STATE",
+          "The harness withdrew this input request; there is nothing to answer",
+          { ...common, reason: "input_withdrawn" },
+        );
+      }
+    }
+    if (isTerminal(record.status)) {
+      return new SupervisorError(
+        "INVALID_STATE",
+        "The worker is no longer running, so its input request cannot be answered; resume the same session with a new instruction instead",
+        {
+          ...common,
+          inputState: input?.state === "answered" || input?.state === "expired" || input?.state === "withdrawn"
+            ? input.state
+            : "closed",
+          reason: "worker_finished",
+          nextActions: record.status === "orphaned" ? ["worker_status"] : ["worker_resume"],
+        },
+      );
+    }
+    if (!this.runtimes.get(record.id)) {
+      return new SupervisorError(
+        "INVALID_STATE",
+        "This worker has no live harness process in this daemon; its old request cannot be answered",
+        {
+          ...common,
+          inputState: "closed",
+          reason: "worker_not_live",
+          nextActions: ["worker_resume"],
+        },
+      );
+    }
+    const current = record.pendingInput;
+    if (current) {
+      return new SupervisorError(
+        "INVALID_STATE",
+        "requestId does not match the current pending request",
+        {
+          ...common,
+          reason: "request_mismatch",
+          pendingRequestId: current.requestId,
+          nextActions: ["worker_status", "worker_answer"],
+        },
+      );
+    }
+    return new SupervisorError(
+      "INVALID_STATE",
+      "Worker has no pending input request. Check worker_status for the next actionable state",
+      { ...common, reason: "no_pending_input", nextActions: ["worker_status"] },
+    );
   }
 
   async cancel(workerId: string, options: CancelOptions = {}): Promise<WorkerSummary> {
@@ -1589,13 +1803,21 @@ export class Supervisor {
       forcedCleanup: forced,
     };
     if (outcome === "completed") {
-      const clipped = truncateText(redactText(finalText), this.limits.maxEventStringBytes);
+      const clipped = storedText(finalText, this.limits.maxEventStringBytes);
       eventData.text = clipped.text;
       eventData.truncated = clipped.truncated;
+      if (clipped.originalChars !== undefined) eventData.originalChars = clipped.originalChars;
     } else {
       eventData.reason = errorText;
       eventData.error = record.error;
-      eventData.partialText = safeText(finalText, 1000);
+      const partial = storedText(finalText, MAX_STORED_PARTIAL_TEXT_CHARS);
+      eventData.partialText = partial.text;
+      if (partial.truncated) {
+        eventData.partialTextTruncated = true;
+        if (partial.originalChars !== undefined) {
+          eventData.partialTextChars = partial.originalChars;
+        }
+      }
     }
     this.store.appendEvent(
       record.id,
@@ -1729,6 +1951,7 @@ export class Supervisor {
     switch (event.type) {
       case "run_started": {
         if (!record.startedAt) record.startedAt = new Date().toISOString();
+        record.firstStartedAt ??= record.startedAt;
         if (!isTerminal(record.status) && !record.pendingInput) {
           record.status = "running";
           record.statusReason = undefined;
@@ -1744,8 +1967,22 @@ export class Supervisor {
       case "progress": {
         const data: Record<string, unknown> = { kind: event.kind };
         if (event.tool !== undefined) data.tool = event.tool;
-        if (event.detail !== undefined) data.detail = safeText(event.detail, 500);
-        if (event.preview !== undefined) data.preview = safeText(event.preview, 1000);
+        if (event.detail !== undefined) {
+          const detail = storedText(event.detail, MAX_STORED_PROGRESS_DETAIL_CHARS);
+          data.detail = detail.text;
+          if (detail.truncated) {
+            data.detailTruncated = true;
+            if (detail.originalChars !== undefined) data.detailChars = detail.originalChars;
+          }
+        }
+        if (event.preview !== undefined) {
+          const preview = storedText(event.preview, MAX_STORED_PROGRESS_PREVIEW_CHARS);
+          data.preview = preview.text;
+          if (preview.truncated) {
+            data.previewTruncated = true;
+            if (preview.originalChars !== undefined) data.previewChars = preview.originalChars;
+          }
+        }
         if (event.isError !== undefined) data.isError = event.isError;
         if (event.durationMs !== undefined) data.durationMs = event.durationMs;
         if (event.kind === "tool_start") record.stats.toolCalls += 1;
@@ -2328,6 +2565,45 @@ async function readSessionHeaderId(sessionFile: string): Promise<string | null> 
     return header.type === "session" && typeof header.id === "string" ? header.id : null;
   } catch {
     return null;
+  }
+}
+
+function storedText(
+  value: string,
+  maxChars: number,
+): { text: string; truncated: boolean; originalChars?: number } {
+  const clipped = truncateText(redactText(value), maxChars);
+  if (clipped.truncated) {
+    return { text: clipped.text, truncated: true, originalChars: value.length };
+  }
+  // The adapter may already have clipped this string. Preserve that fact in
+  // structured fields so a reader does not have to parse the visible suffix.
+  const match = /^(.*)\n\.\.\.\[truncated (\d+) chars\]$/s.exec(clipped.text);
+  if (match) {
+    return {
+      text: clipped.text,
+      truncated: true,
+      originalChars: match[1]!.length + Number(match[2]),
+    };
+  }
+  return { text: clipped.text, truncated: false };
+}
+
+function validateUiResponseShape(response: ExtensionUiResponse): void {
+  if (!response || typeof response !== "object") {
+    throw new SupervisorError("BAD_REQUEST", "response is required");
+  }
+  const provided = ["value" in response, "confirmed" in response, "cancelled" in response].filter(
+    Boolean,
+  ).length;
+  if (provided !== 1) {
+    throw new SupervisorError(
+      "BAD_REQUEST",
+      "Provide exactly one of value, confirmed, or cancelled=true",
+    );
+  }
+  if ("cancelled" in response && response.cancelled !== true) {
+    throw new SupervisorError("BAD_REQUEST", "cancelled must be true");
   }
 }
 

@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-30",
+  "codex": "0.161.0",
+  "scenario": "Second app-server while the first app-server runs an active turn",
+  "observations": {
+    "threadRead": "The thread and its in-progress turn are readable from disk, but the second server reports the thread as notLoaded.",
+    "threadResume": "Failed: thread ... already has an active writer",
+    "turnSteer": "Failed: thread not found (not loaded in this server)"
+  },
+  "desktop": {
+    "process": "codex.exe app-server --analytics-default-enabled (no --listen; private stdio pipe owned by Codex Desktop)",
+    "sharedManagedDaemonLoadedThreads": [],
+    "sharedManagedDaemonThreadList": "Desktop threads are listed from disk with status notLoaded"
+  },
+  "conclusion": "Cross-process steering is blocked by the thread writer lock. Codex Desktop's app-server has no externally reachable endpoint, so HS cannot obtain both the connection and the active turn identity."
+}

@@ -791,7 +791,7 @@ export class McodeAcpSession implements HarnessSession {
           // agent_message is a whole-message snapshot, not another delta.
           this.assistantText = kind === "agent_message" ? text : this.assistantText + text;
         }
-        this.emit({ type: "progress", kind: "assistant_message", preview: safeText(text, 400) });
+        this.emit({ type: "progress", kind: "assistant_message", preview: safeText(text, 4000) });
       }
       return;
     }
@@ -799,7 +799,7 @@ export class McodeAcpSession implements HarnessSession {
       const content = record.content as { type?: string; text?: string } | undefined;
       const text = typeof content?.text === "string" ? content.text : "";
       if (text) {
-        this.emit({ type: "progress", kind: "thinking", preview: safeText(text, 400) });
+        this.emit({ type: "progress", kind: "thinking", preview: safeText(text, 4000) });
       }
       return;
     }
@@ -814,7 +814,7 @@ export class McodeAcpSession implements HarnessSession {
         type: "progress",
         kind: "tool_start",
         tool: name,
-        detail: safeText(String(record.title ?? ""), 300),
+        detail: safeText(String(record.title ?? ""), 2000),
       });
       return;
     }

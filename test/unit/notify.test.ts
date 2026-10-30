@@ -96,6 +96,25 @@ test("a torn inbox tail does not swallow a newly persisted notification", async 
   assert.equal(third.counts().unacked, 0);
 });
 
+test("counts can be scoped to the same filter as the list", async () => {
+  const { notifier } = await makeNotifier();
+  const otherWorker = { id: "w-other", runtime: "pi", status: "running" as const };
+  notifier.ingest(worker, makeEvent(1, "run.completed"));
+  notifier.ingest(otherWorker, {
+    ...makeEvent(1, "run.completed"),
+    workerId: otherWorker.id,
+  });
+  await notifier.flush();
+
+  assert.equal(notifier.counts({ state: "all" }).pending, 2);
+  assert.equal(notifier.counts({ state: "pending", workerId: worker.id }).pending, 1);
+  assert.equal(notifier.list({ workerId: worker.id }).length, 1);
+  assert.equal(notifier.counts({ state: "all", workerId: worker.id }).unacked, 1);
+  // A filter that excludes everything must not fall back to global counts.
+  assert.equal(notifier.list({ workerId: "w-missing" }).length, 0);
+  assert.equal(notifier.counts({ state: "all", workerId: "w-missing" }).pending, 0);
+});
+
 function makeEvent(seq: number, type: string, data?: Record<string, unknown>): WorkerEvent {
   return {
     seq,

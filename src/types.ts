@@ -97,7 +97,13 @@ export interface WorkerRecord {
   statusReason?: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Start of the current (or most recent) run segment. A resumed worker gets a
+   * new `startedAt`; `firstStartedAt` preserves the original start.
+   */
   startedAt?: string;
+  /** First accepted run start; never rewritten by resume. Absent on legacy records. */
+  firstStartedAt?: string;
   endedAt?: string;
   pid?: number;
   sessionId?: string;
@@ -222,15 +228,110 @@ export interface ReadEventsResult {
   hasMore: boolean;
 }
 
+/**
+ * Newest stored progress that can be shown without reading a specific event.
+ * It is derived from the event log on every read (never stored separately), so
+ * it cannot drift from the events it points at.
+ *
+ * `evidence=partial_progress` is deliberately weaker than completion: it says
+ * "the worker had produced this text", not that the task was delivered.
+ */
+export type LastProgressEvidence = "partial_progress" | "final_report";
+
+export interface WorkerLastProgress {
+  state: "available" | "none";
+  seq?: number;
+  ts?: string;
+  type?: WorkerEventType;
+  /** `run.progress` kind when the source is a progress event. */
+  kind?: string;
+  tool?: string;
+  isError?: boolean;
+  source?: "assistant_message" | "thinking" | "tool_output" | "diagnostic" | "partial_text" | "final_report";
+  /** Bounded view of the stored text. */
+  text?: string;
+  /** Length of the stored text this view was built from. */
+  chars?: number;
+  /** Original length before the storage cap, when the writer recorded it. */
+  originalChars?: number;
+  /** The view is shorter than the stored text. */
+  truncated?: boolean;
+  /** The stored event text was already clipped; reading the event cannot restore it. */
+  storedTruncated?: boolean;
+  evidence?: LastProgressEvidence;
+  /** For `state="none"`: highest seq inspected. */
+  scannedThroughSeq?: number;
+  note?: string;
+}
+
+export interface WorkerRunSegment {
+  startSeq: number;
+  startedAt: string;
+  endSeq?: number;
+  endedAt?: string;
+  /** Terminal status for a closed segment; absent while it is still open. */
+  outcome?: WorkerStatus;
+  open: boolean;
+}
+
+export interface WorkerTimeline {
+  createdAt: string;
+  /** Original accepted start; falls back to createdAt on legacy records. */
+  firstStartedAt?: string;
+  /** Start of the current or most recent run segment (`startedAt` semantics). */
+  currentRunStartedAt?: string;
+  endedAt?: string;
+  resumeCount: number;
+  segments: WorkerRunSegment[];
+  segmentsTotal: number;
+  note: string;
+}
+
+export type WorkerInputStateName =
+  | "pending"
+  | "answered"
+  | "expired"
+  | "withdrawn"
+  | "closed"
+  | "unknown";
+
+/**
+ * Read-time view of the current/last native input request. It is derived from
+ * the worker record and events; nothing here is a second persisted state.
+ */
+export interface WorkerInputState {
+  state: WorkerInputStateName;
+  requestId?: string;
+  method?: PendingInput["method"];
+  createdAt?: string;
+  expiresAt?: string;
+  /** Negative once the request is past its deadline. */
+  expiresInMs?: number;
+  answeredAt?: string;
+  outcome?: "value" | "confirmed" | "cancelled";
+  /** Concrete next calls; never a promise that the old request can still be answered. */
+  nextActions: string[];
+  note?: string;
+}
+
 export interface WorkerStatusResult {
   worker: WorkerSummary;
   recentEvents: WorkerEvent[];
   stderrTail: string;
+  /** Newest usable progress derived from the persisted event log. */
+  lastProgress?: WorkerLastProgress;
+  /** Per-run-segment start/end derived from lifecycle events. */
+  timeline?: WorkerTimeline;
+  /** Last/current input request and the actions that are still valid. */
+  inputState?: WorkerInputState;
 }
 
 export interface WaitResult extends ReadEventsResult {
   timedOut: boolean;
   terminal: boolean;
+  lastProgress?: WorkerLastProgress;
+  timeline?: WorkerTimeline;
+  inputState?: WorkerInputState;
 }
 
 export interface SupervisorLimits {
@@ -263,6 +364,21 @@ export interface SupervisorInfo {
     /** channel/proactive describe the default, while workers can override it. */
     workerRouting?: boolean;
     note: string;
+  };
+  /**
+   * Steering a *host* Codex turn is separate from steering a Worker. HS does
+   * not expose host steering: the shared app-server cannot take over a thread
+   * that Codex Desktop currently owns. RPC and model behavior were verified
+   * separately, so callers can tell "not implemented" apart from "not tested".
+   */
+  codexSteer: {
+    status: "unavailable";
+    verified: {
+      appServerRpc: boolean;
+      modelApplied: boolean;
+      desktopActiveTurn: boolean;
+    };
+    reason: string;
   };
   runtimes: RuntimeCapabilities[];
 }
@@ -341,8 +457,24 @@ export interface NotificationCounts {
 
 export interface NotificationsResult {
   notifications: NotificationRecord[];
+  /** Legacy global counts. Kept for older consumers; new callers should read both scopes. */
   counts: NotificationCounts;
+  /** Counts for the same filter that produced `notifications`, before `limit`. */
+  filteredCounts?: NotificationCounts;
+  /** Counts over the whole inbox. */
+  globalCounts?: NotificationCounts;
+  /** Explains exactly which filter produced `filteredCounts`. */
+  scope?: NotificationScope;
   target: NotifyTarget;
+}
+
+export interface NotificationScope {
+  state: "pending" | "delivered" | "failed" | "all";
+  workerId?: string;
+  unacknowledgedOnly: boolean;
+  limit: number;
+  /** Records in this response after `limit`; may be smaller than filteredCounts. */
+  returned: number;
 }
 
 export interface NotifyTarget {

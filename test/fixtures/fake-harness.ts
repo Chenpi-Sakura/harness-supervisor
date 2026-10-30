@@ -224,6 +224,12 @@ async function runPrompt(prompt) {
     process.stderr.write("fake-pi: simulating crash\n");
     process.exit(7);
   }
+  if (scenario === "partial") {
+    const progress = assistantMessage("PARTIAL_PROGRESS_FROM_WORKER");
+    emit({ type: "message_end", message: progress });
+    await sleep(Math.max(step * 50, 1000));
+    if (token !== runToken || aborted) return;
+  }
   if (scenario === "ask") {
     const uiId = `ui-${randomBytes(4).toString("hex")}`;
     lastUiRequest = { id: uiId, answer: undefined };

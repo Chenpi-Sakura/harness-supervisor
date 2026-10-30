@@ -390,13 +390,36 @@ export class Notifier {
       .map((record) => structuredClone(record));
   }
 
-  counts(): { pending: number; delivered: number; failed: number; superseded: number; unacked: number } {
+  /**
+ * Counts for a filter. With no filter this is the whole-inbox view; with a
+ * filter it applies the same state/worker/unacknowledged rules as `list`, but
+ * ignores `limit`, so a caller can tell "this response was truncated" from
+ * "this is how many records exist in scope".
+ */
+  counts(filter: {
+    state?: "pending" | "delivered" | "failed" | "all";
+    workerId?: string;
+    unacknowledgedOnly?: boolean;
+  } = {}): { pending: number; delivered: number; failed: number; superseded: number; unacked: number } {
+    // No state filter means the whole inbox, matching the legacy counts().
+    const state = filter.state ?? "all";
     let pending = 0;
     let delivered = 0;
     let failed = 0;
     let superseded = 0;
     let unacked = 0;
     for (const record of this.records.values()) {
+      if (filter.workerId && record.workerId !== filter.workerId) continue;
+      if (filter.unacknowledgedOnly && (record.ackAt || record.delivery.state === "superseded")) {
+        continue;
+      }
+      if (state !== "all") {
+        if (state === "pending") {
+          if (record.delivery.state !== "pending" || record.ackAt) continue;
+        } else if (record.delivery.state !== state) {
+          continue;
+        }
+      }
       if (record.delivery.state === "delivered") delivered += 1;
       else if (record.delivery.state === "failed") failed += 1;
       else if (record.delivery.state === "superseded") superseded += 1;

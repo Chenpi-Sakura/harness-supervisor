@@ -5,6 +5,7 @@ import {
   MAX_COMPACT_EVENTS,
   STATUS_BUDGET_BYTES,
   compactEvent,
+  compactLastProgress,
   compactStatus,
   fitByChars,
   jsonBytes,
@@ -12,6 +13,7 @@ import {
   packCompactEvents,
   readCompactEvents,
   resultPreview,
+  singleEventView,
   textPreview,
 } from "../../src/context-budget.js";
 import type { ReadEventsResult, WorkerEvent, WorkerStatusResult, WorkerSummary } from "../../src/types.js";
@@ -56,6 +58,106 @@ test("resultPreview keeps the storage-level truncation flag", () => {
   assert.equal(stored.truncated, true, "an explicitly full read cannot recover the clipped tail");
   assert.equal(stored.storedTruncated, true);
   assert.equal("storedTruncated" in resultPreview({ text: "short", truncated: false }, 500), false);
+});
+
+test("single event reads expose storage-level truncation instead of implying full text", () => {
+  const clipped = singleEventView(
+    worker(),
+    event(4, "run.progress", {
+      kind: "tool_end",
+      preview: "x".repeat(400) + "\n...[truncated 131 chars]",
+      previewTruncated: true,
+      previewChars: 531,
+    }),
+  ) as Record<string, unknown>;
+  assert.equal(clipped.storedTruncated, true);
+  assert.match(String(clipped.note), /runtime session file/);
+
+  const full = singleEventView(worker(), event(5, "run.progress", { kind: "tool_end" })) as Record<
+    string,
+    unknown
+  >;
+  assert.equal("storedTruncated" in full, false);
+  assert.equal("note" in full, false);
+});
+
+test("a completed status does not repeat the final text in lastProgress", () => {
+  const view = compactLastProgress(
+    {
+      state: "available",
+      seq: 9,
+      ts: "2026-01-01T00:00:09.000Z",
+      type: "run.completed",
+      source: "final_report",
+      text: "DONE",
+      chars: 4,
+      truncated: false,
+      evidence: "final_report",
+    },
+    400,
+    { omitFinalText: true },
+  );
+  assert.equal(view?.text, undefined);
+  assert.equal(view?.textInResult, true);
+  assert.equal(view?.seq, 9);
+});
+
+test("compactStatus budgets lastProgress, timeline and inputState with the rest of the view", () => {
+  const result: WorkerStatusResult = {
+    worker: worker({
+      status: "cancelled",
+      statusReason: "max_duration_exceeded",
+      result: undefined,
+      error: undefined,
+    }),
+    recentEvents: [],
+    stderrTail: "",
+    lastProgress: {
+      state: "available",
+      seq: 156,
+      ts: "2026-01-01T00:00:10.000Z",
+      type: "run.cancelled",
+      source: "partial_text",
+      text: "x".repeat(1000),
+      chars: 1000,
+      truncated: false,
+      evidence: "partial_progress",
+    },
+    timeline: {
+      createdAt: "2026-01-01T00:00:00.000Z",
+      firstStartedAt: "2026-01-01T00:00:01.000Z",
+      currentRunStartedAt: "2026-01-01T00:00:05.000Z",
+      endedAt: "2026-01-01T00:00:20.000Z",
+      resumeCount: 9,
+      segmentsTotal: 10,
+      segments: Array.from({ length: 10 }, (_, index) => ({
+        startSeq: index * 2 + 1,
+        startedAt: `2026-01-01T00:00:0${index}.000Z`,
+        endSeq: index * 2 + 2,
+        endedAt: `2026-01-01T00:00:0${index}.500Z`,
+        outcome: "cancelled" as const,
+        open: false,
+      })),
+      note: "note",
+    },
+    inputState: {
+      state: "expired",
+      requestId: "req-1",
+      method: "select",
+      createdAt: "2026-01-01T00:00:05.000Z",
+      expiresAt: "2026-01-01T00:05:00.000Z",
+      nextActions: ["worker_status", "worker_resume"],
+      note: "The native request is no longer answerable. Resume the same session with a new instruction; do not retry worker_answer.",
+    },
+  };
+  const compact = compactStatus(result);
+  assert.ok(
+    jsonBytes(compact) <= STATUS_BUDGET_BYTES || compact.budgetExceeded === true,
+    `compact status exceeded its budget without a marker: ${jsonBytes(compact)} bytes`,
+  );
+  const progress = compact.lastProgress as Record<string, unknown>;
+  assert.equal(progress.state, "available");
+  assert.equal(compact.budgetExceeded, undefined, "the fixed fields should still fit after trimming");
 });
 
 test("fitByChars returns the largest fitting value and flags an impossible budget", () => {

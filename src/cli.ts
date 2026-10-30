@@ -293,6 +293,11 @@ function printWorker(worker: WorkerSummary): void {
     );
   }
   if (worker.statusReason) lines.push(`  reason: ${worker.statusReason}`);
+  if (worker.firstStartedAt || worker.startedAt) {
+    lines.push(
+      `  first started: ${worker.firstStartedAt ?? worker.startedAt}  current run: ${worker.startedAt ?? "-"}  resumes: ${worker.resumeCount}`,
+    );
+  }
   if (worker.result) {
     const preview = worker.result.text.slice(0, 1200);
     lines.push(`  result: ${preview}${worker.result.text.length > 1200 ? "\n    [truncated in CLI display]" : ""}`);
@@ -370,6 +375,52 @@ function printCompactStatus(value: Record<string, unknown>): void {
     lines.push(`  recent events (${events.length}${omitted > 0 ? `, ${omitted} omitted` : ""}):`);
     for (const event of events) {
       lines.push(`    #${event.seq} ${event.type}${event.summary ? ` ${event.summary}` : ""}`);
+    }
+  }
+  const progress = value.lastProgress as
+    | {
+        state: string;
+        seq?: number;
+        ts?: string;
+        type?: string;
+        kind?: string;
+        source?: string;
+        text?: string;
+        chars?: number;
+        truncated?: boolean;
+        storedTruncated?: boolean;
+        evidence?: string;
+        note?: string;
+      }
+    | undefined;
+  if (progress) {
+    if (progress.state === "none") {
+      lines.push(`  last progress: none${progress.note ? ` (${progress.note})` : ""}`);
+    } else {
+      const stored = progress.storedTruncated ? " stored-clipped" : "";
+      lines.push(
+        `  last progress: #${progress.seq} ${progress.ts} ${progress.kind ?? progress.source ?? progress.type} ${progress.chars ?? ""} chars${progress.truncated ? " preview" : ""}${stored} evidence=${progress.evidence}`,
+      );
+      if (progress.text) {
+        for (const line of progress.text.split("\n")) lines.push(`    ${line}`);
+      }
+    }
+  }
+  const timeline = value.timeline as
+    | {
+        firstStartedAt?: string;
+        currentRunStartedAt?: string;
+        resumeCount?: number;
+        segmentsTotal?: number;
+        segments?: Array<{ startedAt: string; endedAt?: string; outcome?: string; open: boolean }>;
+      }
+    | undefined;
+  if (timeline) {
+    lines.push(
+      `  timeline: first=${timeline.firstStartedAt ?? "-"} current=${timeline.currentRunStartedAt ?? "-"} resumes=${timeline.resumeCount ?? 0} segments=${timeline.segmentsTotal ?? 0}`,
+    );
+    for (const segment of timeline.segments ?? []) {
+      lines.push(`    ${segment.startedAt} -> ${segment.endedAt ?? (segment.open ? "open" : "?")} ${segment.outcome ?? "running"}`);
     }
   }
   process.stdout.write(`${lines.join("\n")}\n`);
@@ -930,6 +981,9 @@ async function main(): Promise<void> {
               summary: { text?: string };
             }>;
             counts: { pending: number; delivered: number; failed: number; unacked: number };
+            filteredCounts?: { pending: number; delivered: number; failed: number; unacked: number };
+            globalCounts?: { pending: number; delivered: number; failed: number; unacked: number };
+            scope?: { state: string; workerId?: string; limit: number; returned: number };
             target: { channel: string; codexThreadId?: string };
           };
           if (typed.notifications.length === 0) {
@@ -942,8 +996,13 @@ async function main(): Promise<void> {
               );
             }
           }
+          const filtered = typed.filteredCounts ?? typed.counts;
+          const global = typed.globalCounts ?? typed.counts;
+          const scope = typed.scope;
           process.stdout.write(
-            `\ncounts: pending=${typed.counts.pending} delivered=${typed.counts.delivered} failed=${typed.counts.failed} unacked=${typed.counts.unacked}\n` +
+            `\nfiltered counts (${scope ? `state=${scope.state}${scope.workerId ? ` worker=${scope.workerId}` : ""} limit=${scope.limit} returned=${scope.returned}` : "this query"}): ` +
+              `pending=${filtered.pending} delivered=${filtered.delivered} failed=${filtered.failed} unacked=${filtered.unacked}\n` +
+              `global counts: pending=${global.pending} delivered=${global.delivered} failed=${global.failed} unacked=${global.unacked}\n` +
               `target: channel=${typed.target.channel}${typed.target.codexThreadId ? ` thread=${typed.target.codexThreadId}` : ""}\n`,
           );
         }

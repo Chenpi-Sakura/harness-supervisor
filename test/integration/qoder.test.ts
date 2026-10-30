@@ -317,6 +317,12 @@ test("Qoder permission requests surface as awaiting_input and allow or deny corr
   assert.ok(pending.worker.pendingInput);
   assert.equal(pending.worker.pendingInput?.method, "select");
   assert.deepEqual(pending.worker.pendingInput?.options, ["allow", "deny"]);
+  assert.equal(pending.inputState?.state, "pending");
+  const defaultExpiry = Date.parse(pending.worker.pendingInput!.expiresAt!);
+  assert.ok(
+    defaultExpiry - Date.now() > 20 * 60_000,
+    "the Qoder input window is 30 minutes by default, not the old five-minute timer",
+  );
 
   await client.request("answer", {
     workerId: worker.id,
@@ -343,6 +349,25 @@ test("Qoder permission requests surface as awaiting_input and allow or deny corr
   const denied = await waitTerminal(client, deniedWorker.id, 20_000);
   assert.equal(denied.worker.status, "failed");
   assert.match(denied.worker.error ?? "", /TOOL_DENIED/);
+});
+
+test("Qoder's input deadline is configurable and still reaches the runtime", async (t) => {
+  const { client, cwd } = await startQoderHarness(t, {
+    HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS: "60000",
+  });
+  const worker = await spawnQoder(client, cwd, "[scenario:permission] configurable deadline");
+  await waitForStatus(client, worker.id, ["awaiting_input"], 10_000);
+  const pending = await statusOf(client, worker.id);
+  const remaining = Date.parse(pending.worker.pendingInput!.expiresAt!) - Date.now();
+  assert.ok(remaining > 50_000 && remaining <= 61_000, `unexpected window: ${remaining}ms`);
+  await client.request("answer", {
+    workerId: worker.id,
+    requestId: pending.worker.pendingInput!.requestId,
+    response: { value: "allow" },
+  });
+  const final = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(final.worker.status, "completed");
+  assert.equal(final.worker.result?.text, "PERMISSION_OK");
 });
 
 test("Qoder in-band auth failures are reported as failed, not completed", async (t) => {

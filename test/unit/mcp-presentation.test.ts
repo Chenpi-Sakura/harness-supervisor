@@ -80,6 +80,43 @@ test("explicit history marks superseded input as non-actionable in production", 
   assert.equal(debug.notifications[0]?.createdAt, result.notifications[0]?.createdAt);
 });
 
+test("notification presentation labels global counts and never relabels them as filtered", () => {
+  const base: NotificationsResult = {
+    notifications: [],
+    counts: { pending: 7, delivered: 119, failed: 0, superseded: 0, unacked: 10 },
+    target: { channel: "none" },
+  };
+  const legacy = presentNotifications(base, "production") as Record<string, unknown>;
+  assert.equal(legacy.countsScope, "global");
+  assert.deepEqual(legacy.counts, base.counts);
+  assert.equal("filteredCounts" in legacy, false);
+  assert.equal("globalCounts" in legacy, false);
+
+  const scoped = presentNotifications(
+    {
+      ...base,
+      filteredCounts: { pending: 1, delivered: 0, failed: 0, unacked: 1 },
+      globalCounts: base.counts,
+      scope: { state: "pending", workerId: "w-1", unacknowledgedOnly: true, limit: 50, returned: 0 },
+    },
+    "production",
+  ) as Record<string, unknown>;
+  assert.deepEqual(scoped.filteredCounts, {
+    pending: 1,
+    delivered: 0,
+    failed: 0,
+    unacked: 1,
+  });
+  assert.deepEqual(scoped.globalCounts, base.counts);
+  assert.deepEqual(scoped.scope, {
+    state: "pending",
+    workerId: "w-1",
+    unacknowledgedOnly: true,
+    limit: 50,
+    returned: 0,
+  });
+});
+
 test("resolveMcpMode defaults to production and rejects invalid CLI/env values", () => {
   const previous = process.env[MCP_MODE_ENV];
   try {

@@ -189,6 +189,11 @@ function statusWorkerForProduction(worker: WorkerSummary) {
     cwd: worker.cwd,
     status: worker.status,
     lastSeq: worker.lastSeq,
+    createdAt: worker.createdAt,
+    ...(worker.firstStartedAt !== undefined ? { firstStartedAt: worker.firstStartedAt } : {}),
+    ...(worker.startedAt !== undefined ? { startedAt: worker.startedAt } : {}),
+    ...(worker.endedAt !== undefined ? { endedAt: worker.endedAt } : {}),
+    resumeCount: worker.resumeCount,
     ...(worker.statusReason !== undefined ? { statusReason: worker.statusReason } : {}),
     ...(worker.result ? { result: resultOf(worker.result) } : {}),
     ...(worker.pendingInput ? { pendingInput: pendingOf(worker.pendingInput) } : {}),
@@ -232,6 +237,9 @@ export function presentStatus(
   if (mode === "development") return result;
   const out: Record<string, unknown> = {
     worker: statusWorkerForProduction(result.worker),
+    ...(result.lastProgress ? { lastProgress: result.lastProgress } : {}),
+    ...(result.timeline ? { timeline: result.timeline } : {}),
+    ...(result.inputState ? { inputState: result.inputState } : {}),
   };
   if (options.includeRecentEvents) {
     out.recentEvents = eventsForProduction(result.recentEvents);
@@ -255,6 +263,9 @@ export function presentWait(
     hasMore: result.hasMore,
     timedOut: result.timedOut,
     terminal: result.terminal,
+    ...(result.lastProgress ? { lastProgress: result.lastProgress } : {}),
+    ...(result.timeline ? { timeline: result.timeline } : {}),
+    ...(result.inputState ? { inputState: result.inputState } : {}),
   };
 }
 
@@ -337,6 +348,15 @@ export function presentInfo(
       note:
         "Pull-based reads; this is the default route for NEW workers and each worker/event keeps its own snapshot. codex-queue delivery can start a turn only while the host has that thread loaded. Delivery is at-least-once and does not prove wake-up.",
     },
+    ...(info.codexSteer
+      ? {
+          codexSteer: {
+            status: info.codexSteer.status,
+            verified: info.codexSteer.verified,
+            reason: "HS does not steer the Codex Desktop turn; use codex-queue notifications.",
+          },
+        }
+      : {}),
     runtimes: info.runtimes.map((runtime) => ({
       runtime: runtime.runtime,
       steer: runtime.steer,
@@ -383,7 +403,14 @@ export function presentNotifications(
   if (mode === "development") return result;
   return {
     notifications: result.notifications.map(record => notificationForProduction(record, includeDelivery)),
+    // `counts` is the legacy whole-inbox view. The two explicit fields below
+    // make the distinction visible; `scope` says what `filteredCounts` covers.
+    // On an older daemon only `counts` exists; do not relabel it as filtered.
     counts: result.counts,
+    countsScope: "global",
+    ...(result.filteredCounts ? { filteredCounts: result.filteredCounts } : {}),
+    ...(result.globalCounts ? { globalCounts: result.globalCounts } : {}),
+    ...(result.scope ? { scope: result.scope } : {}),
   };
 }
 
@@ -408,11 +435,22 @@ export function formatToolError(error: unknown, mode: McpPresentationMode): stri
   const details = error instanceof SupervisorError ? error.details : undefined;
   if (!details) return base;
   const identifiers: string[] = [];
-  for (const key of ["requestId", "workerId", "status", "pendingRequestId"] as const) {
+  for (const key of [
+    "requestId",
+    "workerId",
+    "status",
+    "reason",
+    "inputState",
+    "expiresAt",
+    "pendingRequestId",
+  ] as const) {
     const value = details[key];
     if (typeof value === "string" && value.length > 0) {
       identifiers.push(`${key}=${value}`);
     }
+  }
+  if (Array.isArray(details.nextActions) && details.nextActions.length > 0) {
+    identifiers.push(`next=${details.nextActions.filter((item) => typeof item === "string").join("|")}`);
   }
   return identifiers.length > 0 ? `${base} (${identifiers.join(", ")})` : base;
 }

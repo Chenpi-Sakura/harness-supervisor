@@ -107,8 +107,12 @@ export interface TaskWorkerMetrics {
   runtime?: string;
   status?: WorkerStatus;
   createdAt?: string;
+  /** Original accepted run start; absent on legacy records. */
+  firstStartedAt?: string;
+  /** Current/most recent run segment start (the historical `startedAt`). */
   startedAt?: string;
   endedAt?: string;
+  resumeCount?: number;
   runMs?: number;
   runMsUnknownReason?: string;
 }
@@ -139,6 +143,8 @@ export interface TaskMetrics {
   status: TaskStatus;
   timing: {
     createdAt: string;
+    /** Earliest accepted start (firstStartedAt when available). */
+    firstStartedAt: string | null;
     startedAt: string | null;
     finishedAt: string | null;
     endToEndMs: number | null;
@@ -1050,7 +1056,7 @@ export class MetricsStore {
         endToEnd: durationSummary(endToEndValues, allMetrics.length),
         workerRun: durationSummary(workerRunValues, workerCount),
         waiting: durationSummary(waitingValues, waitingPopulation),
-        note: "workerRun is the sum of per-worker run times, not wall-clock time. waiting is derived only for single-worker tasks and includes process startup and supervisor overhead.",
+        note: "workerRun is the sum of per-worker run times, not wall-clock time. For resumed workers runMs uses the latest segment only; worker_status.timeline has every segment. waiting is derived only for single-worker tasks and includes process startup and supervisor overhead.",
       },
       notTracked: { ...NOT_TRACKED },
       unknownFields: [...UNKNOWN_FIELDS],
@@ -1099,8 +1105,10 @@ export class MetricsStore {
         runtime: record.runtime,
         status: record.status,
         createdAt: record.createdAt,
+        ...(record.firstStartedAt ? { firstStartedAt: record.firstStartedAt } : {}),
         ...(record.startedAt ? { startedAt: record.startedAt } : {}),
         ...(record.endedAt ? { endedAt: record.endedAt } : {}),
+        ...(record.resumeCount > 0 ? { resumeCount: record.resumeCount } : {}),
         ...(runMs !== undefined
           ? { runMs }
           : { runMsUnknownReason: record.startedAt ? "endedAt is missing or invalid" : "startedAt is missing" }),
@@ -1141,6 +1149,12 @@ export class MetricsStore {
     if (workers.length > 0 && workers.some((worker) => worker.runMs === undefined)) {
       warnings.push("At least one worker has no usable run duration.");
     }
+    const resumed = workers.filter((worker) => (worker.resumeCount ?? 0) > 0);
+    if (resumed.length > 0) {
+      warnings.push(
+        `Worker(s) ${resumed.map((worker) => worker.workerId).join(", ")} resumed; runMs covers only the latest run segment. Use worker_status.timeline for per-segment timing.`,
+      );
+    }
     if (endToEndMs === null && allTerminal) {
       warnings.push("The task is terminal but its end-to-end duration is unknown.");
     }
@@ -1178,12 +1192,17 @@ export class MetricsStore {
     if (workers.length === 0) {
       warnings.push("No worker is linked yet; this task is pending.");
     }
+    const firstStarts = workers
+      .map((worker) => parseTime(worker.firstStartedAt ?? worker.startedAt))
+      .filter((value): value is number => value !== undefined);
     return {
       schemaVersion: METRICS_SCHEMA_VERSION,
       task: clone(task),
       status,
       timing: {
         createdAt: task.createdAt,
+        firstStartedAt:
+          firstStarts.length > 0 ? new Date(Math.min(...firstStarts)).toISOString() : null,
         startedAt: starts.length > 0 ? new Date(Math.min(...starts)).toISOString() : null,
         finishedAt,
         endToEndMs,

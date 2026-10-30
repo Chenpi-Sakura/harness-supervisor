@@ -368,6 +368,9 @@ export class PiRpcSession implements HarnessSession {
       case "agent_start": {
         if (!this.runSeen) {
           this.runSeen = true;
+          // A new process may carry a previous assistant message only through
+          // state; never let it become this run's cancellation fallback.
+          this.lastAssistant = null;
           this.emit({ type: "run_started" });
         } else {
           this.emit({ type: "progress", kind: "agent_restart" });
@@ -530,12 +533,16 @@ export class PiRpcSession implements HarnessSession {
     const text = extractAssistantText(obj);
     const stopReason = typeof obj.stopReason === "string" ? obj.stopReason : undefined;
     const errorMessage = typeof obj.errorMessage === "string" ? obj.errorMessage : undefined;
-    this.lastAssistant = { text, stopReason, errorMessage };
+    // Pi emits a synthetic empty assistant message when abort settles. Do not
+    // let it erase the last real assistant text: cancellation must still be
+    // able to show what the worker had produced before it stopped.
+    const carried = text.length === 0 && stopReason === "aborted" ? this.lastAssistant?.text : undefined;
+    this.lastAssistant = { text: text || carried || "", stopReason, errorMessage };
     if (text) {
       this.emit({
         type: "progress",
         kind: "assistant_message",
-        preview: safeText(text, 400),
+        preview: safeText(text, 4000),
       });
     }
   }

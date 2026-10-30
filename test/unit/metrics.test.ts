@@ -15,9 +15,11 @@ function workerRecord(
   options: {
     status?: WorkerStatus;
     startedAt?: string;
+    firstStartedAt?: string;
     endedAt?: string;
     runtime?: string;
     model?: string;
+    resumeCount?: number;
   } = {},
 ): WorkerRecord {
   const now = "2026-10-25T10:00:00.000Z";
@@ -44,10 +46,11 @@ function workerRecord(
       notes: "test",
     },
     config: options.model ? { model: options.model } : {},
-    resumeCount: 0,
+    resumeCount: options.resumeCount ?? 0,
     supervisorId: "test",
     taskId,
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
+    ...(options.firstStartedAt ? { firstStartedAt: options.firstStartedAt } : {}),
     ...(options.endedAt ? { endedAt: options.endedAt } : {}),
   };
 }
@@ -280,6 +283,24 @@ test("report derives task status and durations without inventing unknown values"
   assert.ok((missingView?.warnings ?? []).some((warning) => /missing/i.test(warning)));
   assert.deepEqual(report.unknownFields.includes("cost"), true);
   assert.equal(report.notTracked.cost.includes("Not collected"), true);
+});
+
+test("a resumed worker reports firstStartedAt and warns that runMs is only the latest segment", async () => {
+  const { store } = await newStore();
+  const task = await store.createTask({ title: "resumed", workerId: "w-resumed", createdBy: "mcp" });
+  const worker = workerRecord("w-resumed", task.id, {
+    firstStartedAt: "2026-10-25T09:00:00.000Z",
+    startedAt: "2026-10-25T10:00:00.000Z",
+    endedAt: "2026-10-25T10:01:00.000Z",
+    resumeCount: 2,
+  });
+  const report = store.report(() => worker, { includeTasks: true });
+  const view = report.tasks?.[0];
+  assert.equal(view?.timing.firstStartedAt, "2026-10-25T09:00:00.000Z");
+  assert.equal(view?.timing.startedAt, "2026-10-25T10:00:00.000Z");
+  assert.equal(view?.workers[0]?.firstStartedAt, "2026-10-25T09:00:00.000Z");
+  assert.equal(view?.workers[0]?.resumeCount, 2);
+  assert.ok((view?.warnings ?? []).some((warning) => /latest run segment/.test(warning)));
 });
 
 test("failed, cancelled and interrupted workers are never counted as completed", async () => {

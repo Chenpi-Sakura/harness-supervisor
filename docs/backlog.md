@@ -1,6 +1,7 @@
 # 后续事项 Backlog
 
-更新日期：2026-10-28。
+更新日期：2026-10-30。
+最近补充：2026-10-30，0.6.5 完成终态 `lastProgress`、输入请求有效期/结构化恢复提示、通知统计范围拆分、Resume 时间线与事件读取边界；Qoder 输入窗口改为 30 分钟并经真实 1.1.79 验证。Codex app-server `turn/steer` 协议与模型应用已真实验证，但 Desktop 私有 stdio app-server 与活动 writer 锁使 HS 无法接入，0.6.5 不实现宿主 steer，边界见 `docs/codex-steer-261030.md`。
 最近补充：2026-10-28，0.5.x 已移除 0.4.4 的 Codex 消费前 ACK hook（源码、安装器、测试、文档与 bin 入口）；收件箱/ACK/重试/投递前失效检查保留。已安装旧 hook 的机器需手动在 `/hooks` 禁用或删除对应 `UserPromptSubmit`，HS 不修改用户配置。
 最近补充：2026-10-27，0.5.0 完成任务度量阶段一/二（任务关联、运行时可用 Token、覆盖率报告）；费用不采集（积分制无法直接核对），验收/返工/干预/对照分析仍在阶段三/四，见 `docs/metrics-phase12-report.md`。
 
@@ -18,6 +19,8 @@
 | 任务度量阶段三 | 指标扩展 | 首次验收、返工、人工干预的记录与去重；明确操作来源，不自动把 steer/消息事件当人工干预；固定数据集复算 | 后续 |
 | 任务度量阶段四 | 对照与导出 | 不做费用采集（积分制无法核对）；只有存在同验收标准的非 HS 基线时才做 Token/耗时对照；不接受用会话总 Token 摊派到单任务 | 后续 |
 | MiniMax Code Token 用量 | 运行时用量 | 最新 0.6.13 实测：ACP prompt result 只有 stopReason，usage_update 只有上下文 used/size 与 cost=0；headless `exec --output-format json` 有结构化 usage。需上游在 ACP 补 usage，或评估非交互 worker；不读私有会话库，不用上下文量代替 Token | 待上游/待验证 |
+| Codex Desktop 实时 steer | 宿主能力 | app-server `turn/steer` 已在真实活动回合验证（含错误 turn 拒绝与模型应用）；但 Desktop 的 app-server 是私有 stdio，共享 daemon 无法取得活动 writer 锁。只有出现受支持的 Desktop 控制端点或宿主级 API 时再实现；不写 queue SQLite、不猜活动回合 | 阻塞 |
+| MiniMax Code 输入等待 | 运行时边界 | 0.6.5 只把 Qoder 的输入窗口延长到 30 分钟并真实验证；mcode 的 ACP 等待上限未单独验证，因此保持 5 分钟。需真实 Ask 场景验证宿主是否允许更长时间，再决定是否统一 | 待验证 |
 | 度量日志保留 | 规模与清理 | `metrics.jsonl` 的保留/清理策略；不得删除活跃任务、任务关联或未确认通知所需信息；需与 `prune` 语义分开 | 后续 |
 
 Qoder steer/follow-up 继续按现有真实证据标为未验证生效；只有获得明确原生协议依据或实际需求后再投入，不为统一接口伪造支持。

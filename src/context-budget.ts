@@ -2,8 +2,10 @@ import type {
   PendingInput,
   ReadEventsResult,
   WorkerEvent,
+  WorkerLastProgress,
   WorkerStatusResult,
   WorkerSummary,
+  WorkerTimeline,
 } from "./types.js";
 
 /**
@@ -30,6 +32,8 @@ export const MAX_PENDING_MESSAGE_CHARS = 400;
 export const MAX_RESULT_PREVIEW_CHARS = 1000;
 export const MAX_PENDING_OPTIONS = 20;
 export const MAX_STATUS_REASON_CHARS = 240;
+export const MAX_LAST_PROGRESS_CHARS = 400;
+export const MAX_COMPACT_SEGMENTS = 3;
 /** Server-side tail window used to find the newest lifecycle events. */
 export const COMPACT_SCAN_WINDOW = 300;
 export const COMPACT_SCAN_PAGES = 3;
@@ -136,7 +140,7 @@ function repeatsResult(event: WorkerEvent, worker: WorkerSummary): boolean {
 function eventSummarySource(event: WorkerEvent): string | undefined {
   const data = event.data;
   if (!data) return undefined;
-  for (const key of ["text", "error", "reason", "partialText"]) {
+  for (const key of ["text", "error", "reason", "partialText", "preview", "detail"]) {
     const value = data[key];
     if (typeof value === "string" && value.trim()) return value;
   }
@@ -241,6 +245,70 @@ export function compactPendingInput(input: PendingInput | undefined, messageChar
   };
 }
 
+export function compactLastProgress(
+  progress: WorkerLastProgress | undefined,
+  maxChars: number,
+  options: { omitFinalText?: boolean } = {},
+): Record<string, unknown> | undefined {
+  if (!progress) return undefined;
+  if (progress.state === "none") {
+    return {
+      state: "none",
+      ...(progress.scannedThroughSeq !== undefined
+        ? { scannedThroughSeq: progress.scannedThroughSeq }
+        : {}),
+      ...(progress.note !== undefined ? { note: progress.note } : {}),
+    };
+  }
+  const view = textPreview(progress.text ?? "", Math.min(maxChars, MAX_LAST_PROGRESS_CHARS));
+  const common = {
+    state: "available",
+    ...(progress.seq !== undefined ? { seq: progress.seq } : {}),
+    ...(progress.ts !== undefined ? { ts: progress.ts } : {}),
+    ...(progress.type !== undefined ? { type: progress.type } : {}),
+    ...(progress.kind !== undefined ? { kind: progress.kind } : {}),
+    ...(progress.tool !== undefined ? { tool: progress.tool } : {}),
+    ...(progress.isError !== undefined ? { isError: progress.isError } : {}),
+    ...(progress.source !== undefined ? { source: progress.source } : {}),
+    ...(progress.chars !== undefined ? { chars: progress.chars } : {}),
+    ...(progress.originalChars !== undefined ? { originalChars: progress.originalChars } : {}),
+    ...(progress.storedTruncated ? { storedTruncated: true } : {}),
+    ...(progress.evidence !== undefined ? { evidence: progress.evidence } : {}),
+  };
+  if (
+    options.omitFinalText &&
+    progress.evidence === "final_report" &&
+    progress.source === "final_report"
+  ) {
+    // The completed result face already carries this text; keep only the
+    // event reference instead of spending the status budget twice.
+    return { ...common, textInResult: true };
+  }
+  return {
+    ...common,
+    text: view.preview,
+    truncated: progress.truncated === true || view.truncated,
+  };
+}
+
+export function compactTimeline(
+  timeline: WorkerTimeline | undefined,
+  maxSegments = MAX_COMPACT_SEGMENTS,
+): Record<string, unknown> | undefined {
+  if (!timeline) return undefined;
+  return {
+    createdAt: timeline.createdAt,
+    ...(timeline.firstStartedAt !== undefined ? { firstStartedAt: timeline.firstStartedAt } : {}),
+    ...(timeline.currentRunStartedAt !== undefined
+      ? { currentRunStartedAt: timeline.currentRunStartedAt }
+      : {}),
+    ...(timeline.endedAt !== undefined ? { endedAt: timeline.endedAt } : {}),
+    resumeCount: timeline.resumeCount,
+    segmentsTotal: timeline.segmentsTotal,
+    segments: timeline.segments.slice(Math.max(0, timeline.segments.length - maxSegments)),
+  };
+}
+
 interface CompactStatusOptions {
   budgetBytes: number;
   eventLimit: number;
@@ -288,6 +356,15 @@ export function compactStatus(
         resumeAvailable: worker.resumeAvailable,
       },
       recentEvents: list.map((event) => compactEvent(event, worker, Math.min(chars, MAX_EVENT_SUMMARY_CHARS))),
+      ...(result.lastProgress
+        ? {
+            lastProgress: compactLastProgress(result.lastProgress, chars, {
+              omitFinalText: worker.status === "completed" && worker.result !== undefined,
+            }),
+          }
+        : {}),
+      ...(result.timeline ? { timeline: compactTimeline(result.timeline) } : {}),
+      ...(result.inputState ? { inputState: result.inputState } : {}),
     };
     if (omitted > 0) out.eventsOmitted = omitted;
     return out;
@@ -314,9 +391,21 @@ export function compactStatus(
 
 /** One event by sequence number: full stored data, never budgeted. */
 export function singleEventView(worker: WorkerSummary, event: WorkerEvent) {
+  const data = event.data;
+  const storedTruncated =
+    data?.truncated === true ||
+    data?.previewTruncated === true ||
+    data?.detailTruncated === true ||
+    data?.partialTextTruncated === true;
   return {
     worker: { id: worker.id, status: worker.status, lastSeq: worker.lastSeq },
     event,
+    ...(storedTruncated
+      ? {
+          storedTruncated: true,
+          note: "This stored event was clipped by the supervisor's storage cap. The runtime session file may contain the full text.",
+        }
+      : {}),
   };
 }
 

@@ -15,6 +15,7 @@ import type {
 import { Deferred, withTimeout } from "../../util/async.js";
 import { JsonlDecoder, serializeJsonLine } from "../../util/jsonl.js";
 import { safeJson, safeText } from "../../util/redact.js";
+import { resolveInputTimeoutMs } from "../../input-timeout.js";
 import {
   expectedQoderSessionFile,
   locateQoderSessionFile,
@@ -79,9 +80,19 @@ interface LastResult {
   error?: string;
 }
 
-const PERMISSION_TIMEOUT_MS = 300_000;
+/**
+ * Qoder's control channel waits for a response; the five-minute deadline was
+ * ours, not qodercli's. A real Qoder run held a pending question past five
+ * minutes, so the default is 30 minutes. The supervisor receives the same
+ * deadline in `needs_input`, and both timers are configurable.
+ */
+const DEFAULT_PERMISSION_TIMEOUT_MS = 30 * 60_000;
 const SETTLE_IDLE_MS = 350;
 const SETTLE_WITH_QUEUE_MS = 1500;
+
+function permissionTimeoutMs(): number {
+  return resolveInputTimeoutMs(DEFAULT_PERMISSION_TIMEOUT_MS);
+}
 
 export class QoderCliSession implements HarnessSession {
   readonly pid: number | undefined;
@@ -708,7 +719,7 @@ export class QoderCliSession implements HarnessSession {
       this.emit({
         type: "progress",
         kind: "assistant_message",
-        preview: safeText(text, 400),
+        preview: safeText(text, 4000),
       });
     }
     if (record.aborted === true) {
@@ -1005,7 +1016,8 @@ export class QoderCliSession implements HarnessSession {
       input,
       questions: [],
     };
-    pending.timer = this.permissionTimer(pending);
+    const timeoutMs = permissionTimeoutMs();
+    pending.timer = this.permissionTimer(pending, timeoutMs);
     this.pendingTools.set(requestId, pending);
     this.emit({
       type: "needs_input",
@@ -1014,7 +1026,7 @@ export class QoderCliSession implements HarnessSession {
       title: safeText(title, 300),
       message: safeText(reason, 2000),
       options: ["allow", "deny"],
-      timeoutMs: PERMISSION_TIMEOUT_MS,
+      timeoutMs,
     });
   }
 
@@ -1092,7 +1104,8 @@ export class QoderCliSession implements HarnessSession {
       input,
       questions,
     };
-    pending.timer = this.permissionTimer(pending);
+    const timeoutMs = permissionTimeoutMs();
+    pending.timer = this.permissionTimer(pending, timeoutMs);
     this.pendingTools.set(requestId, pending);
     this.emit({
       type: "needs_input",
@@ -1102,11 +1115,11 @@ export class QoderCliSession implements HarnessSession {
       message: safeText(message, 2000),
       options,
       placeholder,
-      timeoutMs: PERMISSION_TIMEOUT_MS,
+      timeoutMs,
     });
   }
 
-  private permissionTimer(pending: PendingToolRequest): NodeJS.Timeout {
+  private permissionTimer(pending: PendingToolRequest, timeoutMs: number): NodeJS.Timeout {
     const timer = setTimeout(() => {
       if (this.pendingTools.get(pending.requestId) !== pending) return;
       this.pendingTools.delete(pending.requestId);
@@ -1114,6 +1127,7 @@ export class QoderCliSession implements HarnessSession {
         type: "progress",
         kind: "permission_timeout",
         tool: pending.toolName,
+        detail: pending.requestId,
         isError: true,
       });
       void this.respondPermission(
@@ -1122,7 +1136,7 @@ export class QoderCliSession implements HarnessSession {
         "Supervisor did not receive an answer before the permission timeout",
         {},
       ).catch(() => undefined);
-    }, PERMISSION_TIMEOUT_MS);
+    }, timeoutMs);
     timer.unref?.();
     return timer;
   }
@@ -1210,12 +1224,12 @@ function summarizeToolInput(input: unknown): string {
     obj.description,
   ];
   const chosen = candidates.find((value) => typeof value === "string" && value.length > 0);
-  if (typeof chosen === "string") return safeText(chosen, 200);
-  return safeJson(obj, 200);
+  if (typeof chosen === "string") return safeText(chosen, 2000);
+  return safeJson(obj, 2000);
 }
 
 function summarizeToolResult(content: unknown): string {
-  if (typeof content === "string") return safeText(content, 300);
+  if (typeof content === "string") return safeText(content, 4000);
   if (Array.isArray(content)) {
     const parts: string[] = [];
     for (const block of content) {
@@ -1226,10 +1240,10 @@ function summarizeToolResult(content: unknown): string {
         if (typeof text === "string") parts.push(text);
       }
     }
-    if (parts.length > 0) return safeText(parts.join("\n"), 300);
+    if (parts.length > 0) return safeText(parts.join("\n"), 4000);
   }
   if (content === undefined || content === null) return "";
-  return safeJson(content, 300);
+  return safeJson(content, 4000);
 }
 
 export const QODER_DEFAULTS = {

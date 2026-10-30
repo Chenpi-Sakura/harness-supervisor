@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-30",
+  "runtime": "qoder",
+  "qodercli": "1.1.79",
+  "note": "Isolated daemon; production daemon untouched. Qoder config root was the logged-in ~/.qoder, not the desktop-injected ~/.qoder-cn.",
+  "workerId": "w-mvugk9rt-14327c3d",
+  "taskId": "t-mvugk9rt-d20523b3",
+  "request": {
+    "requestId": "8ec81186-9458-4d99-a533-e608f3a404ba",
+    "method": "select",
+    "createdAt": "2026-10-30T04:14:40.287Z",
+    "expiresAt": "2026-10-30T04:44:40.287Z"
+  },
+  "answer": {
+    "at": "2026-10-30T04:20:38.773Z",
+    "value": "OK"
+  },
+  "elapsedMs": 358486,
+  "worker": {
+    "startedAt": "2026-10-30T04:14:37.840Z",
+    "endedAt": "2026-10-30T04:20:47.518Z",
+    "status": "completed",
+    "result": "QODER_INPUT_OK"
+  },
+  "conclusion": "The original five-minute timer was HS-side. Qoder held the request for 5m58s and still accepted the answer, then completed the turn."
+}

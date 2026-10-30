@@ -15,7 +15,11 @@ import type {
 import { Deferred, withTimeout } from "../../util/async.js";
 import { JsonlDecoder, serializeJsonLine } from "../../util/jsonl.js";
 import { safeJson, safeText } from "../../util/redact.js";
-import { resolveInputTimeoutMs } from "../../input-timeout.js";
+import {
+  DEFAULT_INPUT_TIMEOUT_MS,
+  QODER_INPUT_TIMEOUT_ENV,
+  resolveRuntimeInputTimeoutMs,
+} from "../../input-timeout.js";
 import {
   expectedQoderSessionFile,
   locateQoderSessionFile,
@@ -86,12 +90,15 @@ interface LastResult {
  * minutes, so the default is 30 minutes. The supervisor receives the same
  * deadline in `needs_input`, and both timers are configurable.
  */
-const DEFAULT_PERMISSION_TIMEOUT_MS = 30 * 60_000;
+const DEFAULT_PERMISSION_TIMEOUT_MS = DEFAULT_INPUT_TIMEOUT_MS;
 const SETTLE_IDLE_MS = 350;
 const SETTLE_WITH_QUEUE_MS = 1500;
 
 function permissionTimeoutMs(): number {
-  return resolveInputTimeoutMs(DEFAULT_PERMISSION_TIMEOUT_MS);
+  return resolveRuntimeInputTimeoutMs({
+    specificEnv: QODER_INPUT_TIMEOUT_ENV,
+    defaultMs: DEFAULT_PERMISSION_TIMEOUT_MS,
+  });
 }
 
 export class QoderCliSession implements HarnessSession {

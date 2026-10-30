@@ -155,13 +155,13 @@ test("an expired input request is reported as expired and rejects a later answer
   assert.equal(final.worker.status, "completed");
 });
 
-test("Pi's input cap is opt-in and reaches the pending request", async (t) => {
+test("Pi's input cap follows the shared timeout and reaches the pending request", async (t) => {
   const daemon = await TestDaemon.create("hs-evidence-pi-cap-");
   t.after(async () => {
     await daemon.stop().catch(() => undefined);
   });
   const client = await daemon.start({
-    env: { HARNESS_SUPERVISOR_PI_INPUT_TIMEOUT_MS: "60000" },
+    env: { HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS: "60000" },
   });
   const cwd = await makeWorkspace("hs-evidence-pi-cap-work-");
   const worker = await spawnWorker(client, cwd, "[scenario:ask] cap this dialog");

@@ -15,9 +15,10 @@ import { Deferred, withTimeout } from "../../util/async.js";
 import { JsonlDecoder, serializeJsonLine } from "../../util/jsonl.js";
 import { safeJson, safeText } from "../../util/redact.js";
 import {
+  DEFAULT_INPUT_TIMEOUT_MS,
   PI_INPUT_TIMEOUT_ENV,
   pickInputTimeoutMs,
-  resolveOptionalInputTimeoutMs,
+  resolveRuntimeInputTimeoutMs,
 } from "../../input-timeout.js";
 import type { PiLaunch } from "./launch.js";
 
@@ -588,12 +589,17 @@ export class PiRpcSession implements HarnessSession {
       const options = Array.isArray(record.options)
         ? record.options.filter((option): option is string => typeof option === "string")
         : undefined;
-      // Pi's extension owns its dialog timeout. HS forwards it unchanged and
-      // only adds an opt-in cap; a zero/absent native timeout stays "wait
-      // indefinitely" unless HARNESS_SUPERVISOR_PI_INPUT_TIMEOUT_MS is set.
+      // Pi's extension owns its dialog timeout. HS forwards a native value
+      // unchanged and adds the shared 30-minute cap when the extension does not
+      // provide a shorter one. HARNESS_SUPERVISOR_PI_INPUT_TIMEOUT_MS=0 is the
+      // explicit opt-out for dialogs that must wait indefinitely.
       const nativeTimeout =
         typeof record.timeout === "number" && record.timeout > 0 ? record.timeout : undefined;
-      const cap = resolveOptionalInputTimeoutMs(PI_INPUT_TIMEOUT_ENV);
+      const cap = resolveRuntimeInputTimeoutMs({
+        specificEnv: PI_INPUT_TIMEOUT_ENV,
+        defaultMs: DEFAULT_INPUT_TIMEOUT_MS,
+        allowDisabled: true,
+      });
       const timeoutMs = pickInputTimeoutMs(nativeTimeout, cap);
       const event: PendingInput & { type: "needs_input"; timeoutMs?: number } = {
         type: "needs_input",

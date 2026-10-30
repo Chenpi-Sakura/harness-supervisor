@@ -16,7 +16,11 @@ import type {
 import { Deferred, withTimeout } from "../../util/async.js";
 import { ensureDir } from "../../util/fsx.js";
 import { safeText } from "../../util/redact.js";
-import { MCODE_INPUT_TIMEOUT_ENV, resolveInputTimeoutMs } from "../../input-timeout.js";
+import {
+  DEFAULT_INPUT_TIMEOUT_MS,
+  MCODE_INPUT_TIMEOUT_ENV,
+  resolveRuntimeInputTimeoutMs,
+} from "../../input-timeout.js";
 import type { McodeLaunch } from "./launch.js";
 
 export interface McodeAcpSessionOptions {
@@ -78,7 +82,7 @@ interface QueuedMessage {
  * HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS overrides it, falling back to
  * HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS.
  */
-const DEFAULT_PERMISSION_TIMEOUT_MS = 30 * 60_000;
+const DEFAULT_PERMISSION_TIMEOUT_MS = DEFAULT_INPUT_TIMEOUT_MS;
 const ACP_PROTOCOL_VERSION = 1;
 /**
  * Upper bound for the permission context handed to the caller.
@@ -899,10 +903,10 @@ export class McodeAcpSession implements HarnessSession {
       options,
       timer: setTimeout(() => undefined, 0),
     };
-    const timeoutMs = resolveInputTimeoutMs(
-      DEFAULT_PERMISSION_TIMEOUT_MS,
-      MCODE_INPUT_TIMEOUT_ENV,
-    );
+    const timeoutMs = resolveRuntimeInputTimeoutMs({
+      specificEnv: MCODE_INPUT_TIMEOUT_ENV,
+      defaultMs: DEFAULT_PERMISSION_TIMEOUT_MS,
+    });
 
     if (this.abortRequested) {
       await this.respondPermissionById(pending, "cancelled").catch(() => undefined);

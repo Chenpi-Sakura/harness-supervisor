@@ -1,39 +1,49 @@
 /**
  * Native input requests are held by the runtime process, not by a database.
  * The supervisor owns the deadline for runtimes whose protocol accepts a
- * control response at any time (Qoder and MiniMax Code); a fixed five-minute
- * window made a slow parent review look like a failed call. A runtime-specific
- * environment variable takes precedence over the shared one; the host's own
- * wait limit remains the runtime's responsibility and is documented separately.
+ * control response at any time.
+ *
+ * Resolution order for every runtime:
+ *   1. runtime-specific environment variable
+ *   2. shared HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS
+ *   3. the built-in shared default (30 minutes)
+ *
+ * Pi additionally treats 0 as "no HS deadline"; its native dialog timeout, if
+ * any, still applies and the stricter value wins. The other runtimes require
+ * 60s..24h.
  */
 export const INPUT_TIMEOUT_ENV = "HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS";
+export const QODER_INPUT_TIMEOUT_ENV = "HARNESS_SUPERVISOR_QODER_INPUT_TIMEOUT_MS";
 export const MCODE_INPUT_TIMEOUT_ENV = "HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS";
 export const PI_INPUT_TIMEOUT_ENV = "HARNESS_SUPERVISOR_PI_INPUT_TIMEOUT_MS";
+export const DEFAULT_INPUT_TIMEOUT_MS = 30 * 60_000;
 
-function parseTimeout(raw: string | undefined, defaultMs: number): number {
-  if (raw === undefined || raw.trim() === "") return defaultMs;
+const MIN_TIMEOUT_MS = 60_000;
+const MAX_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+function readTimeout(raw: string | undefined, allowDisabled: boolean): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
   const value = Number(raw);
-  if (!Number.isFinite(value)) return defaultMs;
+  if (!Number.isFinite(value)) return undefined;
   const rounded = Math.trunc(value);
-  if (rounded < 60_000 || rounded > 24 * 60 * 60 * 1000) return defaultMs;
+  if (allowDisabled && rounded === 0) return 0;
+  if (rounded < MIN_TIMEOUT_MS || rounded > MAX_TIMEOUT_MS) return undefined;
   return rounded;
 }
 
-export function resolveInputTimeoutMs(defaultMs: number, specificEnv?: string): number {
-  const specific = specificEnv ? process.env[specificEnv] : undefined;
-  if (specific !== undefined && specific.trim() !== "") {
-    return parseTimeout(specific, defaultMs);
-  }
-  return parseTimeout(process.env[INPUT_TIMEOUT_ENV], defaultMs);
+export interface RuntimeTimeoutOptions {
+  specificEnv: string;
+  defaultMs: number;
+  /** Pi accepts 0 as "do not add an HS deadline". */
+  allowDisabled?: boolean;
 }
 
-/**
- * Opt-in cap for runtimes whose native dialog already carries its own
- * `timeout`. An unset/zero value means "do not add an HS deadline"; the
- * native timeout, if any, is forwarded unchanged.
- */
-export function resolveOptionalInputTimeoutMs(specificEnv: string, defaultMs = 0): number {
-  return parseTimeout(process.env[specificEnv], defaultMs);
+export function resolveRuntimeInputTimeoutMs(options: RuntimeTimeoutOptions): number {
+  const specific = readTimeout(process.env[options.specificEnv], options.allowDisabled === true);
+  if (specific !== undefined) return specific;
+  const shared = readTimeout(process.env[INPUT_TIMEOUT_ENV], options.allowDisabled === true);
+  if (shared !== undefined) return shared;
+  return options.defaultMs;
 }
 
 /** Native timeout wins only when it is stricter than the opt-in HS cap. */

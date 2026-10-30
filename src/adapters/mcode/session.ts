@@ -16,6 +16,7 @@ import type {
 import { Deferred, withTimeout } from "../../util/async.js";
 import { ensureDir } from "../../util/fsx.js";
 import { safeText } from "../../util/redact.js";
+import { MCODE_INPUT_TIMEOUT_ENV, resolveInputTimeoutMs } from "../../input-timeout.js";
 import type { McodeLaunch } from "./launch.js";
 
 export interface McodeAcpSessionOptions {
@@ -68,7 +69,16 @@ interface QueuedMessage {
   text: string;
 }
 
-const PERMISSION_TIMEOUT_MS = 300_000;
+/**
+ * ACP keeps `session/request_permission` open until the client answers; the
+ * old five-minute deadline was the adapter's own. The default now matches
+ * Qoder at 30 minutes so a slow review is not denied early. The host's own
+ * wait limit is still unverified: a real MiniMax Code 0.7.0 Ask-mode run did
+ * not surface an approval prompt, so only the HS-side timer is verified.
+ * HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS overrides it, falling back to
+ * HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS.
+ */
+const DEFAULT_PERMISSION_TIMEOUT_MS = 30 * 60_000;
 const ACP_PROTOCOL_VERSION = 1;
 /**
  * Upper bound for the permission context handed to the caller.
@@ -889,6 +899,10 @@ export class McodeAcpSession implements HarnessSession {
       options,
       timer: setTimeout(() => undefined, 0),
     };
+    const timeoutMs = resolveInputTimeoutMs(
+      DEFAULT_PERMISSION_TIMEOUT_MS,
+      MCODE_INPUT_TIMEOUT_ENV,
+    );
 
     if (this.abortRequested) {
       await this.respondPermissionById(pending, "cancelled").catch(() => undefined);
@@ -903,7 +917,7 @@ export class McodeAcpSession implements HarnessSession {
         message: "MiniMax Code permission request timed out without an answer",
         fatal: false,
       });
-    }, PERMISSION_TIMEOUT_MS);
+    }, timeoutMs);
     pending.timer.unref?.();
     this.pendingPermissions.set(requestId, pending);
 
@@ -923,7 +937,7 @@ export class McodeAcpSession implements HarnessSession {
       // visible truncation marker keeps the loss obvious instead of silent.
       message: safeText(message_, PERMISSION_MESSAGE_MAX_CHARS),
       options: options.map((option) => option.name),
-      timeoutMs: PERMISSION_TIMEOUT_MS,
+      timeoutMs,
     });
   }
 

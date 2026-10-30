@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  findMcodePackageEntry,
   resolveMcodeLaunch,
   resolveMcodePermissionMode,
   validateMcodeExtraArgs,
@@ -33,6 +34,32 @@ test("MiniMax Code launch rejects a missing explicit entry", () => {
       } as NodeJS.ProcessEnv),
     /HARNESS_SUPERVISOR_MCODE_ENTRY does not exist/,
   );
+});
+
+test("the standalone .minimax-code installer is detected without an explicit entry", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "hs-mcode-home-"));
+  const version = "9.9.9";
+  const entry = path.join(
+    home,
+    ".minimax-code",
+    "releases",
+    version,
+    "node_modules",
+    "@minimax-ai",
+    "code",
+    "cli.js",
+  );
+  await mkdir(path.dirname(entry), { recursive: true });
+  await writeFile(entry, "", "utf8");
+  await writeFile(path.join(home, ".minimax-code", "current"), `${version}\n`, "utf8");
+
+  const found = findMcodePackageEntry({
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: path.join(home, "none"),
+    PATH: "",
+  } as NodeJS.ProcessEnv);
+  assert.equal(found, entry);
 });
 
 test("MiniMax Code extraArgs cannot override supervisor-managed flags", () => {

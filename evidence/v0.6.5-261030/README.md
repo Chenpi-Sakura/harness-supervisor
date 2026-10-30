@@ -41,11 +41,11 @@
 
 - 单元：context-budget、mcp-presentation、notify、metrics、progress-evidence、input-state、input-timeout 全部通过
 - 集成：status-evidence（7）、mcp（2）、qoder、mcp-auto-binding、mcp-modes、lifecycle、event-history、notification-binding、notify-routing 全部通过
-- 完整回归：319 tests / 317 pass / 0 fail / 2 skipped（真实 Pi E2E 默认跳过），622.3s，见 [full-regression.txt](full-regression.txt)
+- 完整回归：322 tests / 320 pass / 0 fail / 2 skipped（真实 Pi E2E 默认跳过），642.1s，见 [full-regression.txt](full-regression.txt)
 
 ## 边界
 
 - 真实 Qoder 等待只覆盖一次单轮 AskUserQuestion；不证明所有 Qoder 工具审批都可等待 30 分钟。
-- MiniMax Code 的输入等待上限未验证，保持 5 分钟。
+- MiniMax Code 的 HS 侧输入窗口已可配置（默认 30 分钟，`HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS`）；真实 0.7.0 Ask 模式没有触发审批请求，因此宿主自身的等待上限仍未验证。
 - Codex steer 只在受控 app-server 中验证；Desktop 实时 steer 未实现。
 - 自动绑定沿用 2026-10-28 的真实 Desktop 双对话证据，并在本轮重新运行自动化回归；没有新增第二次 Desktop 实测。

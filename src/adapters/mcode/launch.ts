@@ -66,6 +66,35 @@ export function findMcodePackageEntry(env: NodeJS.ProcessEnv = process.env): str
   const explicit = env.HARNESS_SUPERVISOR_MCODE_ENTRY;
   if (explicit) candidates.push(path.resolve(explicit));
 
+  // The standalone MiniMax Code installer keeps releases under
+  // ~/.minimax-code and records the active version in `current`. Its entries
+  // are not on the npm global prefix, so they need this separate check.
+  const home = env.USERPROFILE ?? env.HOME;
+  if (home) {
+    const installRoot = path.join(home, ".minimax-code");
+    try {
+      const version = readFileSync(path.join(installRoot, "current"), "utf8").trim();
+      if (/^[0-9A-Za-z][0-9A-Za-z._-]*$/.test(version)) {
+        candidates.push(
+          path.join(
+            installRoot,
+            "releases",
+            version,
+            "node_modules",
+            "@minimax-ai",
+            "code",
+            "cli.js",
+          ),
+        );
+      }
+    } catch {
+      // No standalone install metadata; continue with the npm candidates.
+    }
+    candidates.push(
+      path.join(installRoot, "node_modules", "@minimax-ai", "code", "cli.js"),
+    );
+  }
+
   const globalRoot = env.npm_config_prefix ?? env.APPDATA
     ? path.join(
         (env.npm_config_prefix ?? path.join(env.APPDATA ?? "", "npm")) as string,

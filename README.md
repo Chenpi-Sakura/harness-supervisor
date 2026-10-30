@@ -317,7 +317,7 @@ MiniMax Code 在原生 ACP 提供 messageId 时按最后一条 assistant 消息�
 - `timeline`：`firstStartedAt`、`currentRunStartedAt`、`endedAt`、`resumeCount` 和运行段。`startedAt` 仍表示最近一次运行段的开始；恢复后的 Worker 用 `firstStartedAt` 取最初开始时间。旧的 `startedAt` 含义没有被改写。
 - `inputState`：`pending` / `answered` / `expired` / `withdrawn` / `closed`，并给出 `expiresAt`、`expiresInMs`、`nextActions`。请求过期后 `worker_answer` 返回 `INVALID_STATE` 且 `details.reason=input_expired`；已回答的重复请求返回 `already_answered`；Worker 已结束时提示使用 `worker_resume`，不再让调用方逐个工具试错。
 
-Qoder 的原生控制请求会一直等待回答；此前 HS 适配器自己的 5 分钟计时器会提前拒绝请求。0.6.5 将 Qoder 默认窗口改为 **30 分钟**，可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS`（60000—86400000）覆盖。2026-10-30 真实 Qoder 1.1.79 验证：请求在 04:14:40 创建，04:20:38（5 分 58 秒）回答后仍被接受，Worker 以 `QODER_INPUT_OK` 完成。Pi 仍使用扩展本身提供的 `timeout`；MiniMax Code 保持 5 分钟窗口，因为其宿主等待上限未单独验证。
+Qoder 的原生控制请求会一直等待回答；此前 HS 适配器自己的 5 分钟计时器会提前拒绝请求。0.6.5 将 Qoder 默认窗口改为 **30 分钟**，可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS`（60000—86400000）覆盖。2026-10-30 真实 Qoder 1.1.79 验证：请求在 04:14:40 创建，04:20:38（5 分 58 秒）回答后仍被接受，Worker 以 `QODER_INPUT_OK` 完成。MiniMax Code 默认同为 30 分钟，可用 `HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS` 单独覆盖；其宿主自身的等待上限仍未验证（真实 0.7.0 Ask 模式没有触发审批请求），因此只声明 HS 侧计时器可配置。Pi 仍使用扩展本身提供的 `timeout`。
 
 事件截断边界：`run.progress` 的 `preview` 入库上限 4 KiB、`detail` 8 KiB，取消/失败的 `partialText` 4 KiB；完成文本仍受 `maxEventStringBytes` 限制。超限时事件数据带 `*Truncated`/`*Chars`（旧记录只有可见的 `...[truncated N chars]` 后缀）。单条事件读取只能返回 **HS 已存**的内容；更长的原始输出在 Runtime 自己的 session 文件中，MCP 响应会明确标注 `storedTruncated`。
 

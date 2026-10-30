@@ -206,6 +206,12 @@ test("MiniMax Code permission request becomes awaiting_input and is answerable",
   assert.ok(awaiting.pendingInput, "pending input must be recorded");
   assert.equal(awaiting.pendingInput!.method, "select");
   assert.deepEqual(awaiting.pendingInput!.options, ["Allow once", "Always allow", "Deny"]);
+  const pendingStatus = await statusOf(client, worker.id);
+  assert.equal(pendingStatus.inputState?.state, "pending");
+  assert.ok(
+    Date.parse(awaiting.pendingInput!.expiresAt!) - Date.now() > 20 * 60_000,
+    "MiniMax Code uses the 30-minute default, not the old five-minute timer",
+  );
 
   const answered = await client.request<WorkerSummary>(
     "answer",
@@ -221,6 +227,25 @@ test("MiniMax Code permission request becomes awaiting_input and is answerable",
   const final = await waitTerminal(client, worker.id, 20_000);
   assert.equal(final.worker.status, "completed");
   assert.equal(final.worker.result?.text, "FAKE_MCODE_OK");
+});
+
+test("MiniMax Code input deadline can be configured for the runtime", async (t) => {
+  const { client, cwd } = await startMcodeHarness(t, {
+    FAKE_MCODE_SCENARIO: "permission",
+    HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "default",
+    HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS: "60000",
+  });
+  const worker = await spawnMcode(client, cwd, "configurable deadline");
+  const awaiting = await waitForStatus(client, worker.id, ["awaiting_input"], 15_000);
+  const remaining = Date.parse(awaiting.pendingInput!.expiresAt!) - Date.now();
+  assert.ok(remaining > 50_000 && remaining <= 61_000, `unexpected window: ${remaining}ms`);
+  await client.request("answer", {
+    workerId: worker.id,
+    requestId: awaiting.pendingInput!.requestId,
+    response: { value: "Allow once" },
+  });
+  const final = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(final.worker.status, "completed");
 });
 
 test("native permission withdrawal clears the live input and suppresses its inbox reminder", async (t) => {

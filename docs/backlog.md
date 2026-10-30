@@ -20,7 +20,7 @@
 | 任务度量阶段四 | 对照与导出 | 不做费用采集（积分制无法核对）；只有存在同验收标准的非 HS 基线时才做 Token/耗时对照；不接受用会话总 Token 摊派到单任务 | 后续 |
 | MiniMax Code Token 用量 | 运行时用量 | 最新 0.6.13 实测：ACP prompt result 只有 stopReason，usage_update 只有上下文 used/size 与 cost=0；headless `exec --output-format json` 有结构化 usage。需上游在 ACP 补 usage，或评估非交互 worker；不读私有会话库，不用上下文量代替 Token | 待上游/待验证 |
 | Codex Desktop 实时 steer | 宿主能力 | app-server `turn/steer` 已在真实活动回合验证（含错误 turn 拒绝与模型应用）；但 Desktop 的 app-server 是私有 stdio，共享 daemon 无法取得活动 writer 锁。只有出现受支持的 Desktop 控制端点或宿主级 API 时再实现；不写 queue SQLite、不猜活动回合 | 阻塞 |
-| MiniMax Code 输入等待 | 运行时边界 | 0.6.5 只把 Qoder 的输入窗口延长到 30 分钟并真实验证；mcode 的 ACP 等待上限未单独验证，因此保持 5 分钟。需真实 Ask 场景验证宿主是否允许更长时间，再决定是否统一 | 待验证 |
+| MiniMax Code 输入等待 | 运行时边界 | 0.6.5 后 HS 侧默认 30 分钟，可用 `HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS` 覆盖；真实 0.7.0 Ask 模式没有触发审批请求，宿主自身的等待上限仍未验证。需真实 Ask 场景确认宿主是否允许超过 5 分钟，再决定是否把默认值视为宿主保证 | 待验证 |
 | 度量日志保留 | 规模与清理 | `metrics.jsonl` 的保留/清理策略；不得删除活跃任务、任务关联或未确认通知所需信息；需与 `prune` 语义分开 | 后续 |
 
 Qoder steer/follow-up 继续按现有真实证据标为未验证生效；只有获得明确原生协议依据或实际需求后再投入，不为统一接口伪造支持。

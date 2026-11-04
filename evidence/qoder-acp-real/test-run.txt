@@ -1,0 +1,17 @@
+qodercli 1.1.82
+model DeepSeek-Flash
+protocol acp
+permission mode default (cancel scenario: bypass_permissions)
+
+spawn: completed, result=QODER_ACP_E2E_OK
+resume: completed, result=QODER_ACP_RESUME_OK, same session id and handle, resumeCount=1
+writeApproval: completed, options=[Allow for this session, Allow, Reject], answered=Allow, file content=ACP_WRITE_OK
+askUserQuestion: completed, method=select, title=确认, options=[是, 否], answered=是, result=QUESTION_YES
+cancel: running -> cancelled, recorded PID no longer alive
+run.error events: 0
+run.usage events: 0 (ACP usage is all zeros, treated as unknown)
+
+command:
+QODER_REAL=1 QODER_REAL_MODEL=DeepSeek-Flash node scripts/e2e-qoder-acp.mjs
+
+evidence: evidence/qoder-acp-real/

@@ -124,3 +124,26 @@ settled，ACP 对这些能力的标准表达并不更完整。可行性判断：
 - 当前 mcode ACP 能力：`src/adapters/mcode/adapter.ts` 的 capability notes
 - 官方 ACP：<https://agentclientprotocol.com/>
 - 官方 Qoder ACP：<https://docs.qoder.com/cli/acp>
+
+## 8. 实施状态（2026-11-04 后续）
+
+本评估之后，Qoder ACP 可选传输已在 0.7.0 落地：
+
+- 开关：`HARNESS_SUPERVISOR_QODER_PROTOCOL=acp`；默认仍为 `stream-json`。
+- 真实 1.1.82 已通过：spawn/prompt、`session/load` resume、Write 审批
+  （`session/request_permission`）、AskUserQuestion（`elicitation/create`）和
+  `session/cancel`。各场景 `runErrors=0`，取消后进程退出。
+- 上述“仍需要验证”的项已有结论：
+  - `session/cancel` 能终止 turn；HS 随后关闭进程。
+  - `session/load` 的回放不写入新运行的事件/最终答复；HS 使用自己的
+    `qoder-acp-session.json` 句柄做身份校验。
+  - 模型显示名到 ACP id 的映射在 HS 内完成，并把模型目录保存在句柄中。
+  - `promptQueueing` 仍未验证运行段语义，因此 ACP 的 steer/followUp 明确为
+    `false`。
+  - 1.1.82 的 ACP usage 全零，HS 不写 `run.usage`。
+- mcode 仍使用独立 ACP 实现；本轮没有为共享内核重构已验证的 mcode 代码。
+- Pi 继续使用原生 RPC。
+- 是否为 1.1.82+ 默认启用 ACP，留待多轮并发、长上下文、错误路径与桌面环境
+  补充验证后决定。
+
+证据：`evidence/qoder-acp-real/`；交付说明：`docs/v0.7.0-report.md`。

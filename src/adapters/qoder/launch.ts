@@ -27,6 +27,30 @@ export const QODER_PERMISSION_MODES = [
 
 export const QODER_DEFAULT_PERMISSION_MODE: QoderPermissionMode = "bypass_permissions";
 
+export const QODER_PROTOCOLS = ["stream-json", "acp"] as const;
+
+export type QoderProtocol = (typeof QODER_PROTOCOLS)[number];
+
+export const QODER_DEFAULT_PROTOCOL: QoderProtocol = "stream-json";
+
+/**
+ * Transport selection is opt-in. Stream-json stays the default until the ACP
+ * transport has passed real acceptance; both transports write different
+ * session handles, so a worker is resumed only through the transport that
+ * created it.
+ */
+export function resolveQoderProtocol(env: NodeJS.ProcessEnv = process.env): QoderProtocol {
+  const raw = env.HARNESS_SUPERVISOR_QODER_PROTOCOL?.trim();
+  if (!raw) return QODER_DEFAULT_PROTOCOL;
+  const normalized = raw.toLowerCase().replace(/_/g, "-");
+  if (normalized === "acp") return "acp";
+  if (normalized === "stream-json" || normalized === "streamjson") return "stream-json";
+  throw new SupervisorError(
+    "BAD_REQUEST",
+    `Unsupported Qoder protocol: ${raw}. Allowed: ${QODER_PROTOCOLS.join(", ")} (default: ${QODER_DEFAULT_PROTOCOL}).`,
+  );
+}
+
 /**
  * Qoder accepts snake_case on the command line but reports camelCase in its
  * system/init record (`bypass_permissions` -> `bypassPermissions`). Compare the
@@ -66,6 +90,7 @@ const RESERVED_ARGS = new Set([
   "--dangerously-skip-permissions",
   "--yolo",
   "--permission-prompt-tool",
+  "--acp",
   "-m",
   "--model",
   "--tools",

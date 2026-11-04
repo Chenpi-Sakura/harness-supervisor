@@ -9,10 +9,12 @@ import {
   qoderConfigRoots,
   resolveQoderLaunch,
   resolveQoderPermissionMode,
+  resolveQoderProtocol,
   sameQoderPermissionMode,
   sessionIdFromFile,
   validateQoderExtraArgs,
 } from "../../src/adapters/qoder/launch.js";
+import { readQoderAcpSessionHandle } from "../../src/adapters/qoder/acp-session.js";
 
 test("Qoder launch strips desktop SDK entrypoint state and keeps the child standalone", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hs-qoder-launch-"));
@@ -76,10 +78,51 @@ test("Qoder compares snake_case flags with camelCase init reports", () => {
   assert.equal(sameQoderPermissionMode("bypass_permissions", "auto"), false);
 });
 
+test("Qoder protocol defaults to stream-json and ACP is opt-in", () => {
+  assert.equal(resolveQoderProtocol({}), "stream-json");
+  assert.equal(
+    resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "acp" }),
+    "acp",
+  );
+  assert.equal(
+    resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json" }),
+    "stream-json",
+  );
+  assert.equal(
+    resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "ACP" }),
+    "acp",
+  );
+  assert.throws(
+    () => resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "sdk" }),
+    /Unsupported Qoder protocol.*default: stream-json/,
+  );
+});
+
+test("Qoder ACP session handles are distinguishable from stream-json session files", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-qoder-acp-handle-"));
+  const acp = path.join(dir, "qoder-acp-session.json");
+  await writeFile(
+    acp,
+    `${JSON.stringify({ type: "session", id: "acp-session", protocol: "acp" })}\n`,
+    "utf8",
+  );
+  assert.equal(await readQoderAcpSessionHandle(acp), "acp-session");
+
+  const wrongProtocol = path.join(dir, "other.json");
+  await writeFile(
+    wrongProtocol,
+    `${JSON.stringify({ type: "session", id: "other", protocol: "stream-json" })}\n`,
+    "utf8",
+  );
+  assert.equal(await readQoderAcpSessionHandle(wrongProtocol), null);
+  assert.equal(await readQoderAcpSessionHandle(path.join(dir, "missing.json")), null);
+});
+
 test("Qoder extraArgs cannot override supervisor-managed or safety-sensitive flags", () => {
   assert.throws(() => validateQoderExtraArgs(["--dangerously-skip-permissions"]), /may not override/);
   assert.throws(() => validateQoderExtraArgs(["--permission-mode=auto"]), /may not override/);
   assert.throws(() => validateQoderExtraArgs(["--permission-prompt-tool", "stdio"]), /may not override/);
+  assert.throws(() => validateQoderExtraArgs(["--acp"]), /may not override/);
   assert.throws(() => validateQoderExtraArgs(["--resume", "abc"]), /may not override/);
   assert.throws(() => validateQoderExtraArgs(["--cwd", "D:/elsewhere"]), /may not override/);
   assert.throws(() => validateQoderExtraArgs(["--settings", "{}"]), /may not override/);

@@ -1,6 +1,7 @@
 # 后续事项 Backlog
 
 更新日期：2026-11-04。
+最近补充：2026-11-04，0.7.0 实现 Qoder ACP **可选**传输（`HARNESS_SUPERVISOR_QODER_PROTOCOL=acp`，默认仍 stream-json），真实 1.1.82 的 spawn/resume/Write 审批/AskUserQuestion/取消全部通过；是否为 1.1.82+ 默认启用、ACP steer/follow-up 与 Token 用量仍待后续决策/验证。
 最近补充：2026-11-04，完成 Pi / Qoder / mcode 的 ACP 改造可行性评估（`docs/acp-feasibility-261104.md`）：Qoder ACP 已真实验证工具审批和 elicitation 提问，建议作为可选传输层；mcode 已是 ACP，只考虑共享内核；Pi 官方无 ACP，第三方适配器缺少权限映射，建议保留原生 RPC。
 最近补充：2026-11-04，0.6.6 修复 Qoder CLI 1.1.82 的启动参数冲突与懒初始化（`system init` 需首条 user 消息触发），真实 1.1.82 spawn/resume 通过；1.1.82 的 stream-json 不再暴露 AskUserQuestion 权限请求，ACP 已做官方握手与 Write 审批探测，列为下一阶段可选传输层。
 最近补充：2026-10-30，0.6.5 完成终态 `lastProgress`、输入请求有效期/结构化恢复提示、通知统计范围拆分、Resume 时间线与事件读取边界；Qoder 输入窗口改为 30 分钟并经真实 1.1.79 验证。Codex app-server `turn/steer` 协议与模型应用已真实验证，但 Desktop 私有 stdio app-server 与活动 writer 锁使 HS 无法接入，0.6.5 不实现宿主 steer，边界见 `docs/codex-steer-261030.md`。
@@ -9,7 +10,7 @@
 
 当前阶段以原型实际使用为主。用户通常保持宿主 7×24 小时运行；以下事项全部暂缓，不作为当前原型交付的前置条件，也不安排主动轮询或自动测试任务。只有实际使用遇到问题或用户重新安排时再启动。
 
-当前可用基线：以 Pi 为主要 Runtime，支持多 Codex 对话并行创建 Worker、持久化通知路由、重要事件唤醒已加载的目标 Thread、原生输入回答闭环及后续结果确认。机器常开不等于所有 Thread 始终加载；未加载场景保留既有能力边界。Qoder 继续保持实验性说明。
+当前可用基线：以 Pi 为主要 Runtime，支持多 Codex 对话并行创建 Worker、持久化通知路由、重要事件唤醒已加载的目标 Thread、原生输入回答闭环及后续结果确认。机器常开不等于所有 Thread 始终加载；未加载场景保留既有能力边界。Qoder 继续保持实验性说明；0.7.0 起 ACP 是可选的第二传输，默认仍为 stream-json。
 
 | 事项 | 类型 | 后续验收重点 | 状态 |
 | --- | --- | --- | --- |
@@ -22,12 +23,14 @@
 | 任务度量阶段四 | 对照与导出 | 不做费用采集（积分制无法核对）；只有存在同验收标准的非 HS 基线时才做 Token/耗时对照；不接受用会话总 Token 摊派到单任务 | 后续 |
 | MiniMax Code Token 用量 | 运行时用量 | 最新 0.6.13 实测：ACP prompt result 只有 stopReason，usage_update 只有上下文 used/size 与 cost=0；headless `exec --output-format json` 有结构化 usage。需上游在 ACP 补 usage，或评估非交互 worker；不读私有会话库，不用上下文量代替 Token | 待上游/待验证 |
 | Codex Desktop 实时 steer | 宿主能力 | app-server `turn/steer` 已在真实活动回合验证（含错误 turn 拒绝与模型应用）；但 Desktop 的 app-server 是私有 stdio，共享 daemon 无法取得活动 writer 锁。只有出现受支持的 Desktop 控制端点或宿主级 API 时再实现；不写 queue SQLite、不猜活动回合 | 阻塞 |
-| Qoder ACP 传输 | 运行时能力 | 官方 `qoder --acp` 在真实 1.1.82 已验证 `initialize`、`session/new`、模式切换、Write 的 `session/request_permission`，以及声明 `elicitation.form` 后的 AskUserQuestion `elicitation/create`。仍需验证 cancel、session/load 身份校验、usage、模型 ID 映射与 steer 降级，再作为可选传输层接入；不引入 SDK 依赖，不接管认证载荷。评估见 `docs/acp-feasibility-261104.md` | 待验证 |
+| Qoder ACP 默认化 | 运行时决策 | 0.7.0 已实现可选 ACP，真实 1.1.82 的 spawn/resume/Write 审批/AskUserQuestion/取消通过且无 `run.error`。默认仍为 stream-json；需补测多轮并发、长上下文、错误路径与桌面环境后再决定是否对 1.1.82+ 默认启用。见 `docs/v0.7.0-report.md` | 待决策 |
+| Qoder ACP steer/follow-up | 运行时能力 | `initialize._meta.qoder.promptQueueing=true` 已观察到，但尚未验证 queued prompt 对 run 边界的影响；当前 ACP capabilities 明确 `steer=false`、`followUp=false`，不伪造支持 | 待验证 |
+| Qoder ACP Token 用量 | 运行时用量 | 真实 1.1.82 ACP prompt result usage 全零；HS 不写 `run.usage`。需上游在 ACP 补 token 计数，或改用有结构化 usage 的非 ACP 路径；不读私有会话库 | 待上游 |
 | MiniMax Code 输入等待 | 运行时边界 | 0.6.5 后 HS 侧默认 30 分钟，可用 `HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS` 覆盖；真实 0.7.0 Ask 模式没有触发审批请求，宿主自身的等待上限仍未验证。需真实 Ask 场景确认宿主是否允许超过 5 分钟，再决定是否把默认值视为宿主保证 | 待验证 |
 | Pi 输入上限 | 运行时边界 | Pi 原生 `timeout` 仍由扩展提供；默认统一 30 分钟上限，`HARNESS_SUPERVISOR_PI_INPUT_TIMEOUT_MS=0` 可关闭，到期由 Supervisor 发送取消。仅经过脚本化 Harness 与单元测试，未验证真实扩展在 HS 取消后的行为 | 待验证 |
 | 度量日志保留 | 规模与清理 | `metrics.jsonl` 的保留/清理策略；不得删除活跃任务、任务关联或未确认通知所需信息；需与 `prune` 语义分开 | 后续 |
 
-Qoder steer/follow-up 继续按现有真实证据标为未验证生效；只有获得明确原生协议依据或实际需求后再投入，不为统一接口伪造支持。
+Qoder stream-json steer/follow-up 继续按现有真实证据标为未验证生效；ACP 下二者明确不支持。只有获得明确原生协议依据或实际需求后再投入，不为统一接口伪造支持。
 
 ## 实际使用反馈：降低通知与审批的总 Token 开销
 

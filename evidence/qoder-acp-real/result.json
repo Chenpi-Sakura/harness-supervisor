@@ -1,0 +1,86 @@
+{
+  "ranAt": "2026-11-04T03:17:21.987Z",
+  "host": "win32 10.0.26300 / Node v24.21.0",
+  "qodercliVersion": "1.1.82",
+  "model": "DeepSeek-Flash",
+  "protocol": "acp",
+  "permissionMode": "default",
+  "scenarios": {
+    "spawn": {
+      "workerId": "w-mw1jq4do-ff42b8a5",
+      "spawnReturnedMs": 6366,
+      "status": "completed",
+      "result": "QODER_ACP_E2E_OK",
+      "sessionId": "96dff41a-e7ff-4641-82eb-d1aa884da257",
+      "sessionFile": "%USERPROFILE%\\AppData\\Local\\Temp\\hs-qoder-acp-real-state-k5elbg\\sessions\\w-mw1jq4do-ff42b8a5\\qoder-acp-session.json",
+      "capabilities": {
+        "runtime": "qoder",
+        "steer": false,
+        "followUp": false,
+        "cancel": true,
+        "resume": true,
+        "pause": false,
+        "interactiveInput": true,
+        "notes": "Qoder CLI official ACP transport (qodercli --acp, protocolVersion 1), enabled only by HARNESS_SUPERVISOR_QODER_PROTOCOL=acp; stream-json remains the default. Verified against real 1.1.82: initialize, session/new, session/load, session/prompt, session/cancel, Write approval through session/request_permission, and AskUserQuestion through elicitation/create when the client advertises elicitation.form. Permission modes map to ACP modes (bypass_permissions->yolo, accept_edits->acceptEdits, dont_ask->dontAsk, default->default, auto->auto); plan has no ACP equivalent and is rejected. Steering and queued follow-ups are not implemented: Qoder advertises promptQueueing in initialize._meta, but HS has not verified what a queued prompt does to run boundaries, so the HS session rejects a second prompt while one is active. Cancellation sends the session/cancel notification and responds to pending permissions/questions. ACP prompt results in 1.1.82 contain all-zero token counters, so Token usage is reported as unknown rather than zero. HS writes its own qoder-acp-session.json handle for resume; the conversation itself stays in Qoder's store. There is no sandbox: cwd is not a file-isolation boundary."
+      },
+      "pid": 74792,
+      "usageEvents": 0,
+      "runErrors": 0,
+      "fatalErrors": 0
+    },
+    "resume": {
+      "status": "completed",
+      "result": "QODER_ACP_RESUME_OK",
+      "resumeCount": 1,
+      "sameSessionId": true,
+      "sameSessionFile": true,
+      "usageEvents": 0,
+      "runErrors": 0,
+      "fatalErrors": 0
+    },
+    "writeApproval": {
+      "workerId": "w-mw1jqnvj-fcf7df1a",
+      "status": "completed",
+      "result": "WRITE_DONE",
+      "requestTitle": "Allow Edit acp-write-ok.txt?",
+      "options": [
+        "Allow for this session",
+        "Allow",
+        "Reject"
+      ],
+      "answeredWith": "Allow",
+      "fileContent": "ACP_WRITE_OK",
+      "runErrors": 0,
+      "fatalErrors": 0
+    },
+    "askUserQuestion": {
+      "workerId": "w-mw1jr3gd-b7f1c1be",
+      "status": "completed",
+      "result": "QUESTION_YES",
+      "method": "select",
+      "title": "确认",
+      "options": [
+        "是",
+        "否"
+      ],
+      "answeredWith": "是",
+      "runErrors": 0,
+      "fatalErrors": 0
+    },
+    "cancel": {
+      "workerId": "w-mw1jri53-1e273c73",
+      "statusBeforeCancel": "running",
+      "status": "cancelled",
+      "pid": 32600,
+      "pidAliveAfterCancel": false,
+      "runErrors": 0,
+      "fatalErrors": 0
+    }
+  },
+  "limits": {
+    "usage": "ACP prompt usage in Qoder 1.1.82 is all zeros; absence of run.usage events means unknown, not zero tokens.",
+    "steering": "ACP steer/follow-up are not implemented; capabilities report steer=false and followUp=false."
+  },
+  "ok": true,
+  "daemonSurvived": true
+}

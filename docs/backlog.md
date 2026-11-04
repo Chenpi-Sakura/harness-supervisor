@@ -1,6 +1,7 @@
 # 后续事项 Backlog
 
 更新日期：2026-11-04。
+最近补充：2026-11-04，完成 Pi / Qoder / mcode 的 ACP 改造可行性评估（`docs/acp-feasibility-261104.md`）：Qoder ACP 已真实验证工具审批和 elicitation 提问，建议作为可选传输层；mcode 已是 ACP，只考虑共享内核；Pi 官方无 ACP，第三方适配器缺少权限映射，建议保留原生 RPC。
 最近补充：2026-11-04，0.6.6 修复 Qoder CLI 1.1.82 的启动参数冲突与懒初始化（`system init` 需首条 user 消息触发），真实 1.1.82 spawn/resume 通过；1.1.82 的 stream-json 不再暴露 AskUserQuestion 权限请求，ACP 已做官方握手与 Write 审批探测，列为下一阶段可选传输层。
 最近补充：2026-10-30，0.6.5 完成终态 `lastProgress`、输入请求有效期/结构化恢复提示、通知统计范围拆分、Resume 时间线与事件读取边界；Qoder 输入窗口改为 30 分钟并经真实 1.1.79 验证。Codex app-server `turn/steer` 协议与模型应用已真实验证，但 Desktop 私有 stdio app-server 与活动 writer 锁使 HS 无法接入，0.6.5 不实现宿主 steer，边界见 `docs/codex-steer-261030.md`。
 最近补充：2026-10-28，0.5.x 已移除 0.4.4 的 Codex 消费前 ACK hook（源码、安装器、测试、文档与 bin 入口）；收件箱/ACK/重试/投递前失效检查保留。已安装旧 hook 的机器需手动在 `/hooks` 禁用或删除对应 `UserPromptSubmit`，HS 不修改用户配置。
@@ -21,7 +22,7 @@
 | 任务度量阶段四 | 对照与导出 | 不做费用采集（积分制无法核对）；只有存在同验收标准的非 HS 基线时才做 Token/耗时对照；不接受用会话总 Token 摊派到单任务 | 后续 |
 | MiniMax Code Token 用量 | 运行时用量 | 最新 0.6.13 实测：ACP prompt result 只有 stopReason，usage_update 只有上下文 used/size 与 cost=0；headless `exec --output-format json` 有结构化 usage。需上游在 ACP 补 usage，或评估非交互 worker；不读私有会话库，不用上下文量代替 Token | 待上游/待验证 |
 | Codex Desktop 实时 steer | 宿主能力 | app-server `turn/steer` 已在真实活动回合验证（含错误 turn 拒绝与模型应用）；但 Desktop 的 app-server 是私有 stdio，共享 daemon 无法取得活动 writer 锁。只有出现受支持的 Desktop 控制端点或宿主级 API 时再实现；不写 queue SQLite、不猜活动回合 | 阻塞 |
-| Qoder ACP 传输 | 运行时能力 | 官方 `qoder --acp` 在真实 1.1.82 已验证 `initialize`、`session/new`、模式切换与 Write 工具的 `session/request_permission`；AskUserQuestion 未观察到权限请求。需继续验证提问、resume、cancel、usage、文件/终端能力后再作为可选传输层接入；不引入 SDK 依赖，不接管认证载荷 | 待验证 |
+| Qoder ACP 传输 | 运行时能力 | 官方 `qoder --acp` 在真实 1.1.82 已验证 `initialize`、`session/new`、模式切换、Write 的 `session/request_permission`，以及声明 `elicitation.form` 后的 AskUserQuestion `elicitation/create`。仍需验证 cancel、session/load 身份校验、usage、模型 ID 映射与 steer 降级，再作为可选传输层接入；不引入 SDK 依赖，不接管认证载荷。评估见 `docs/acp-feasibility-261104.md` | 待验证 |
 | MiniMax Code 输入等待 | 运行时边界 | 0.6.5 后 HS 侧默认 30 分钟，可用 `HARNESS_SUPERVISOR_MCODE_INPUT_TIMEOUT_MS` 覆盖；真实 0.7.0 Ask 模式没有触发审批请求，宿主自身的等待上限仍未验证。需真实 Ask 场景确认宿主是否允许超过 5 分钟，再决定是否把默认值视为宿主保证 | 待验证 |
 | Pi 输入上限 | 运行时边界 | Pi 原生 `timeout` 仍由扩展提供；默认统一 30 分钟上限，`HARNESS_SUPERVISOR_PI_INPUT_TIMEOUT_MS=0` 可关闭，到期由 Supervisor 发送取消。仅经过脚本化 Harness 与单元测试，未验证真实扩展在 HS 取消后的行为 | 待验证 |
 | 度量日志保留 | 规模与清理 | `metrics.jsonl` 的保留/清理策略；不得删除活跃任务、任务关联或未确认通知所需信息；需与 `prune` 语义分开 | 后续 |

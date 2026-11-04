@@ -340,7 +340,7 @@ Codex 宿主实时 steer：`turn/steer` 本身已在真实 app-server 活跃回�
 
 Qoder CLI 1.1.82 不再允许 `--permission-prompt-tool stdio` 与 `--input-format stream-json` 同时使用，且只有在收到第一条 user 消息后才发出 `system init`。0.6.6 移除了冗余的旧参数，并在等待 init 1 秒后提前发送初始提示以触发懒初始化；Supervisor 再次发送同一条提示时会去重。真实 1.1.82 的 spawn 与 resume 已通过，1.1.79 的无参数控制请求也已复核。
 
-**限制**：1.1.82 的 stream-json 模式不再把 AskUserQuestion 暴露为 `can_use_tool`，需要人工审批时请使用 `bypass_permissions`（默认）或 `dont_ask`。官方 ACP（`qoder --acp`）已在真实 1.1.82 上验证 `initialize`、`session/new` 与 Write 工具的 `session/request_permission`，但 AskUserQuestion 尚未在 ACP 上观察到权限请求；ACP 作为下一阶段的可选传输层，不在 0.6.6 中启用。SDK 虽同时支持审批与提问，但需要新增依赖并显式管理认证载荷，暂不采用。证据见 [`evidence/v0.6.6-261104/`](evidence/v0.6.6-261104/)。
+**限制**：1.1.82 的 stream-json 模式不再把 AskUserQuestion 暴露为 `can_use_tool`，需要人工审批时请使用 `bypass_permissions`（默认）或 `dont_ask`。官方 ACP（`qoder --acp`）已在真实 1.1.82 上验证 `initialize`、`session/new`、Write 工具的 `session/request_permission`；客户端声明 `elicitation.form` 后，AskUserQuestion 通过 `elicitation/create` 到达并可回答。ACP 作为下一阶段的可选传输层，不在 0.6.6 中启用。SDK 虽同时支持审批与提问，但需要新增依赖并显式管理认证载荷，暂不采用。证据见 [`evidence/v0.6.6-261104/`](evidence/v0.6.6-261104/)；完整评估见 [`docs/acp-feasibility-261104.md`](docs/acp-feasibility-261104.md)。
 
 ### 任务度量（0.5.0，阶段一/二）
 
@@ -429,7 +429,7 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | --- | --- | --- |
 | Pi | 完整 | 原生 RPC；steer / follow-up / cancel / resume / 扩展对话框均可映射 |
 | MiniMax Code | 实验性 | ACP over ndJSON（`mcode acp`）。spawn / 完成 / 取消 / resume 已在真实 0.6.12 上验证（历史证据；最新 0.6.13 本轮只做了单轮 ACP 与 Token 探测，未重跑全部交互）；权限问答在 Ask 模式下对真实进程验证过（是否触发询问由运行时风险分类决定，并非每次都出现）。steer 与 follow-up 依赖 `mcode/session/steer`、`mcode/session/queue/enqueue` 扩展，未声明该扩展的构建会明确报 `UNSUPPORTED`；真实进程上 `queue/enqueue` 可用，steer 在**活跃 turn 内**已验证有效（agent 照做，事件记为 `mode=steered`），turn 结束后再发会被拒，因此 steer 的送达依赖 turn 是否还活着。ACP 的 `session/prompt` 会阻塞到 turn 结束且拒绝并发第二个 prompt |
-| Qoder CLI | 实验性 | 单轮、取消、resume 已真实验证；1.1.82 的 spawn 与 resume 已真实验证，启动参数冲突和懒初始化已修复。默认 `bypass_permissions`（1.1.79 实测：真实 Worker 完成文件写入/读取且无审批），可用显式配置覆盖。输入请求默认等待 30 分钟（1.1.79 真实 5 分 58 秒回答后仍完成），可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS` 调整。**1.1.82 的 stream-json 默认权限模式不再产生 AskUserQuestion 的 `awaiting_input`**，需人工审批时使用 `bypass_permissions` 或 `dont_ask`；ACP 已通过官方握手和 Write 审批探测，但尚未接入。steer / follow-up 在当前版本被接受但未生效。任务度量可读取 `result.usage`，但全零报告按未知处理 |
+| Qoder CLI | 实验性 | 单轮、取消、resume 已真实验证；1.1.82 的 spawn 与 resume 已真实验证，启动参数冲突和懒初始化已修复。默认 `bypass_permissions`（1.1.79 实测：真实 Worker 完成文件写入/读取且无审批），可用显式配置覆盖。输入请求默认等待 30 分钟（1.1.79 真实 5 分 58 秒回答后仍完成），可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS` 调整。**1.1.82 的 stream-json 默认权限模式不再产生 AskUserQuestion 的 `awaiting_input`**，需人工审批时使用 `bypass_permissions` 或 `dont_ask`；ACP 已通过官方握手、Write 审批和 elicitation 提问探测，但尚未接入，详见 [`docs/acp-feasibility-261104.md`](docs/acp-feasibility-261104.md)。steer / follow-up 在当前版本被接受但未生效。任务度量可读取 `result.usage`，但全零报告按未知处理 |
 
 用量采集边界：Pi 只在 assistant message 原生提供 `usage` 时记录；Qoder 只在 `result.usage` 存在时记录；MiniMax Code 最新 0.6.13 实测 ACP 只提供上下文 `used`/`size` 与 `cost=0 USD`，prompt result 不含 usage，其 headless `exec --output-format json` 虽有结构化 usage，但 HS 走 ACP 且不读取私有会话库，因此报告中保持未知。主 Agent 用量不会从宿主会话自动读取，必须显式补录。
 
@@ -458,6 +458,7 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | [`docs/iteration-261023-report.md`](docs/iteration-261023-report.md) | 2026-10-23 迭代：Worker 通知路由、原生输入闭环、事件历史与幂等可靠性 |
 | [`docs/v0.6.5-report.md`](docs/v0.6.5-report.md) | 0.6.5 交付报告：终态进展、输入有效期、通知统计与 Codex steer 边界 |
 | [`docs/v0.6.6-report.md`](docs/v0.6.6-report.md) | 0.6.6 交付报告：Qoder 1.1.82 参数/初始化兼容、ACP 调研与限制 |
+| [`docs/acp-feasibility-261104.md`](docs/acp-feasibility-261104.md) | Pi / Qoder / mcode 的 ACP 改造可行性评估与建议 |
 | [`docs/codex-steer-261030.md`](docs/codex-steer-261030.md) | 2026-10-30 Codex app-server `turn/steer` 实验与 Desktop 阻塞分析 |
 | [`evidence/v0.6.5-261030/`](evidence/v0.6.5-261030/) | 0.6.5 真实 Qoder 等待、app-server steer 与回归证据 |
 | [`evidence/v0.6.6-261104/`](evidence/v0.6.6-261104/) | 0.6.6 Qoder 1.1.82 参数冲突、真实 E2E 与 ACP 探测证据 |

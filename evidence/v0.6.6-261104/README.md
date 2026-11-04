@@ -66,8 +66,13 @@ Real 1.1.82 probes:
 - `session/set_config_option` with `configId=mode, value=default` took effect.
 - A Write tool call produced `session/request_permission`; allowing it completed
   the turn.
-- An AskUserQuestion prompt did not produce a permission request over ACP in
-  this probe; the model answered without a tool interaction.
+- The first AskUserQuestion probe did not advertise ACP elicitation, so Qoder
+  correctly sent no question request. A later probe advertising
+  `clientCapabilities.elicitation.form={}` received a real
+  `elicitation/create` request with a form schema and completed after an
+  `accept` response. See [`evidence/acp-feasibility-261104/`](../acp-feasibility-261104/)
+  for details.
 
-ACP is therefore a credible future transport for approvals, but it is not
-enabled in 0.6.6 and AskUserQuestion behavior needs more verification.
+ACP is therefore a credible future transport for both tool approvals and user
+questions, but it is not enabled in 0.6.6. Full assessment:
+[`docs/acp-feasibility-261104.md`](../../docs/acp-feasibility-261104.md).

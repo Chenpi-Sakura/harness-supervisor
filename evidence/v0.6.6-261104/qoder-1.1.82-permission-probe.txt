@@ -50,16 +50,26 @@ session/prompt "请使用 Write 工具在当前目录创建 acp-probe.txt..." ->
 
 3. ACP AskUserQuestion
 ----------------------
-session/prompt asked the model to call AskUserQuestion.
-Observed: no session/request_permission and no tool_call for AskUserQuestion;
-the model ended the turn with a text answer. AskUserQuestion behavior over ACP
-is therefore unverified and must not be claimed.
+First probe advertised only fs capabilities. session/prompt asked the model to
+call AskUserQuestion; no session/request_permission and no tool_call appeared,
+because the client had not advertised ACP elicitation.
+
+Follow-up probe advertised:
+  clientCapabilities.elicitation = { form: {}, url: {} }
+
+Qoder then emitted a tool_call "Ask user" followed by:
+  method=elicitation/create, mode=form, sessionId, toolCallId
+  message="Answer Questions"
+  requestedSchema.properties.q0.oneOf = [{const:"是"},{const:"否"}]
+The client replied {action:"accept", content:{q0:"是"}}; the model continued
+and the prompt returned stopReason=end_turn.
 
 4. Interpretation
 -----------------
-ACP is a viable future transport for Qoder tool approvals and uses the same
-CLI login state. It is not enabled in 0.6.6. ACP still needs verification for
-AskUserQuestion, cancel, resume, usage, and file/terminal capabilities before
-it can replace stream-json. The Qoder Agent SDK documents canUseTool for both
-approvals and questions, but adds a package dependency and explicit auth
-handling, so it is not the default integration path.
+ACP is a viable future transport for Qoder tool approvals and AskUserQuestion,
+and uses the same CLI login state. It is not enabled in 0.6.6. ACP still needs
+verification for cancel, session/load/resume identity, usage, model-ID mapping,
+and steer fallback before it can replace stream-json. The Qoder Agent SDK
+documents canUseTool for both approvals and questions, but adds a package
+dependency and explicit auth handling, so it is not the default integration
+path. Details: evidence/acp-feasibility-261104/.

@@ -6,7 +6,7 @@ Harness Supervisor（HS）是一个本地、轻量、运行时无关的 **Agent 
 
 - **Pi Agent**（Pi v1.3+ 原生 RPC）：完整支持。
 - **MiniMax Code**（ACP / ndJSON stdio）：实验性，spawn / 完成 / 取消 / resume 已真实验证。
-- **Qoder CLI**（stream-json 默认；官方 ACP 可选）：实验性；1.1.82 的 stream-json 启动兼容已修复，ACP 传输已通过真实 spawn / resume / 审批 / 提问 / 取消验收，默认仍为 stream-json。
+- **Qoder CLI**（官方 ACP 默认；stream-json 可回退）：实验性；1.1.82 的 ACP spawn / resume / 审批 / 提问 / 取消已通过真实验收，0.7.0 起默认使用 ACP；需要 steer、工具白名单、`plan` 模式或 Token 用量时可用 `HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json` 回退。
 
 HS 管理的是 **进程、会话、事件**，不是新的多智能体框架：
 
@@ -24,7 +24,7 @@ HS 管理的是 **进程、会话、事件**，不是新的多智能体框架：
 - **可选队列投递**：登记 Codex thread 后，可用官方 `codex queue` 把简短通知写入该 thread；是否真正唤醒主 Agent 取决于宿主是否加载该 thread。
 - **可选请求幂等**：`spawn` / `resume` / `send` 支持 `requestId`；重复请求不会重复执行，结果不确定时报 `UNCERTAIN`。
 - **任务度量（阶段一/二）**：每次 `spawn` 自动创建或关联一个委托任务；记录 Worker 终态、耗时、可得的运行时 Token 用量，并生成带覆盖率、来源和未知字段的单任务/汇总报告。主 Agent 用量只能显式补录；费用不采集（积分制无法直接核对），验收、返工与干预尚未采集。
-- **可选传输**：Qoder 默认使用 stream-json，也可用 `HARNESS_SUPERVISOR_QODER_PROTOCOL=acp` 启用官方 ACP；两种传输的会话句柄不互换，能力差异如实报告。
+- **Qoder 双传输**：0.7.0 起默认使用官方 ACP，可用 `HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json` 回退；两种传输的会话句柄不互换，能力差异如实报告。
 - **统一入口**：CLI、MCP、IPC 共享同一个 daemon 与同一份状态。
 
 ## 构成
@@ -55,7 +55,7 @@ SupervisorClient ─── 本地 IPC（named pipe / Unix socket + token）
 | 模块 | 职责 |
 | --- | --- |
 | `src/adapters/pi/` | Pi 原生 RPC、启动参数、session 定位 |
-| `src/adapters/qoder/` | Qoder stream-json 默认、可选 ACP、权限/提问、session 定位 |
+| `src/adapters/qoder/` | Qoder ACP 默认、stream-json 回退、权限/提问、session 定位 |
 | `src/adapters/mcode/` | MiniMax Code ACP（ndJSON）、权限请求、session 句柄 |
 | `src/supervisor.ts` | 状态机、wait、send/answer、cancel、resume、重启对账 |
 | `src/store.ts` | Worker 记录、追加式事件日志、游标、持久化 |
@@ -148,6 +148,20 @@ default_tools_approval_mode = "approve"   # 只在可信工作区使用
 ```
 
 若 daemon 使用 `--state-dir`，MCP 的 args 也要用 `--state-dir` 指向同一目录。其他客户端可使用 [`examples/mcp.json`](examples/mcp.json)。
+
+#### 推荐默认配置：开放全部权限
+
+HS 的推荐默认是让原生 Harness 直接执行完整任务，不为普通文件/命令操作增加人工审批：
+
+| 运行时 | 推荐设置 | 说明 |
+| --- | --- | --- |
+| Qoder CLI | `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE=bypass_permissions` | ACP 下映射为 `yolo`（Auto-approves all tools）；不设置时也是该默认 |
+| MiniMax Code | `HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=bypassPermissions` | 宿主原生默认；不设置时也是该默认 |
+| Pi | 由 Pi 自身配置决定 | HS 不管理 Pi 的权限模式 |
+
+建议在**启动 daemon 的环境**中显式写出上述值，避免被其他启动脚本或临时环境覆盖；修改后必须重启 daemon。只有确实需要逐工具人工审批时，才改为 `default`（Qoder 在 ACP 下会通过 `session/request_permission` 暴露原生选项）。
+
+**边界**：这些模式只表示跳过审批，不是沙箱。Worker 与 daemon 使用同一 OS 用户，仍可访问该用户可访问的文件、进程和网络；高风险任务应使用真正的隔离环境。
 
 ### MCP 输出模式（0.3.0 起）
 
@@ -341,27 +355,33 @@ Codex 宿主实时 steer：`turn/steer` 本身已在真实 app-server 活跃回�
 
 Qoder CLI 1.1.82 不再允许 `--permission-prompt-tool stdio` 与 `--input-format stream-json` 同时使用，且只有在收到第一条 user 消息后才发出 `system init`。0.6.6 移除了冗余的旧参数，并在等待 init 1 秒后提前发送初始提示以触发懒初始化；Supervisor 再次发送同一条提示时会去重。真实 1.1.82 的 spawn 与 resume 已通过，1.1.79 的无参数控制请求也已复核。
 
-**限制**：1.1.82 的 stream-json 模式不再把 AskUserQuestion 暴露为 `can_use_tool`，需要人工审批时请使用 `bypass_permissions`（默认）或 `dont_ask`。官方 ACP（`qoder --acp`）已在真实 1.1.82 上验证 `initialize`、`session/new`、Write 工具的 `session/request_permission`；客户端声明 `elicitation.form` 后，AskUserQuestion 通过 `elicitation/create` 到达并可回答。SDK 虽同时支持审批与提问，但需要新增依赖并显式管理认证载荷，暂不采用。证据见 [`evidence/v0.6.6-261104/`](evidence/v0.6.6-261104/)；完整评估见 [`docs/acp-feasibility-261104.md`](docs/acp-feasibility-261104.md)。
+**限制**：1.1.82 的 stream-json 回退不再把 AskUserQuestion 暴露为 `can_use_tool`，该传输下需要人工审批时请使用 `bypass_permissions`（默认）或 `dont_ask`；默认 ACP 不受此限制。官方 ACP（`qoder --acp`）已在真实 1.1.82 上验证 `initialize`、`session/new`、Write 工具的 `session/request_permission`；客户端声明 `elicitation.form` 后，AskUserQuestion 通过 `elicitation/create` 到达并可回答。SDK 虽同时支持审批与提问，但需要新增依赖并显式管理认证载荷，暂不采用。证据见 [`evidence/v0.6.6-261104/`](evidence/v0.6.6-261104/)；完整评估见 [`docs/acp-feasibility-261104.md`](docs/acp-feasibility-261104.md)。
 
-### Qoder ACP 可选传输（0.7.0）
+### Qoder ACP 默认传输（0.7.0）
+
+0.7.0 起默认使用官方 ACP；需要 stream-json 的独有能力时回退：
 
 ```bash
-HARNESS_SUPERVISOR_QODER_PROTOCOL=acp
+HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json
 ```
 
-默认仍为 `stream-json`；上述变量只切换 Qoder Adapter 的传输层，在 daemon
-启动时读取，切换后需重启 daemon。ACP 使用 `qodercli --acp`（ACP
-protocolVersion 1），不会额外新增依赖或接管登录凭据。Qoder ACP 的会话内容仍在
-Qoder 自己的存储中；HS 在 Worker session 目录写入 `qoder-acp-session.json`
-句柄，用于 `session/load` 恢复。切换传输后，旧传输创建的 Worker 只能由旧传输
-恢复，不能跨传输 resume。
+该变量只切换 Qoder Adapter 的传输层，在 daemon 启动时读取，切换后需重启
+daemon。ACP 使用 `qodercli --acp`（ACP protocolVersion 1），不会额外新增依赖
+或接管登录凭据。Qoder ACP 的会话内容仍在 Qoder 自己的存储中；HS 在 Worker
+session 目录写入 `qoder-acp-session.json` 句柄，用于 `session/load` 恢复。
+切换传输后，旧传输创建的 Worker 只能由旧传输恢复，不能跨传输 resume；默认
+切换到 ACP 后，旧的 stream-json Worker 需要显式设置
+`HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json` 才能恢复。
 
 - **能力**：spawn、prompt、cancel、resume、工具审批（`session/request_permission`）
   与 AskUserQuestion（`elicitation/create`）可用；`steer` / `followUp` 在 ACP 下明确
   为 `false`。Qoder 虽在初始化元数据中声明 `promptQueueing`，但 HS 尚未验证排队
-  prompt 的运行段边界，不把它当作已支持能力。
-- **模式与模型**：权限模式映射为 ACP 的 `default / acceptEdits / auto / dontAsk /
-  yolo`；`plan` 无等价模式，明确返回 `UNSUPPORTED`。`model` 支持模型 id 或显示名；
+  prompt 的运行段边界，不把它当作已支持能力。默认 ACP 也意味着默认没有工具
+  白名单、`plan` 模式和 Token 用量；需要这些能力时回退 stream-json。
+- **模式与模型**：推荐保持默认 `bypass_permissions`（ACP `yolo`，完全放行）；
+  需要逐工具审批时才设置 `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE=default`。
+  权限模式映射为 ACP 的 `default / acceptEdits / auto / dontAsk / yolo`；
+  `plan` 无等价模式，明确返回 `UNSUPPORTED`。`model` 支持模型 id 或显示名；
   `thinking` 映射到 `reasoning_effort`。`tools` 白名单在 ACP 下没有等价能力，
   明确返回 `UNSUPPORTED`。
 - **提问**：单字段枚举映射为 `select`，布尔映射为 `confirm`，自由文本映射为
@@ -464,8 +484,8 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | Runtime | 状态 | 说明 |
 | --- | --- | --- |
 | Pi | 完整 | 原生 RPC；steer / follow-up / cancel / resume / 扩展对话框均可映射 |
-| MiniMax Code | 实验性 | ACP over ndJSON（`mcode acp`）。spawn / 完成 / 取消 / resume 已在真实 0.6.12 上验证（历史证据；最新 0.6.13 本轮只做了单轮 ACP 与 Token 探测，未重跑全部交互）；权限问答在 Ask 模式下对真实进程验证过（是否触发询问由运行时风险分类决定，并非每次都出现）。steer 与 follow-up 依赖 `mcode/session/steer`、`mcode/session/queue/enqueue` 扩展，未声明该扩展的构建会明确报 `UNSUPPORTED`；真实进程上 `queue/enqueue` 可用，steer 在**活跃 turn 内**已验证有效（agent 照做，事件记为 `mode=steered`），turn 结束后再发会被拒，因此 steer 的送达依赖 turn 是否还活着。ACP 的 `session/prompt` 会阻塞到 turn 结束且拒绝并发第二个 prompt |
-| Qoder CLI | 实验性 | **stream-json 默认**：单轮、取消、resume、1.1.82 启动兼容已真实验证；steer / follow-up 被接受但未生效。**ACP 可选**（`HARNESS_SUPERVISOR_QODER_PROTOCOL=acp`）：1.1.82 真实 spawn / resume / Write 审批 / AskUserQuestion / 取消通过；steer / followUp 明确不支持。默认 `bypass_permissions`，可用显式配置覆盖；输入请求默认等待 30 分钟，可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS` 调整。**1.1.82 stream-json 默认权限模式不再产生 AskUserQuestion 的 `awaiting_input`**；需要提问/审批时可启用 ACP 并设置 `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE=default`。ACP 与 stream-json 句柄不能互换恢复。详见 [`docs/v0.7.0-report.md`](docs/v0.7.0-report.md) 与 [`docs/acp-feasibility-261104.md`](docs/acp-feasibility-261104.md) |
+| MiniMax Code | 实验性 | ACP over ndJSON（`mcode acp`）。spawn / 完成 / 取消 / resume 已在真实 0.6.12 上验证（历史证据；最新 0.6.13 本轮只做了单轮 ACP 与 Token 探测，未重跑全部交互）；权限问答在 Ask 模式下对真实进程验证过（是否触发询问由运行时风险分类决定，并非每次都出现）。steer 与 follow-up 依赖 `mcode/session/steer`、`mcode/session/queue/enqueue` 扩展，未声明该扩展的构建会明确报 `UNSUPPORTED`；真实进程上 `queue/enqueue` 可用，steer 在**活跃 turn 内**已验证有效（agent 照做，事件记为 `mode=steered`），turn 结束后再发会被拒，因此 steer 的送达依赖 turn 是否还活着。ACP 的 `session/prompt` 会阻塞到 turn 结束且拒绝并发第二个 prompt。默认/推荐 `bypassPermissions`（完全放行），只有需要逐工具审批时才设置 `HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=default` |
+| Qoder CLI | 实验性 | **ACP 默认**（`HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json` 回退）：1.1.82 真实 spawn / resume / Write 审批 / AskUserQuestion / 取消通过；steer / followUp 明确不支持。**stream-json 回退**：单轮、取消、resume 已真实验证；steer / follow-up 被接受但未生效，可提供 tools 白名单、`plan` 模式与 `result.usage`。默认/推荐 `bypass_permissions`（ACP 下映射为 `yolo`，完全放行）；只有需要逐工具审批时才显式设置 `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE=default`。输入请求默认等待 30 分钟，可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS` 调整。**1.1.82 stream-json 回退默认权限模式不再产生 AskUserQuestion 的 `awaiting_input`**；需要提问/审批请使用默认 ACP 并显式设置 `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE=default`。ACP 与 stream-json 句柄不能互换恢复。详见 [`docs/v0.7.0-report.md`](docs/v0.7.0-report.md) 与 [`docs/acp-feasibility-261104.md`](docs/acp-feasibility-261104.md) |
 
 用量采集边界：Pi 只在 assistant message 原生提供 `usage` 时记录；Qoder 只在 `result.usage` 存在时记录；MiniMax Code 最新 0.6.13 实测 ACP 只提供上下文 `used`/`size` 与 `cost=0 USD`，prompt result 不含 usage，其 headless `exec --output-format json` 虽有结构化 usage，但 HS 走 ACP 且不读取私有会话库，因此报告中保持未知。主 Agent 用量不会从宿主会话自动读取，必须显式补录。
 
@@ -494,7 +514,7 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | [`docs/iteration-261023-report.md`](docs/iteration-261023-report.md) | 2026-10-23 迭代：Worker 通知路由、原生输入闭环、事件历史与幂等可靠性 |
 | [`docs/v0.6.5-report.md`](docs/v0.6.5-report.md) | 0.6.5 交付报告：终态进展、输入有效期、通知统计与 Codex steer 边界 |
 | [`docs/v0.6.6-report.md`](docs/v0.6.6-report.md) | 0.6.6 交付报告：Qoder 1.1.82 参数/初始化兼容、ACP 调研与限制 |
-| [`docs/v0.7.0-report.md`](docs/v0.7.0-report.md) | 0.7.0 交付报告：Qoder ACP 可选传输、真实验收、限制 |
+| [`docs/v0.7.0-report.md`](docs/v0.7.0-report.md) | 0.7.0 交付报告：Qoder ACP 默认传输、真实验收、限制 |
 | [`docs/acp-feasibility-261104.md`](docs/acp-feasibility-261104.md) | Pi / Qoder / mcode 的 ACP 改造可行性评估与建议 |
 | [`docs/codex-steer-261030.md`](docs/codex-steer-261030.md) | 2026-10-30 Codex app-server `turn/steer` 实验与 Desktop 阻塞分析 |
 | [`evidence/v0.6.5-261030/`](evidence/v0.6.5-261030/) | 0.6.5 真实 Qoder 等待、app-server steer 与回归证据 |

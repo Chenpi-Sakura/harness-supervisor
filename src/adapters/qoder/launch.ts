@@ -31,13 +31,13 @@ export const QODER_PROTOCOLS = ["stream-json", "acp"] as const;
 
 export type QoderProtocol = (typeof QODER_PROTOCOLS)[number];
 
-export const QODER_DEFAULT_PROTOCOL: QoderProtocol = "stream-json";
+export const QODER_DEFAULT_PROTOCOL: QoderProtocol = "acp";
 
 /**
- * Transport selection is opt-in. Stream-json stays the default until the ACP
- * transport has passed real acceptance; both transports write different
- * session handles, so a worker is resumed only through the transport that
- * created it.
+ * ACP is the default Qoder transport. Stream-json remains selectable for the
+ * capabilities ACP does not offer (steer, tool allowlists, plan mode, Token
+ * usage). Both transports write different session handles, so a worker is
+ * resumed only through the transport that created it.
  */
 export function resolveQoderProtocol(env: NodeJS.ProcessEnv = process.env): QoderProtocol {
   const raw = env.HARNESS_SUPERVISOR_QODER_PROTOCOL?.trim();

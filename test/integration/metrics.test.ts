@@ -149,6 +149,7 @@ test("Qoder usage events feed the same task record", async (t) => {
   const client = await daemon.start({
     env: {
       HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ENTRY,
+      HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json",
       QODER_CONFIG_DIR: configDir,
       QODERCN_CONFIG_DIR: configDir,
     },

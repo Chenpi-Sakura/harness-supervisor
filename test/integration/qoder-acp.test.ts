@@ -41,7 +41,6 @@ async function startAcpHarness(
   const client = await daemon.start({
     env: {
       HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ACP_ENTRY,
-      HARNESS_SUPERVISOR_QODER_PROTOCOL: "acp",
       QODER_CONFIG_DIR: configDir,
       QODERCN_CONFIG_DIR: configDir,
       ...extraEnv,
@@ -356,6 +355,7 @@ test("Qoder refuses to resume a worker with the other transport's handle", async
     env: {
       ...baseEnv,
       HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ENTRY,
+      HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json",
     },
   });
   const worker = await spawnQoder(streamClient, cwd, "[scenario:basic] stream first");
@@ -368,7 +368,6 @@ test("Qoder refuses to resume a worker with the other transport's handle", async
     env: {
       ...baseEnv,
       HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ACP_ENTRY,
-      HARNESS_SUPERVISOR_QODER_PROTOCOL: "acp",
     },
   });
   await assert.rejects(

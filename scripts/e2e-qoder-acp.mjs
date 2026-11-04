@@ -258,7 +258,6 @@ let client = null;
 try {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-qoder-acp-real-state-"));
   const started = await startDaemon(stateDir, {
-    HARNESS_SUPERVISOR_QODER_PROTOCOL: "acp",
     HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "default",
     HARNESS_SUPERVISOR_QODER_INPUT_TIMEOUT_MS: "300000",
   });
@@ -442,7 +441,6 @@ try {
   // 5. Cancellation under bypass mode so the long command needs no approval.
   const cancelStateDir = await mkdtemp(path.join(os.tmpdir(), "hs-qoder-acp-cancel-state-"));
   const cancelStarted = await startDaemon(cancelStateDir, {
-    HARNESS_SUPERVISOR_QODER_PROTOCOL: "acp",
     HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "bypass_permissions",
     HARNESS_SUPERVISOR_QODER_INPUT_TIMEOUT_MS: "300000",
   });

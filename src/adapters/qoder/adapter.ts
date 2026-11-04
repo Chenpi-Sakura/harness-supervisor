@@ -42,7 +42,7 @@ const STREAM_JSON_CAPABILITIES: RuntimeCapabilities = {
   pause: false,
   interactiveInput: true,
   notes:
-    "Qoder CLI stream-json over stdio (--print --input-format stream-json). Steering and follow-ups send priority next/later user messages; the CLI accepts them (the supervisor records run.message_sent) but a real 1.1.76 run did not apply an accepted steer to the running turn, so treat message_sent as 'accepted by the stream, not rejected' rather than 'the model saw it'. Cancellation uses the interrupt control request plus process termination and was validated in a real run (queued follow-up never executed). On 1.1.79 and earlier, permission prompts are surfaced as awaiting_input through the can_use_tool control channel and AskUserQuestion was validated in a real run. Qoder 1.1.82 rejects the legacy --permission-prompt-tool stdio flag with stream-json input; in a real 1.1.82 probe an AskUserQuestion under permission mode default failed inside the CLI instead of producing a control request, so prompt-based interaction is not available on 1.1.82 yet. Use bypass_permissions (default) or dont_ask on 1.1.82. Resume uses --resume <session-id> and verifies the returned session id. Qoder sessions live in the user's Qoder config directory. Permission mode is requested explicitly (default bypass_permissions, override HARNESS_SUPERVISOR_QODER_PERMISSION_MODE) and a runtime-reported mismatch fails startup instead of falling back to auto. There is no sandbox: cwd is not a file-isolation boundary.",
+    "Qoder CLI stream-json over stdio (--print --input-format stream-json), selected only by HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json since ACP became the default in 0.7.0. Steering and follow-ups send priority next/later user messages; the CLI accepts them (the supervisor records run.message_sent) but a real 1.1.76 run did not apply an accepted steer to the running turn, so treat message_sent as 'accepted by the stream, not rejected' rather than 'the model saw it'. Cancellation uses the interrupt control request plus process termination and was validated in a real run (queued follow-up never executed). On 1.1.79 and earlier, permission prompts are surfaced as awaiting_input through the can_use_tool control channel and AskUserQuestion was validated in a real run. Qoder 1.1.82 rejects the legacy --permission-prompt-tool stdio flag with stream-json input; in a real 1.1.82 probe an AskUserQuestion under permission mode default failed inside the CLI instead of producing a control request, so prompt-based interaction is not available on 1.1.82 yet. Use bypass_permissions (default) or dont_ask on 1.1.82. Resume uses --resume <session-id> and verifies the returned session id. Qoder sessions live in the user's Qoder config directory. Permission mode is requested explicitly (default bypass_permissions, override HARNESS_SUPERVISOR_QODER_PERMISSION_MODE) and a runtime-reported mismatch fails startup instead of falling back to auto. There is no sandbox: cwd is not a file-isolation boundary.",
 };
 
 const ACP_CAPABILITIES: RuntimeCapabilities = {
@@ -54,7 +54,7 @@ const ACP_CAPABILITIES: RuntimeCapabilities = {
   pause: false,
   interactiveInput: true,
   notes:
-    "Qoder CLI official ACP transport (qodercli --acp, protocolVersion 1), enabled only by HARNESS_SUPERVISOR_QODER_PROTOCOL=acp; stream-json remains the default. Verified against real 1.1.82: initialize, session/new, session/load, session/prompt, session/cancel, Write approval through session/request_permission, and AskUserQuestion through elicitation/create when the client advertises elicitation.form. Permission modes map to ACP modes (bypass_permissions->yolo, accept_edits->acceptEdits, dont_ask->dontAsk, default->default, auto->auto); plan has no ACP equivalent and is rejected. Steering and queued follow-ups are not implemented: Qoder advertises promptQueueing in initialize._meta, but HS has not verified what a queued prompt does to run boundaries, so the HS session rejects a second prompt while one is active. Cancellation sends the session/cancel notification and responds to pending permissions/questions. ACP prompt results in 1.1.82 contain all-zero token counters, so Token usage is reported as unknown rather than zero. HS writes its own qoder-acp-session.json handle for resume; the conversation itself stays in Qoder's store. There is no sandbox: cwd is not a file-isolation boundary.",
+    "Qoder CLI official ACP transport (qodercli --acp, protocolVersion 1), the default since 0.7.0; set HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json to use the legacy transport. Verified against real 1.1.82: initialize, session/new, session/load, session/prompt, session/cancel, Write approval through session/request_permission, and AskUserQuestion through elicitation/create when the client advertises elicitation.form. Permission modes map to ACP modes (bypass_permissions->yolo, accept_edits->acceptEdits, dont_ask->dontAsk, default->default, auto->auto); plan has no ACP equivalent and is rejected. Steering and queued follow-ups are not implemented: Qoder advertises promptQueueing in initialize._meta, but HS has not verified what a queued prompt does to run boundaries, so the HS session rejects a second prompt while one is active. Cancellation sends the session/cancel notification and responds to pending permissions/questions. ACP prompt results in 1.1.82 contain all-zero token counters, so Token usage is reported as unknown rather than zero. HS writes its own qoder-acp-session.json handle for resume; the conversation itself stays in Qoder's store. There is no sandbox: cwd is not a file-isolation boundary.",
 };
 
 export class QoderAdapter implements HarnessAdapter {
@@ -128,7 +128,7 @@ export class QoderAdapter implements HarnessAdapter {
       if (this.protocol !== "acp") {
         throw new SupervisorError(
           "UNSUPPORTED",
-          "This worker was created with the Qoder ACP transport. Set HARNESS_SUPERVISOR_QODER_PROTOCOL=acp to resume it; stream-json cannot load an ACP session.",
+          "This worker was created with the Qoder ACP transport. Unset HARNESS_SUPERVISOR_QODER_PROTOCOL (default acp) or set it to acp to resume it; stream-json cannot load an ACP session.",
           { sessionFile: resolved },
         );
       }
@@ -138,7 +138,7 @@ export class QoderAdapter implements HarnessAdapter {
     if (this.protocol === "acp") {
       throw new SupervisorError(
         "UNSUPPORTED",
-        "This worker was created with the Qoder stream-json transport. Unset HARNESS_SUPERVISOR_QODER_PROTOCOL (or set it to stream-json) to resume it; ACP cannot load a stream-json session.",
+        "This worker was created with the Qoder stream-json transport. Set HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json to resume it; ACP cannot load a stream-json session.",
         { sessionFile: resolved },
       );
     }

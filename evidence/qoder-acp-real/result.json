@@ -1,5 +1,5 @@
 {
-  "ranAt": "2026-11-04T03:17:21.987Z",
+  "ranAt": "2026-11-04T06:45:31.775Z",
   "host": "win32 10.0.26300 / Node v24.21.0",
   "qodercliVersion": "1.1.82",
   "model": "DeepSeek-Flash",
@@ -7,12 +7,12 @@
   "permissionMode": "default",
   "scenarios": {
     "spawn": {
-      "workerId": "w-mw1jq4do-ff42b8a5",
-      "spawnReturnedMs": 6366,
+      "workerId": "w-mw1r5u61-07dd5365",
+      "spawnReturnedMs": 4095,
       "status": "completed",
       "result": "QODER_ACP_E2E_OK",
-      "sessionId": "96dff41a-e7ff-4641-82eb-d1aa884da257",
-      "sessionFile": "%USERPROFILE%\\AppData\\Local\\Temp\\hs-qoder-acp-real-state-k5elbg\\sessions\\w-mw1jq4do-ff42b8a5\\qoder-acp-session.json",
+      "sessionId": "7e9c04e3-ad11-4650-b219-01c3d60d2789",
+      "sessionFile": "%USERPROFILE%\\AppData\\Local\\Temp\\hs-qoder-acp-real-state-Uucr42\\sessions\\w-mw1r5u61-07dd5365\\qoder-acp-session.json",
       "capabilities": {
         "runtime": "qoder",
         "steer": false,
@@ -21,9 +21,9 @@
         "resume": true,
         "pause": false,
         "interactiveInput": true,
-        "notes": "Qoder CLI official ACP transport (qodercli --acp, protocolVersion 1), enabled only by HARNESS_SUPERVISOR_QODER_PROTOCOL=acp; stream-json remains the default. Verified against real 1.1.82: initialize, session/new, session/load, session/prompt, session/cancel, Write approval through session/request_permission, and AskUserQuestion through elicitation/create when the client advertises elicitation.form. Permission modes map to ACP modes (bypass_permissions->yolo, accept_edits->acceptEdits, dont_ask->dontAsk, default->default, auto->auto); plan has no ACP equivalent and is rejected. Steering and queued follow-ups are not implemented: Qoder advertises promptQueueing in initialize._meta, but HS has not verified what a queued prompt does to run boundaries, so the HS session rejects a second prompt while one is active. Cancellation sends the session/cancel notification and responds to pending permissions/questions. ACP prompt results in 1.1.82 contain all-zero token counters, so Token usage is reported as unknown rather than zero. HS writes its own qoder-acp-session.json handle for resume; the conversation itself stays in Qoder's store. There is no sandbox: cwd is not a file-isolation boundary."
+        "notes": "Qoder CLI official ACP transport (qodercli --acp, protocolVersion 1), the default since 0.7.0; set HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json to use the legacy transport. Verified against real 1.1.82: initialize, session/new, session/load, session/prompt, session/cancel, Write approval through session/request_permission, and AskUserQuestion through elicitation/create when the client advertises elicitation.form. Permission modes map to ACP modes (bypass_permissions->yolo, accept_edits->acceptEdits, dont_ask->dontAsk, default->default, auto->auto); plan has no ACP equivalent and is rejected. Steering and queued follow-ups are not implemented: Qoder advertises promptQueueing in initialize._meta, but HS has not verified what a queued prompt does to run boundaries, so the HS session rejects a second prompt while one is active. Cancellation sends the session/cancel notification and responds to pending permissions/questions. ACP prompt results in 1.1.82 contain all-zero token counters, so Token usage is reported as unknown rather than zero. HS writes its own qoder-acp-session.json handle for resume; the conversation itself stays in Qoder's store. There is no sandbox: cwd is not a file-isolation boundary."
       },
-      "pid": 74792,
+      "pid": 83440,
       "usageEvents": 0,
       "runErrors": 0,
       "fatalErrors": 0
@@ -39,7 +39,7 @@
       "fatalErrors": 0
     },
     "writeApproval": {
-      "workerId": "w-mw1jqnvj-fcf7df1a",
+      "workerId": "w-mw1r69rl-35484974",
       "status": "completed",
       "result": "WRITE_DONE",
       "requestTitle": "Allow Edit acp-write-ok.txt?",
@@ -54,7 +54,7 @@
       "fatalErrors": 0
     },
     "askUserQuestion": {
-      "workerId": "w-mw1jr3gd-b7f1c1be",
+      "workerId": "w-mw1r6lzd-89475714",
       "status": "completed",
       "result": "QUESTION_YES",
       "method": "select",
@@ -68,10 +68,10 @@
       "fatalErrors": 0
     },
     "cancel": {
-      "workerId": "w-mw1jri53-1e273c73",
+      "workerId": "w-mw1r6w08-faaa2499",
       "statusBeforeCancel": "running",
       "status": "cancelled",
-      "pid": 32600,
+      "pid": 86632,
       "pidAliveAfterCancel": false,
       "runErrors": 0,
       "fatalErrors": 0

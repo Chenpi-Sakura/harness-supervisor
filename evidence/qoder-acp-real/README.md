@@ -1,9 +1,9 @@
 # Qoder 1.1.82 ACP real acceptance (2026-11-04)
 
-Scope: validate the optional Qoder ACP transport
-(`HARNESS_SUPERVISOR_QODER_PROTOCOL=acp`) through the real Supervisor daemon
-against `qodercli 1.1.82`. Stream-json remains the default; this evidence covers
-only the ACP path.
+Scope: validate the Qoder ACP transport through the real Supervisor daemon
+against `qodercli 1.1.82`. ACP is the default since 0.7.0; the script does not
+set `HARNESS_SUPERVISOR_QODER_PROTOCOL`, so this run exercises the default
+selection. Stream-json remains selectable as a fallback.
 
 ## Environment
 
@@ -25,10 +25,12 @@ QODER_REAL=1 QODER_REAL_MODEL=DeepSeek-Flash node scripts/e2e-qoder-acp.mjs
 The script starts a daemon with:
 
 ```text
-HARNESS_SUPERVISOR_QODER_PROTOCOL=acp
 HARNESS_SUPERVISOR_QODER_PERMISSION_MODE=default
 HARNESS_SUPERVISOR_QODER_INPUT_TIMEOUT_MS=300000
 ```
+
+`HARNESS_SUPERVISOR_QODER_PROTOCOL` is deliberately unset, so the daemon uses
+the default ACP transport.
 
 A second daemon with `bypass_permissions` is used only for the cancellation
 scenario so the long-running command does not need an approval.
@@ -51,7 +53,8 @@ does not include raw assistant text, file contents, or full permission messages.
 
 ## Limits
 
-- ACP is opt-in in 0.7.0; it is not the Qoder default.
+- ACP is the Qoder default in 0.7.0; stream-json remains selectable via
+  `HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json`.
 - Qoder 1.1.82 ACP returns all-zero token counters; no Token usage is claimed.
 - `steer` / queued `followUp` are not implemented. The upstream
   `_meta.qoder.promptQueueing` flag was observed but not accepted as capability

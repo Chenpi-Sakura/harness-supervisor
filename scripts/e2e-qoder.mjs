@@ -113,6 +113,7 @@ const daemon = spawn(process.execPath, [daemonEntry, "--state-dir", stateDir], {
   env: {
     ...env,
     HARNESS_SUPERVISOR_HOME: stateDir,
+    HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json",
     HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: "accept_edits",
   },
   stdio: ["ignore", "pipe", "pipe"],

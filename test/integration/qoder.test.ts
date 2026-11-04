@@ -39,6 +39,7 @@ async function startQoderHarness(
   const client = await daemon.start({
     env: {
       HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ENTRY,
+      HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json",
       QODER_CONFIG_DIR: configDir,
       QODERCN_CONFIG_DIR: configDir,
       ...extraEnv,
@@ -430,6 +431,7 @@ test("Qoder startup reports an honest login error when the CLI is not authentica
   const client = await daemon.start({
     env: {
       HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ENTRY,
+      HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json",
       QODER_CONFIG_DIR: configDir,
       QODERCN_CONFIG_DIR: configDir,
       FAKE_QODER_AUTH_FAIL: "1",

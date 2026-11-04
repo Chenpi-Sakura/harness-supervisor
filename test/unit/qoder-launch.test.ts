@@ -78,14 +78,14 @@ test("Qoder compares snake_case flags with camelCase init reports", () => {
   assert.equal(sameQoderPermissionMode("bypass_permissions", "auto"), false);
 });
 
-test("Qoder protocol defaults to stream-json and ACP is opt-in", () => {
-  assert.equal(resolveQoderProtocol({}), "stream-json");
-  assert.equal(
-    resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "acp" }),
-    "acp",
-  );
+test("Qoder protocol defaults to ACP and stream-json is opt-in", () => {
+  assert.equal(resolveQoderProtocol({}), "acp");
   assert.equal(
     resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json" }),
+    "stream-json",
+  );
+  assert.equal(
+    resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "streamjson" }),
     "stream-json",
   );
   assert.equal(
@@ -94,7 +94,7 @@ test("Qoder protocol defaults to stream-json and ACP is opt-in", () => {
   );
   assert.throws(
     () => resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "sdk" }),
-    /Unsupported Qoder protocol.*default: stream-json/,
+    /Unsupported Qoder protocol.*default: acp/,
   );
 });
 

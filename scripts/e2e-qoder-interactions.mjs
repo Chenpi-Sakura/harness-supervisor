@@ -91,6 +91,7 @@ class Daemon {
   async start() {
     const env = childEnv({
       HARNESS_SUPERVISOR_HOME: this.stateDir,
+      HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json",
       HARNESS_SUPERVISOR_QODER_PERMISSION_MODE: this.permissionMode,
       HARNESS_SUPERVISOR_ABORT_TIMEOUT_MS: "8000",
       HARNESS_SUPERVISOR_CLOSE_GRACE_MS: "800",

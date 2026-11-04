@@ -127,9 +127,10 @@ settled，ACP 对这些能力的标准表达并不更完整。可行性判断：
 
 ## 8. 实施状态（2026-11-04 后续）
 
-本评估之后，Qoder ACP 可选传输已在 0.7.0 落地：
+本评估之后，Qoder ACP 传输已在 0.7.0 落地，并在真实验收通过后**设为默认**：
 
-- 开关：`HARNESS_SUPERVISOR_QODER_PROTOCOL=acp`；默认仍为 `stream-json`。
+- 切换：默认 `acp`；`HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json` 可回退到
+  旧传输。
 - 真实 1.1.82 已通过：spawn/prompt、`session/load` resume、Write 审批
   （`session/request_permission`）、AskUserQuestion（`elicitation/create`）和
   `session/cancel`。各场景 `runErrors=0`，取消后进程退出。
@@ -143,7 +144,7 @@ settled，ACP 对这些能力的标准表达并不更完整。可行性判断：
   - 1.1.82 的 ACP usage 全零，HS 不写 `run.usage`。
 - mcode 仍使用独立 ACP 实现；本轮没有为共享内核重构已验证的 mcode 代码。
 - Pi 继续使用原生 RPC。
-- 是否为 1.1.82+ 默认启用 ACP，留待多轮并发、长上下文、错误路径与桌面环境
-  补充验证后决定。
+- 0.7.0 起已默认启用 ACP；多轮并发、长上下文、错误路径与桌面环境仍需补充
+  验证，出现回归时可回退 `stream-json`。
 
 证据：`evidence/qoder-acp-real/`；交付说明：`docs/v0.7.0-report.md`。

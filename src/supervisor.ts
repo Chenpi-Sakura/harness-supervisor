@@ -733,18 +733,17 @@ export class Supervisor {
       resumed: false,
     });
 
+    const initialPrompt = withWorkerProtocol(input.prompt);
     try {
       await this.store.flush(id);
       this.assertAcceptingWork();
-      await this.initializeSession(runtime);
+      await this.initializeSession(runtime, { initialPrompt });
       this.assertAcceptingWork();
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
       }
-      const disposition = await this.requireSession(runtime).prompt(
-        withWorkerProtocol(input.prompt),
-      );
+      const disposition = await this.requireSession(runtime).prompt(initialPrompt);
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -990,6 +989,7 @@ export class Supervisor {
     const runtime = this.createRuntime(record, adapter);
     this.runtimes.set(workerId, runtime);
 
+    const initialPrompt = withWorkerProtocol(input.prompt);
     try {
       await this.store.saveWorker(record);
       this.assertAcceptingWork();
@@ -997,15 +997,14 @@ export class Supervisor {
         sessionFile: record.sessionFile,
         expectedSessionId,
         resume: true,
+        initialPrompt,
       });
       this.assertAcceptingWork();
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
       }
-      const disposition = await this.requireSession(runtime).prompt(
-        withWorkerProtocol(input.prompt),
-      );
+      const disposition = await this.requireSession(runtime).prompt(initialPrompt);
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -2158,7 +2157,12 @@ export class Supervisor {
 
   private async initializeSession(
     runtime: Runtime,
-    options?: { sessionFile?: string; expectedSessionId?: string; resume?: boolean },
+    options?: {
+      sessionFile?: string;
+      expectedSessionId?: string;
+      resume?: boolean;
+      initialPrompt?: string;
+    },
   ): Promise<void> {
     const record = runtime.record;
     const spec: HarnessSpawnSpec = {
@@ -2166,6 +2170,9 @@ export class Supervisor {
       cwd: record.cwd,
       sessionDir: path.join(this.store.sessionsDir, record.id),
       ...record.config,
+      ...(options?.initialPrompt !== undefined
+        ? { initialPrompt: options.initialPrompt }
+        : {}),
       ...(this.workerEnv ? { env: this.workerEnv(record.id) } : {}),
     };
     const callbacks: HarnessCallbacks = {

@@ -1,0 +1,28 @@
+Qoder CLI argument compatibility probe
+Date: 2026-11-04
+Host: win32 x64
+
+qodercli --version
+1.1.82
+
+Command (credentials/config overrides removed from the environment):
+
+  qodercli --print --output-format stream-json --input-format stream-json \
+    --permission-prompt-tool stdio --permission-mode bypass_permissions \
+    --session-id <uuid> --no-session-persistence --tools "" \
+    --max-model-request-retries 0 --model __hs_invalid_model__ "hi"
+
+Result:
+
+  --permission-prompt-tool stdio cannot be combined with --input-format stream-json
+  exit=1
+
+The same command shape against qodercli-1.1.79.exe did not produce this
+conflict. With 1.1.79, removing the flag still produced a real
+session/request_permission (can_use_tool) for AskUserQuestion, so HS can drop
+the legacy flag without losing the older CLI's approval channel.
+
+Binary check (1.1.82): the validation branch is
+
+  if (streamJsonInput && permissionPromptTool === "stdio")
+    throw new Error("--permission-prompt-tool stdio cannot be combined with --input-format stream-json")

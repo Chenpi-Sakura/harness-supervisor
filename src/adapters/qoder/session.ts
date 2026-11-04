@@ -40,6 +40,7 @@ export interface QoderSessionOptions {
   permissionMode?: string;
   requestedSessionFile?: string;
   modelId?: string;
+  initialPrompt?: string;
   onStderr?: (text: string) => void;
   onDiagnostic?: (text: string) => void;
   requestTimeoutMs?: number;
@@ -93,6 +94,10 @@ interface LastResult {
 const DEFAULT_PERMISSION_TIMEOUT_MS = DEFAULT_INPUT_TIMEOUT_MS;
 const SETTLE_IDLE_MS = 350;
 const SETTLE_WITH_QUEUE_MS = 1500;
+// Qoder 1.1.82 emits system init only after the first user message. Waiting
+// briefly keeps the older initialize-then-prompt order for 1.1.79, while the
+// fallback sends the prompt early so startup cannot deadlock on 1.1.82.
+const INIT_PROMPT_FALLBACK_MS = 1000;
 
 function permissionTimeoutMs(): number {
   return resolveRuntimeInputTimeoutMs({
@@ -116,6 +121,8 @@ export class QoderCliSession implements HarnessSession {
   private readonly requestedSessionFile?: string;
   private readonly requestedPermissionMode?: string;
   private readonly modelId?: string;
+  private readonly initialPrompt?: string;
+  private preSentInitialPrompt: string | undefined;
   private readonly decoder: JsonlDecoder;
   private readonly stderrDecoder = new StringDecoder("utf8");
   private readonly closed = new Deferred<HarnessExit>();
@@ -158,6 +165,7 @@ export class QoderCliSession implements HarnessSession {
     this.requestedSessionFile = options.requestedSessionFile;
     this.requestedPermissionMode = options.permissionMode;
     this.modelId = options.modelId;
+    this.initialPrompt = options.initialPrompt;
 
     this.decoder = new JsonlDecoder(
       (record) => this.handleRecord(record),
@@ -231,6 +239,20 @@ export class QoderCliSession implements HarnessSession {
   }
 
   async prompt(message: string): Promise<{ disposition: string }> {
+    if (this.preSentInitialPrompt !== undefined) {
+      if (message !== this.preSentInitialPrompt) {
+        throw new SupervisorError(
+          "INVALID_STATE",
+          "Qoder already received a different initial prompt to trigger session initialization; refusing to send a second prompt.",
+        );
+      }
+      this.preSentInitialPrompt = undefined;
+      if (!this.runSeen) {
+        this.runSeen = true;
+        if (!this.settledSeen) this.emit({ type: "run_started" });
+      }
+      return { disposition: "started" };
+    }
     await this.sendUserMessage(message, "prompt");
     if (!this.runSeen) {
       this.runSeen = true;
@@ -406,6 +428,16 @@ export class QoderCliSession implements HarnessSession {
 
   private async startup(): Promise<void> {
     this.sendInitialize();
+    if (this.initialPrompt !== undefined) {
+      const initSeen = await this.waitForInitGrace(INIT_PROMPT_FALLBACK_MS);
+      if (!initSeen) {
+        await this.sendUserMessage(this.initialPrompt, "prompt");
+        this.preSentInitialPrompt = this.initialPrompt;
+        this.diagnostic(
+          "qodercli did not emit session init before the first user message; sent the initial prompt to trigger lazy initialization",
+        );
+      }
+    }
     let info: { sessionId: string };
     try {
       info = await withTimeout(
@@ -445,6 +477,25 @@ export class QoderCliSession implements HarnessSession {
     const root = qoderConfigRoots(this.launch.env)[0];
     this.sessionFile =
       found ?? expectedQoderSessionFile(root ?? this.cwd, this.cwd, info.sessionId);
+  }
+
+  private async waitForInitGrace(ms: number): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        // Consume a rejection here; the real error is re-awaited below.
+        this.started.promise.then(
+          () => true,
+          () => true,
+        ),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), ms);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private loginHint(): string {

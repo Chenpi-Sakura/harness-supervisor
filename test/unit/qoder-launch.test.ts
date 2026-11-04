@@ -79,6 +79,7 @@ test("Qoder compares snake_case flags with camelCase init reports", () => {
 test("Qoder extraArgs cannot override supervisor-managed or safety-sensitive flags", () => {
   assert.throws(() => validateQoderExtraArgs(["--dangerously-skip-permissions"]), /may not override/);
   assert.throws(() => validateQoderExtraArgs(["--permission-mode=auto"]), /may not override/);
+  assert.throws(() => validateQoderExtraArgs(["--permission-prompt-tool", "stdio"]), /may not override/);
   assert.throws(() => validateQoderExtraArgs(["--resume", "abc"]), /may not override/);
   assert.throws(() => validateQoderExtraArgs(["--cwd", "D:/elsewhere"]), /may not override/);
   assert.throws(() => validateQoderExtraArgs(["--settings", "{}"]), /may not override/);

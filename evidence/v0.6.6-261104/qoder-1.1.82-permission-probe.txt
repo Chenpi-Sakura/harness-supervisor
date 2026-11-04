@@ -1,0 +1,65 @@
+Qoder 1.1.82 permission probes (stream-json vs ACP)
+Date: 2026-11-04
+Host: win32 x64, qodercli 1.1.82, config from the normal ~/.qoder login
+
+All probes used a temporary cwd; no credentials or session transcripts are
+included.
+
+1. stream-json, AskUserQuestion, permission mode default, no legacy flag
+------------------------------------------------------------------------
+Input: initialize control request followed by a user prompt asking the model to
+call AskUserQuestion. Stream-json input and output, --print.
+
+Observed:
+- system init received
+- no control_request with subtype can_use_tool
+- tool_result is_error=true, content="Error: Answer questions?"
+- the assistant reported that the question could not be delivered
+- summary: init=true control=false result=true
+
+Conclusion: on 1.1.82 stream-json no longer exposes AskUserQuestion through the
+stdio control channel. HS cannot produce awaiting_input for it and must not fake
+one. bypass_permissions (default) and dont_ask do not require this channel.
+
+2. ACP handshake and approval
+-----------------------------
+Command: qodercli --acp (JSON-RPC over stdio)
+
+initialize -> protocolVersion 1
+  agentInfo: qoder-cli 1.1.82
+  capabilities: loadSession, session resume/fork/list/delete/close,
+  prompt image/embeddedContext, mcp http/sse
+
+session/new -> session id
+  modes: default, acceptEdits, auto, dontAsk, yolo
+  currentModeId: yolo
+  model list includes DeepSeek-Flash (dfmodel)
+  configOptions: mode, model
+
+session/set_config_option {configId:"mode", value:"default"} -> applied
+session/prompt "请使用 Write 工具在当前目录创建 acp-probe.txt..." ->
+
+  session/update tool_call: Write acp-probe.txt
+  session/request_permission:
+    options: allow_always / allow_once / reject_once
+    toolCall: edit with rawInput {file_path, content}
+  client response: selected proceed_always
+  tool_call_update -> completed
+  agent message: 完成
+  session/prompt result: stopReason=end_turn
+
+3. ACP AskUserQuestion
+----------------------
+session/prompt asked the model to call AskUserQuestion.
+Observed: no session/request_permission and no tool_call for AskUserQuestion;
+the model ended the turn with a text answer. AskUserQuestion behavior over ACP
+is therefore unverified and must not be claimed.
+
+4. Interpretation
+-----------------
+ACP is a viable future transport for Qoder tool approvals and uses the same
+CLI login state. It is not enabled in 0.6.6. ACP still needs verification for
+AskUserQuestion, cancel, resume, usage, and file/terminal capabilities before
+it can replace stream-json. The Qoder Agent SDK documents canUseTool for both
+approvals and questions, but adds a package dependency and explicit auth
+handling, so it is not the default integration path.

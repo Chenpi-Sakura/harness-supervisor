@@ -43,10 +43,25 @@ const argvLog = process.env.FAKE_QODER_ARGV_LOG;
 if (argvLog) {
   appendFileSync(argvLog, `${JSON.stringify(process.argv.slice(2))}\n`, "utf8");
 }
+// Mirror Qoder CLI 1.1.82: the legacy stdio prompt flag is rejected with
+// stream-json input, so the automated harness catches a regression here.
+if (
+  argValue("--input-format") === "stream-json" &&
+  argValue("--permission-prompt-tool")?.toLowerCase() === "stdio"
+) {
+  process.stderr.write(
+    "--permission-prompt-tool stdio cannot be combined with --input-format stream-json\n",
+  );
+  process.exit(1);
+}
 const notLoggedIn = process.env.FAKE_QODER_NOT_LOGGED_IN === "1";
 const preemptiveAuthFail = process.env.FAKE_QODER_PREEMPTIVE_AUTH_FAIL === "1";
 const lateSession = process.env.FAKE_QODER_LATE_SESSION === "1";
+// Qoder 1.1.82 emits system init only after the first user message.
+const initAfterPrompt = process.env.FAKE_QODER_INIT_AFTER_PROMPT === "1";
+const promptLog = process.env.FAKE_QODER_PROMPT_LOG;
 
+let initEmitted = false;
 let sessionSeed = "";
 let persisted = false;
 let busy = false;
@@ -349,6 +364,48 @@ function handlePermissionResponse(response: Record<string, unknown>): void {
   }
 }
 
+function emitInit(): void {
+  if (initEmitted) return;
+  initEmitted = true;
+  emit({
+    type: "system",
+    subtype: "init",
+    apiKeySource: "fake",
+    qodercli_version: "fake-1.0.0",
+    cwd,
+    tools: ["Bash", "Read", "Edit"],
+    mcp_servers: [],
+    model: "fake-qoder-model",
+    permissionMode: effectivePermissionMode,
+    slash_commands: [],
+    output_style: "default",
+    skills: [],
+    plugins: [],
+    capabilities: ["interrupt_cancel_queued_v1"],
+    uuid: randomUUID(),
+    session_id: sessionId,
+  });
+  if (preemptiveAuthFail) {
+    assistant("Not logged in · Please run /login");
+    emit({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      duration_ms: 5,
+      duration_api_ms: 0,
+      num_turns: 0,
+      total_cost_usd: 0,
+      usage: { input_tokens: 0, output_tokens: 0 },
+      modelUsage: {},
+      permission_denials: [],
+      stop_reason: null,
+      terminal_reason: "completed",
+      uuid: randomUUID(),
+      session_id: sessionId,
+    });
+  }
+}
+
 function handleControlRequest(record: InputRecord): void {
   const requestId = String(record.request_id ?? "");
   const request = record.request ?? {};
@@ -362,43 +419,7 @@ function handleControlRequest(record: InputRecord): void {
         response: { capabilities: ["interrupt_cancel_queued_v1"] },
       },
     });
-    emit({
-      type: "system",
-      subtype: "init",
-      apiKeySource: "fake",
-      qodercli_version: "fake-1.0.0",
-      cwd,
-      tools: ["Bash", "Read", "Edit"],
-      mcp_servers: [],
-      model: "fake-qoder-model",
-      permissionMode: effectivePermissionMode,
-      slash_commands: [],
-      output_style: "default",
-      skills: [],
-      plugins: [],
-      capabilities: ["interrupt_cancel_queued_v1"],
-      uuid: randomUUID(),
-      session_id: sessionId,
-    });
-    if (preemptiveAuthFail) {
-      assistant("Not logged in · Please run /login");
-      emit({
-        type: "result",
-        subtype: "success",
-        is_error: true,
-        duration_ms: 5,
-        duration_api_ms: 0,
-        num_turns: 0,
-        total_cost_usd: 0,
-        usage: { input_tokens: 0, output_tokens: 0 },
-        modelUsage: {},
-        permission_denials: [],
-        stop_reason: null,
-        terminal_reason: "completed",
-        uuid: randomUUID(),
-        session_id: sessionId,
-      });
-    }
+    if (!initAfterPrompt) emitInit();
     return;
   }
   if (kind === "interrupt") {
@@ -460,6 +481,8 @@ function handleRecord(record: InputRecord): void {
   if (record.type === "user") {
     const uuid = String(record.uuid ?? "");
     const text = promptText(record);
+    if (promptLog) appendFileSync(promptLog, `${JSON.stringify(text)}\n`, "utf8");
+    if (initAfterPrompt) emitInit();
     if (uuid) {
       sentUuids.set(uuid, text);
       emit({

@@ -6,7 +6,7 @@ Harness Supervisor（HS）是一个本地、轻量、运行时无关的 **Agent 
 
 - **Pi Agent**（Pi v1.3+ 原生 RPC）：完整支持。
 - **MiniMax Code**（ACP / ndJSON stdio）：实验性，spawn / 完成 / 取消 / resume 已真实验证。
-- **Qoder CLI**（stream-json / stdio 控制协议）：实验性。
+- **Qoder CLI**（stream-json / stdio 控制协议）：实验性；1.1.82 启动兼容已修复，ACP 传输待接入。
 
 HS 管理的是 **进程、会话、事件**，不是新的多智能体框架：
 
@@ -111,7 +111,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up          # 在本机启动 daemon
-node dist/src/cli.js info        # 核对 version=0.6.5 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.6.6 与 stateDir
 ```
 
 依赖：Node.js >= 22.19（`node -v` 核对）；Pi >= 1.3。若 `npm ci` 因网络镜像失败，改用 `npm install` 后以 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -336,6 +336,12 @@ MiniMax Code 同样遵循全局默认 30 分钟，可用 `HARNESS_SUPERVISOR_MCO
 
 Codex 宿主实时 steer：`turn/steer` 本身已在真实 app-server 活跃回合中验证（错误 `expectedTurnId` 被拒绝，模型最终文本包含 steer token，回合结束后返回 `no active turn to steer`）。但 HS **没有**实现 Desktop 实时 steer：Codex Desktop 使用自己的私有 stdio app-server，共享 app-server 无法接管已有活动 writer 的线程（`already has an active writer`）。因此 `supervisor_info.codexSteer` 明确为 `unavailable`，`codex-queue` 仍是唯一受支持的宿主投递路径。详见 [`docs/codex-steer-261030.md`](docs/codex-steer-261030.md)。
 
+### Qoder CLI 1.1.82 启动兼容（0.6.6）
+
+Qoder CLI 1.1.82 不再允许 `--permission-prompt-tool stdio` 与 `--input-format stream-json` 同时使用，且只有在收到第一条 user 消息后才发出 `system init`。0.6.6 移除了冗余的旧参数，并在等待 init 1 秒后提前发送初始提示以触发懒初始化；Supervisor 再次发送同一条提示时会去重。真实 1.1.82 的 spawn 与 resume 已通过，1.1.79 的无参数控制请求也已复核。
+
+**限制**：1.1.82 的 stream-json 模式不再把 AskUserQuestion 暴露为 `can_use_tool`，需要人工审批时请使用 `bypass_permissions`（默认）或 `dont_ask`。官方 ACP（`qoder --acp`）已在真实 1.1.82 上验证 `initialize`、`session/new` 与 Write 工具的 `session/request_permission`，但 AskUserQuestion 尚未在 ACP 上观察到权限请求；ACP 作为下一阶段的可选传输层，不在 0.6.6 中启用。SDK 虽同时支持审批与提问，但需要新增依赖并显式管理认证载荷，暂不采用。证据见 [`evidence/v0.6.6-261104/`](evidence/v0.6.6-261104/)。
+
 ### 任务度量（0.5.0，阶段一/二）
 
 本节只实现“可信的任务记录与报告”，不是完整的成本分析平台。费用不采集（当前多为积分制，无法直接核对）；首次验收、返工与人工干预尚未采集，报告会以 `notTracked`、`unknownFields` 和警告显式说明，而不是填零。
@@ -423,7 +429,7 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | --- | --- | --- |
 | Pi | 完整 | 原生 RPC；steer / follow-up / cancel / resume / 扩展对话框均可映射 |
 | MiniMax Code | 实验性 | ACP over ndJSON（`mcode acp`）。spawn / 完成 / 取消 / resume 已在真实 0.6.12 上验证（历史证据；最新 0.6.13 本轮只做了单轮 ACP 与 Token 探测，未重跑全部交互）；权限问答在 Ask 模式下对真实进程验证过（是否触发询问由运行时风险分类决定，并非每次都出现）。steer 与 follow-up 依赖 `mcode/session/steer`、`mcode/session/queue/enqueue` 扩展，未声明该扩展的构建会明确报 `UNSUPPORTED`；真实进程上 `queue/enqueue` 可用，steer 在**活跃 turn 内**已验证有效（agent 照做，事件记为 `mode=steered`），turn 结束后再发会被拒，因此 steer 的送达依赖 turn 是否还活着。ACP 的 `session/prompt` 会阻塞到 turn 结束且拒绝并发第二个 prompt |
-| Qoder CLI | 实验性 | 单轮、取消、AskUserQuestion、resume 已真实验证；默认 `bypass_permissions`（1.1.79 实测：真实 Worker 完成文件写入/读取且无审批），可用显式配置覆盖。输入请求默认等待 30 分钟（1.1.79 真实 5 分 58 秒回答后仍完成），可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS` 调整。steer / follow-up 在当前版本被接受但未生效，权限 allow/deny 仅部分验证。任务度量可读取 `result.usage`，但全零报告按未知处理 |
+| Qoder CLI | 实验性 | 单轮、取消、resume 已真实验证；1.1.82 的 spawn 与 resume 已真实验证，启动参数冲突和懒初始化已修复。默认 `bypass_permissions`（1.1.79 实测：真实 Worker 完成文件写入/读取且无审批），可用显式配置覆盖。输入请求默认等待 30 分钟（1.1.79 真实 5 分 58 秒回答后仍完成），可用 `HARNESS_SUPERVISOR_INPUT_TIMEOUT_MS` 调整。**1.1.82 的 stream-json 默认权限模式不再产生 AskUserQuestion 的 `awaiting_input`**，需人工审批时使用 `bypass_permissions` 或 `dont_ask`；ACP 已通过官方握手和 Write 审批探测，但尚未接入。steer / follow-up 在当前版本被接受但未生效。任务度量可读取 `result.usage`，但全零报告按未知处理 |
 
 用量采集边界：Pi 只在 assistant message 原生提供 `usage` 时记录；Qoder 只在 `result.usage` 存在时记录；MiniMax Code 最新 0.6.13 实测 ACP 只提供上下文 `used`/`size` 与 `cost=0 USD`，prompt result 不含 usage，其 headless `exec --output-format json` 虽有结构化 usage，但 HS 走 ACP 且不读取私有会话库，因此报告中保持未知。主 Agent 用量不会从宿主会话自动读取，必须显式补录。
 
@@ -451,8 +457,10 @@ MCP 对应 `metrics_task_create`、`metrics_task_show`、`metrics_report`、`met
 | [`docs/v0.2-report.md`](docs/v0.2-report.md) | v0.2 交付报告：通知、幂等、保留策略、Qoder 验证 |
 | [`docs/iteration-261023-report.md`](docs/iteration-261023-report.md) | 2026-10-23 迭代：Worker 通知路由、原生输入闭环、事件历史与幂等可靠性 |
 | [`docs/v0.6.5-report.md`](docs/v0.6.5-report.md) | 0.6.5 交付报告：终态进展、输入有效期、通知统计与 Codex steer 边界 |
+| [`docs/v0.6.6-report.md`](docs/v0.6.6-report.md) | 0.6.6 交付报告：Qoder 1.1.82 参数/初始化兼容、ACP 调研与限制 |
 | [`docs/codex-steer-261030.md`](docs/codex-steer-261030.md) | 2026-10-30 Codex app-server `turn/steer` 实验与 Desktop 阻塞分析 |
 | [`evidence/v0.6.5-261030/`](evidence/v0.6.5-261030/) | 0.6.5 真实 Qoder 等待、app-server steer 与回归证据 |
+| [`evidence/v0.6.6-261104/`](evidence/v0.6.6-261104/) | 0.6.6 Qoder 1.1.82 参数冲突、真实 E2E 与 ACP 探测证据 |
 | [`evidence/metrics-phase12-261025/README.md`](evidence/metrics-phase12-261025/README.md) | 0.5.0 任务度量阶段一/二的测试与烟雾证据 |
 | [`evidence/release-v0.2.0-261023/README.md`](evidence/release-v0.2.0-261023/README.md) | 主目录发布验收、Windows 原子替换修复及部署限制 |
 | [`docs/archive/project-status-2026-10-22.md`](docs/archive/project-status-2026-10-22.md) | 2026-10-22 项目现状审计 |

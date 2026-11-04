@@ -1,0 +1,9 @@
+qodercli 1.1.82
+model DeepSeek-Flash
+worker w-mw1gxy84-aa672ce2
+spawn returned in 4852ms
+first run: completed, 5686ms, result=QODER_E2E_OK
+resume: completed, resumeCount=1, result=QODER_RESUME_OK
+session 856bf9e4-4746-44cc-b3a1-b4c6fe63b2fb
+daemon survived: true
+evidence D:\Projects\Harness-Supervisor\evidence\v0.6.6-261104\qoder-real

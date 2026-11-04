@@ -588,6 +588,12 @@ export interface HarnessSpawnSpec {
   tools?: string[];
   thinking?: string;
   extraArgs?: string[];
+  /**
+   * First user prompt, provided before spawn. Qoder 1.1.82 does not emit its
+   * system init until the first user message, so the adapter may need it to
+   * start the session; other runtimes ignore it.
+   */
+  initialPrompt?: string;
   /** Extra environment for this worker process only (never the daemon's own). */
   env?: NodeJS.ProcessEnv;
 }

@@ -120,8 +120,33 @@ async function qoderArgv(t: TestContext, env: Record<string, string> = {}): Prom
     .filter(Boolean)
     .map((line) => JSON.parse(line) as string[]);
   assert.ok(calls.length >= 1, "the fake CLI must record its argv");
-  return { client, cwd, args: calls[0]! };
+  const args = calls[0]!;
+  assert.equal(
+    args.includes("--permission-prompt-tool"),
+    false,
+    "Qoder 1.1.82 rejects the legacy stdio prompt flag with stream-json input",
+  );
+  return { client, cwd, args };
 }
+
+test("Qoder startup survives init that arrives only after the first prompt", async (t) => {
+  const logDir = await mkdtemp(path.join(os.tmpdir(), "hs-qoder-prompt-log-"));
+  const promptLog = path.join(logDir, "prompts.jsonl");
+  const { client, cwd } = await startQoderHarness(t, {
+    FAKE_QODER_INIT_AFTER_PROMPT: "1",
+    FAKE_QODER_PROMPT_LOG: promptLog,
+  });
+  const worker = await spawnQoder(client, cwd, "[scenario:basic] lazy init");
+  const final = await waitTerminal(client, worker.id, 20_000);
+  assert.equal(final.worker.status, "completed");
+  assert.equal(final.worker.result?.text, "FAKE_QODER_OK");
+
+  const prompts = (await readFile(promptLog, "utf8")).trim().split("\n").filter(Boolean);
+  assert.equal(prompts.length, 1, "the initial prompt must be sent exactly once");
+  assert.match(String(JSON.parse(prompts[0]!)), /lazy init/);
+  const events = await eventsOf(client, worker.id, 0);
+  assert.ok(events.events.some((event) => event.type === "run.started"));
+});
 
 test("Qoder starts workers with bypass_permissions and the init record confirms it", async (t) => {
   const { client, args } = await qoderArgv(t);

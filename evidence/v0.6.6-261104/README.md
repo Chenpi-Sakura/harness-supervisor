@@ -75,4 +75,4 @@ Real 1.1.82 probes:
 
 ACP is therefore a credible future transport for both tool approvals and user
 questions, but it is not enabled in 0.6.6. Full assessment:
-[`docs/acp-feasibility-261104.md`](../../docs/acp-feasibility-261104.md).
+[`docs/2026-11-04-acp-feasibility.md`](../../docs/2026-11-04-acp-feasibility.md).

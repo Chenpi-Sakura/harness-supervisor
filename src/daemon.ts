@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { DshAdapter } from "./adapters/dsh/adapter.js";
 import { McodeAdapter } from "./adapters/mcode/adapter.js";
 import { PiAdapter } from "./adapters/pi/adapter.js";
 import { QoderAdapter } from "./adapters/qoder/adapter.js";
@@ -82,6 +83,17 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       logger.warn(`MiniMax Code ACP diagnostic for ${workerId}`, { message });
     },
   });
+  const dshAdapter = new DshAdapter({
+    abortTimeoutMs,
+    onStderr: (workerId, text) => {
+      void store.appendStderr(workerId, text).catch((error: unknown) => {
+        logger.warn(`Failed to persist stderr for ${workerId}`, { error: errorMessage(error) });
+      });
+    },
+    onDiagnostic: (workerId, message) => {
+      logger.warn(`DeepSeek Harness ACP diagnostic for ${workerId}`, { message });
+    },
+  });
   const workerGuard = await prepareWorkerGuard(stateDir, logger).catch((error: unknown) => {
     // A guard failure must never prevent the daemon from starting workers.
     logger.warn("Worker command guard setup failed", { error: errorMessage(error) });
@@ -99,6 +111,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       ["pi", piAdapter],
       ["qoder", qoderAdapter],
       ["mcode", mcodeAdapter],
+      ["dsh", dshAdapter],
     ]),
     logger,
     supervisorId,

@@ -1,0 +1,18 @@
+Command: npm test
+Date: 2026-11-05
+Host: Windows x64 / Node 24.21.0
+
+Result:
+  tests 362
+  pass 360
+  fail 0
+  cancelled 0
+  skipped 2
+  duration_ms 550253.7599
+
+Skipped: the two RUN_REAL_PI=1 paid/native Pi tests.
+
+DSH targeted re-check after the final capabilities-note edit:
+  npm run build
+  node --test dist/test/unit/dsh-launch.test.js dist/test/integration/dsh.test.js
+  tests 23 / pass 23 / fail 0 (25.8s)

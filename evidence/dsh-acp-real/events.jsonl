@@ -1,0 +1,88 @@
+{"scenario":"spawn","seq":1,"type":"worker.starting"}
+{"scenario":"spawn","seq":2,"type":"worker.started"}
+{"scenario":"spawn","seq":3,"type":"worker.session"}
+{"scenario":"spawn","seq":4,"type":"run.started"}
+{"scenario":"spawn","seq":5,"type":"run.accepted"}
+{"scenario":"spawn","seq":6,"type":"run.progress","kind":"thinking","preview":"The user explicitly asks me to reply only with DSH_HS_E2E_OK and not to call any tools. This is a compliance test. I should just reply."}
+{"scenario":"spawn","seq":7,"type":"run.progress","kind":"assistant_message","preview":"DSH_HS_E2E_OK"}
+{"scenario":"spawn","seq":8,"type":"run.progress","kind":"context_usage"}
+{"scenario":"spawn","seq":9,"type":"run.completed"}
+{"scenario":"spawn","seq":10,"type":"worker.exited"}
+{"scenario":"resume","seq":11,"type":"worker.starting"}
+{"scenario":"resume","seq":12,"type":"worker.started"}
+{"scenario":"resume","seq":13,"type":"worker.session"}
+{"scenario":"resume","seq":14,"type":"run.started"}
+{"scenario":"resume","seq":15,"type":"run.accepted"}
+{"scenario":"resume","seq":16,"type":"worker.resumed"}
+{"scenario":"resume","seq":17,"type":"run.progress","kind":"thinking","preview":"The user asks to reply only with the token from my last reply. That was DSH_HS_E2E_OK. No tools."}
+{"scenario":"resume","seq":18,"type":"run.progress","kind":"assistant_message","preview":"DSH_HS_E2E_OK"}
+{"scenario":"resume","seq":19,"type":"run.progress","kind":"context_usage"}
+{"scenario":"resume","seq":20,"type":"run.completed"}
+{"scenario":"resume","seq":21,"type":"worker.exited"}
+{"scenario":"write","seq":1,"type":"worker.starting"}
+{"scenario":"write","seq":2,"type":"worker.started"}
+{"scenario":"write","seq":3,"type":"worker.session"}
+{"scenario":"write","seq":4,"type":"run.started"}
+{"scenario":"write","seq":5,"type":"run.accepted"}
+{"scenario":"write","seq":6,"type":"run.progress","kind":"assistant_message","preview":"我会创建该文件，并确认内容。"}
+{"scenario":"write","seq":7,"type":"run.progress","kind":"context_usage"}
+{"scenario":"write","seq":8,"type":"run.progress","kind":"tool_start","tool":"write"}
+{"scenario":"write","seq":9,"type":"run.progress","kind":"tool_end","tool":"write","isError":false}
+{"scenario":"write","seq":10,"type":"run.progress","kind":"thinking","preview":"Verify content."}
+{"scenario":"write","seq":11,"type":"run.progress","kind":"context_usage"}
+{"scenario":"write","seq":12,"type":"run.progress","kind":"tool_start","tool":"read"}
+{"scenario":"write","seq":13,"type":"run.progress","kind":"tool_end","tool":"read","isError":false}
+{"scenario":"write","seq":14,"type":"run.progress","kind":"assistant_message","preview":"WRITE_DONE"}
+{"scenario":"write","seq":15,"type":"run.progress","kind":"context_usage"}
+{"scenario":"write","seq":16,"type":"run.completed"}
+{"scenario":"write","seq":17,"type":"worker.exited"}
+{"scenario":"escalation","seq":1,"type":"worker.starting"}
+{"scenario":"escalation","seq":2,"type":"worker.started"}
+{"scenario":"escalation","seq":3,"type":"worker.session"}
+{"scenario":"escalation","seq":4,"type":"run.started"}
+{"scenario":"escalation","seq":5,"type":"run.accepted"}
+{"scenario":"escalation","seq":6,"type":"run.progress","kind":"thinking","preview":"The user wants me to create a file outside the workspace. I should try the write tool first; if denied, use sandbox_permissions danger-full-access with justification."}
+{"scenario":"escalation","seq":7,"type":"run.progress","kind":"context_usage"}
+{"scenario":"escalation","seq":8,"type":"run.progress","kind":"tool_start","tool":"write"}
+{"scenario":"escalation","seq":9,"type":"run.progress","kind":"tool_end","tool":"write","isError":true}
+{"scenario":"escalation","seq":10,"type":"run.progress","kind":"context_usage"}
+{"scenario":"escalation","seq":11,"type":"run.progress","kind":"tool_start","tool":"write"}
+{"scenario":"escalation","seq":12,"type":"run.needs_input","method":"select","title":"Allow DeepSeek Harness tool call call_00_ET_D2DuU00sliyTHLIxAgfL6180?","options":["Allow once","Reject"],"requestId":"0"}
+{"scenario":"escalation","seq":13,"type":"run.input_answered","method":"select","requestId":"0"}
+{"scenario":"escalation","seq":14,"type":"run.progress","kind":"tool_end","tool":"write","isError":false}
+{"scenario":"escalation","seq":15,"type":"run.progress","kind":"thinking","preview":"Verify content is exactly one line. Use read."}
+{"scenario":"escalation","seq":16,"type":"run.progress","kind":"context_usage"}
+{"scenario":"escalation","seq":17,"type":"run.progress","kind":"tool_start","tool":"read"}
+{"scenario":"escalation","seq":18,"type":"run.progress","kind":"tool_end","tool":"read","isError":false}
+{"scenario":"escalation","seq":19,"type":"run.progress","kind":"assistant_message","preview":"ESCALATION_DONE"}
+{"scenario":"escalation","seq":20,"type":"run.progress","kind":"context_usage"}
+{"scenario":"escalation","seq":21,"type":"run.completed"}
+{"scenario":"escalation","seq":22,"type":"worker.exited"}
+{"scenario":"fullAccess","seq":1,"type":"worker.starting"}
+{"scenario":"fullAccess","seq":2,"type":"worker.started"}
+{"scenario":"fullAccess","seq":3,"type":"worker.session"}
+{"scenario":"fullAccess","seq":4,"type":"run.started"}
+{"scenario":"fullAccess","seq":5,"type":"run.accepted"}
+{"scenario":"fullAccess","seq":6,"type":"run.progress","kind":"thinking","preview":"The user asks to create a file outside workspace. Policy says danger-full-access. I should use the write tool. Let me just do it.\n\nPath: %USERPROFILE%/AppData/Local/hs-dsh-acp-full-outside-mw3fwz4s/ds"}
+{"scenario":"fullAccess","seq":7,"type":"run.progress","kind":"context_usage"}
+{"scenario":"fullAccess","seq":8,"type":"run.progress","kind":"tool_start","tool":"pwsh"}
+{"scenario":"fullAccess","seq":9,"type":"run.progress","kind":"tool_end","tool":"pwsh","isError":false}
+{"scenario":"fullAccess","seq":10,"type":"run.progress","kind":"thinking","preview":"Directory exists, file doesn't. Use write tool with content exactly one line \"DSH_FULL_ACCESS_OK\". Question: should it end with newline? \"文件内容必须只有一行\" — a single line. Usually writing \"DSH_FULL_ACCESS_"}
+{"scenario":"fullAccess","seq":11,"type":"run.progress","kind":"context_usage"}
+{"scenario":"fullAccess","seq":12,"type":"run.progress","kind":"tool_start","tool":"write"}
+{"scenario":"fullAccess","seq":13,"type":"run.progress","kind":"tool_end","tool":"write","isError":false}
+{"scenario":"fullAccess","seq":14,"type":"run.progress","kind":"context_usage"}
+{"scenario":"fullAccess","seq":15,"type":"run.progress","kind":"tool_start","tool":"pwsh"}
+{"scenario":"fullAccess","seq":16,"type":"run.progress","kind":"tool_end","tool":"pwsh","isError":false}
+{"scenario":"fullAccess","seq":17,"type":"run.progress","kind":"assistant_message","preview":"FULL_ACCESS_DONE"}
+{"scenario":"fullAccess","seq":18,"type":"run.progress","kind":"context_usage"}
+{"scenario":"fullAccess","seq":19,"type":"run.completed"}
+{"scenario":"fullAccess","seq":20,"type":"worker.exited"}
+{"scenario":"cancel","seq":1,"type":"worker.starting"}
+{"scenario":"cancel","seq":2,"type":"worker.started"}
+{"scenario":"cancel","seq":3,"type":"worker.session"}
+{"scenario":"cancel","seq":4,"type":"run.started"}
+{"scenario":"cancel","seq":5,"type":"run.accepted"}
+{"scenario":"cancel","seq":6,"type":"worker.cancel_requested"}
+{"scenario":"cancel","seq":7,"type":"run.cancelled"}
+{"scenario":"cancel","seq":8,"type":"worker.exited"}

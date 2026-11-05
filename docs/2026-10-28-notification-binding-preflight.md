@@ -1,6 +1,6 @@
 # Worker 通知绑定预检与等待策略（下一版本必做）
 
-> 状态：已实施（2026-10-28）。实现见 `src/supervisor.ts` 的 `attachNotificationBinding()`、`src/mcp-presentation.ts` 的 `presentAcceptedWorker()`；测试见 `test/integration/notification-binding.test.ts` 与 `test/unit/mcp-presentation.test.ts`。与 [notification-context-budget.md](./notification-context-budget.md) 阶段 1 并行，互不依赖。
+> 状态：已实施（2026-10-28）。实现见 `src/supervisor.ts` 的 `attachNotificationBinding()`、`src/mcp-presentation.ts` 的 `presentAcceptedWorker()`；测试见 `test/integration/notification-binding.test.ts` 与 `test/unit/mcp-presentation.test.ts`。与 [2026-10-28-notification-context-budget.md](./2026-10-28-notification-context-budget.md) 阶段 1 并行，互不依赖。
 
 ## 1. 背景
 

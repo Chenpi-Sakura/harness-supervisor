@@ -9,7 +9,6 @@ import type { WorkerSummary } from "../../src/types.js";
 import { sleep } from "../../src/util/async.js";
 import {
   FAKE_QODER_ACP_ENTRY,
-  FAKE_QODER_ENTRY,
   TestDaemon,
   eventsOf,
   makeWorkspace,
@@ -338,46 +337,4 @@ test("Qoder ACP rejects plan mode and tool allowlists instead of ignoring them",
     spawnQoder(client, cwd, "[scenario:basic] tool allowlist", { tools: ["Read"] }),
     /does not expose a tool allowlist/,
   );
-});
-
-test("Qoder refuses to resume a worker with the other transport's handle", async (t) => {
-  const daemon = await TestDaemon.create("hs-qoder-acp-mismatch-");
-  t.after(async () => {
-    await daemon.stop().catch(() => undefined);
-  });
-  const configDir = await mkdtemp(path.join(os.tmpdir(), "hs-qoder-acp-mismatch-config-"));
-  const cwd = await makeWorkspace("hs-qoder-acp-mismatch-work-");
-  const baseEnv = {
-    QODER_CONFIG_DIR: configDir,
-    QODERCN_CONFIG_DIR: configDir,
-  };
-  const streamClient = await daemon.start({
-    env: {
-      ...baseEnv,
-      HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ENTRY,
-      HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json",
-    },
-  });
-  const worker = await spawnQoder(streamClient, cwd, "[scenario:basic] stream first");
-  const final = await waitTerminal(streamClient, worker.id, 20_000);
-  assert.equal(final.worker.status, "completed");
-  assert.ok(final.worker.sessionFile?.endsWith(`${final.worker.sessionId}.jsonl`));
-  await daemon.stop();
-
-  const acpClient = await daemon.start({
-    env: {
-      ...baseEnv,
-      HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ACP_ENTRY,
-    },
-  });
-  await assert.rejects(
-    acpClient.request(
-      "resume",
-      { workerId: worker.id, prompt: "must not load" },
-      { timeoutMs: 30_000 },
-    ),
-    /stream-json transport/,
-  );
-  const after = await statusOf(acpClient, worker.id);
-  assert.equal(after.worker.status, "completed", "the failed resume must not fake a run");
 });

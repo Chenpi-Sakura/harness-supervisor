@@ -1,0 +1,106 @@
+{
+  "ranAt": "2026-11-05T11:05:53.375Z",
+  "host": "win32 10.0.26300 / Node v24.21.0",
+  "discovery": {
+    "file": "D:\\Program Next\\dsh\\DeepSeek Harness.exe",
+    "args": [
+      "--expose-internals",
+      "D:\\Program Next\\dsh\\resources\\app.asar\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\cli.js",
+      "--profile",
+      "acp"
+    ],
+    "description": "DeepSeek Harness desktop CLI (D:\\Program Next\\dsh\\DeepSeek Harness.exe) --profile acp",
+    "entryOverride": false
+  },
+  "model": {
+    "provider": "deepseek-official",
+    "model": "deepseek-v4-flash",
+    "thinking": "low"
+  },
+  "protocol": "acp",
+  "scenarios": {
+    "spawn": {
+      "workerId": "w-mw3fwi3l-98a66908",
+      "status": "completed",
+      "result": "DSH_HS_E2E_OK",
+      "sessionId": "913e78d5-e2f5-48b7-8537-cc806a882091",
+      "sessionFile": "%USERPROFILE%\\AppData\\Local\\Temp\\hs-dsh-acp-real-state-wjbxBX\\sessions\\w-mw3fwi3l-98a66908\\dsh-session.json",
+      "capabilities": {
+        "runtime": "dsh",
+        "steer": false,
+        "followUp": false,
+        "cancel": true,
+        "resume": true,
+        "pause": false,
+        "interactiveInput": true,
+        "notes": "DeepSeek Harness ACP over ndJSON stdio (`dsh --profile acp`). Verified against the desktop-bundled CLI 0.2.1-rc.5 (agent 0.0.1): initialize advertises ACP v1 plus session close/list/resume, session/new and session/resume work, model and reasoning_effort are selectable config options, session/prompt blocks until the turn and descendants settle, session/cancel returns stopReason=cancelled, and stdin EOF exits the process cleanly. session/resume restores the persisted conversation in a new process and requires the identical absolute cwd; there is no session/load, fork, delete or transcript replay. The shipped acp profile reads DSH_PERMISSION_MODE at boot and defaults to workspace-write with approval ask: file writes inside the workspace or platform temp are allowed without a prompt, while an outside write is denied and can trigger session/request_permission for a one-time danger-full-access escalation (verified). HARNESS_SUPERVISOR_DSH_PERMISSION_MODE selects read-only, workspace-write or danger-full-access; danger-full-access removes the file sandbox and sets approval to never. DSH's permission request carries only a tool call id, not the tool name or input; the adapter answers with the offered allow-once/reject-once option. ACP has no active-turn steer, so steer and follow-up are unsupported; a second prompt is rejected while one is active. No plan, commands, terminal, client filesystem, elicitation, MCP stdio or images. usage_update is context occupancy, not billed token usage. DSH's ACP codec maps native aborted/blocked/error turn endings to end_turn, so HS cannot always distinguish those from a normal completion. cwd is not a filesystem sandbox."
+      },
+      "pid": 98736,
+      "usageEvents": 0,
+      "contextUsageEvents": 1,
+      "runErrors": 0,
+      "fatalErrors": 0,
+      "needsInput": 0
+    },
+    "resume": {
+      "status": "completed",
+      "result": "DSH_HS_E2E_OK",
+      "resumeCount": 1,
+      "sameSessionId": true,
+      "sameSessionFile": true,
+      "runErrors": 0,
+      "fatalErrors": 0,
+      "needsInput": 0
+    },
+    "write": {
+      "status": "completed",
+      "result": "WRITE_DONE",
+      "file": "dsh-acp-write-ok.txt",
+      "fileContent": "DSH_WRITE_OK",
+      "runErrors": 0,
+      "fatalErrors": 0,
+      "needsInput": 0
+    },
+    "escalation": {
+      "status": "completed",
+      "result": "ESCALATION_DONE",
+      "permission": {
+        "requestId": "0",
+        "method": "select",
+        "title": "Allow DeepSeek Harness tool call call_00_ET_D2DuU00sliyTHLIxAgfL6180?",
+        "options": [
+          "Allow once",
+          "Reject"
+        ],
+        "answer": "Allow once"
+      },
+      "outsideFile": "%USERPROFILE%\\AppData\\Local\\hs-dsh-acp-outside-mw3fwst1\\dsh-acp-outside-ok.txt",
+      "fileContent": "DSH_ESCALATION_OK",
+      "runErrors": 0,
+      "fatalErrors": 0,
+      "needsInput": 1
+    },
+    "fullAccess": {
+      "status": "completed",
+      "result": "FULL_ACCESS_DONE",
+      "permissionMode": "danger-full-access",
+      "outsideFile": "%USERPROFILE%\\AppData\\Local\\hs-dsh-acp-full-outside-mw3fwz4s\\dsh-acp-full-ok.txt",
+      "fileContent": "DSH_FULL_ACCESS_OK",
+      "runErrors": 0,
+      "fatalErrors": 0,
+      "needsInput": 0
+    },
+    "cancel": {
+      "status": "cancelled",
+      "pidAlive": false,
+      "runErrors": 0,
+      "fatalErrors": 0,
+      "needsInput": 0
+    }
+  },
+  "limits": {
+    "permissions": "The acp profile reads DSH_PERMISSION_MODE at boot and defaults to workspace-write with approval ask. A write inside the workspace or platform temp needs no approval; an outside write is denied and triggers session/request_permission for a one-time danger-full-access escalation. HARNESS_SUPERVISOR_DSH_PERMISSION_MODE=danger-full-access removes the file sandbox and approval, and an outside write then succeeds without a request. The desktop permission picker only configures desktop sessions and does not apply to the acp profile.",
+    "steering": "ACP has no active-turn steer; capabilities report steer=false and followUp=false.",
+    "usage": "usage_update is context occupancy, not billed token usage; HS records it as context_usage progress, not run.usage."
+  }
+}

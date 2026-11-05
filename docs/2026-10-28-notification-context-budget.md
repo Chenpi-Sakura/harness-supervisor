@@ -231,7 +231,7 @@ IPC 不变是有意为之：内部消费者（CLI、MCP、测试）依赖完整�
 |---|---|---|
 | 阶段 0 | 归因取证 + 读取基线（本文档） | 已完成 |
 | 阶段 1 | N7 读取分层 + 编号索引 | 已完成（2026-10-28） |
-| **阶段 1 并行** | **派发前通知绑定预检与等待策略**（见 [notification-binding-preflight.md](./notification-binding-preflight.md)） | 独立小项，不等 V1–V3 |
+| **阶段 1 并行** | **派发前通知绑定预检与等待策略**（见 [2026-10-28-notification-binding-preflight.md](./2026-10-28-notification-binding-preflight.md)） | 独立小项，不等 V1–V3 |
 | 阶段 2 | N1 + N3（写入约束 + 归因） | V4 在目标机器取到证据 |
 | 阶段 3 | N5 + N6（分级投递） | V1–V3 通过 |
 | 阶段 4 | N8 / 静默上下文 | 出现真实需求 |

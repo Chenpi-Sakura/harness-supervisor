@@ -148,3 +148,29 @@ settled，ACP 对这些能力的标准表达并不更完整。可行性判断：
   验证，出现回归时可回退 `stream-json`。
 
 证据：`evidence/qoder-acp-real/`；交付说明：`docs/v0.7.0-report.md`。
+
+## 9. 实施状态（2026-11-05 后续：DSH ACP PoC）
+
+DSH（DeepSeek Harness）桌面端已提供官方 `dsh --profile acp`，因此作为 ACP
+Runtime 验证对象：
+
+- 新增通用 ACP 传输层 `src/adapters/acp/client.ts`，负责 ndJSON、JSON-RPC
+  请求/通知路由、反向请求、进程生命周期与 stderr；DSH 适配器只实现会话语义。
+- 新增 `dsh` runtime：桌面端卸载注册表/PATH/`HARNESS_SUPERVISOR_DSH_ENTRY`
+  发现入口；spawn、模型与 `reasoning_effort` 配置、`session/resume`、cancel、
+  事件与 `context_usage` 已实现。
+- 真实桌面端 0.2.1-rc.5 验收通过：spawn/prompt、resume（保留上下文）、工作区
+  写入、工作区外提权审批（允许后成功）、`danger-full-access` 无审批写入、取消；
+  取消后 PID 退出。
+- 权限：桌面 UI 的三种模式属于 desktop profile，不传给 ACP。`acp` profile 在
+  启动时读取 `DSH_PERMISSION_MODE`，原生默认 `workspace-write` + `ask`；
+  `HARNESS_SUPERVISOR_DSH_PERMISSION_MODE` 可选 `read-only`、`workspace-write`、
+  `danger-full-access`，并按 daemon 生效。
+- 限制：ACP 无活动回合 steer，`steer`/`followUp`/`tools`/`extraArgs` 明确不
+  支持；`usage_update` 只是上下文占用；DSH codec 将原生 aborted/blocked/error
+  映射为 `end_turn`。
+- 当前为独立 PoC 分支，不改变 0.7.0 的既有 runtime 默认；mcode 与 Qoder 仍
+  使用各自已验证的 ACP 实现，后续可评估把通用传输层用于 mcode 而不改动其
+  私有扩展。
+
+证据：`evidence/dsh-acp-real/`。

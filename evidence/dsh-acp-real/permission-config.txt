@@ -1,0 +1,30 @@
+# DSH 0.2.1-rc.5 ACP profile permission config (excerpt)
+# Captured 2026-11-05 on Windows. Command:
+#   DeepSeek Harness.exe --expose-internals <app.asar>/.../dsh-desktop-host/lib/cli.js
+#     --profile acp --dump-config
+# Only the permission-related sections are kept; credentials are not part of this output.
+
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    workspaceRoot: !!js process.cwd()
+- id: approval
+  name: '@deepseek-ai/dsh-user-approval'
+  config:
+    policy: !!js >-
+      (process.env.DSH_PERMISSION_MODE ?? 'workspace-write') ===
+      'danger-full-access' ? 'never' : 'ask'
+- id: permission
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never

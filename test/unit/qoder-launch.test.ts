@@ -9,7 +9,6 @@ import {
   qoderConfigRoots,
   resolveQoderLaunch,
   resolveQoderPermissionMode,
-  resolveQoderProtocol,
   sameQoderPermissionMode,
   sessionIdFromFile,
   validateQoderExtraArgs,
@@ -76,26 +75,6 @@ test("Qoder compares snake_case flags with camelCase init reports", () => {
   assert.equal(sameQoderPermissionMode("dont_ask", "dontAsk"), true);
   assert.equal(sameQoderPermissionMode("accept_edits", "acceptEdits"), true);
   assert.equal(sameQoderPermissionMode("bypass_permissions", "auto"), false);
-});
-
-test("Qoder protocol defaults to ACP and stream-json is opt-in", () => {
-  assert.equal(resolveQoderProtocol({}), "acp");
-  assert.equal(
-    resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json" }),
-    "stream-json",
-  );
-  assert.equal(
-    resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "streamjson" }),
-    "stream-json",
-  );
-  assert.equal(
-    resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "ACP" }),
-    "acp",
-  );
-  assert.throws(
-    () => resolveQoderProtocol({ HARNESS_SUPERVISOR_QODER_PROTOCOL: "sdk" }),
-    /Unsupported Qoder protocol.*default: acp/,
-  );
 });
 
 test("Qoder ACP session handles are distinguishable from stream-json session files", async () => {

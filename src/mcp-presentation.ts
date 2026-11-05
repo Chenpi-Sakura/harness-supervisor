@@ -312,6 +312,8 @@ const PRODUCTION_RUNTIME_NOTES: Record<string, string> = {
     "Qoder CLI stream-json. Steer/follow-up messages are accepted by the stream, but a real 1.1.76 run did not apply an accepted steer to the running turn: unverified effect. Cancel was validated (interrupt + process termination). Permission prompts surface as awaiting_input; AskUserQuestion was validated, allow/deny for Bash calls was not exercised end to end. Resume uses --resume and verifies the returned session id.",
   mcode:
     "MiniMax Code ACP over ndJSON stdio. Steering is verified inside an active turn (the agent acted on it); a steer sent after the turn ended is dropped, so the turn must still be alive. Follow-ups are queued through the agent's queue extension. Cancel was validated on a real run. Permission prompts surface as awaiting_input and are answered with the offered option. Resume loads the recorded ACP session id.",
+  dsh:
+    "DeepSeek Harness ACP (dsh --profile acp). Spawn/prompt, model and reasoning config, resume via session/resume, workspace writes, outside-workspace approval and cancel were verified against the desktop-bundled CLI. Resume needs the same absolute cwd. DSH defaults to workspace-write with approval ask; HARNESS_SUPERVISOR_DSH_PERMISSION_MODE selects read-only, workspace-write or danger-full-access. Permission requests carry only a tool call id. No steer/follow-up, plan, terminal, client fs or elicitation. usage_update is context occupancy, not billed tokens.",
 };
 
 /**

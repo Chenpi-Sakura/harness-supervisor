@@ -1,11 +1,10 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp } from "node:fs/promises";
-import os from "node:os";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { SupervisorClient } from "../../src/ipc/client.js";
 import type { MetricsReport, TaskMetrics, TaskRecord, UsageRecord } from "../../src/metrics.js";
-import { FAKE_QODER_ENTRY, TestDaemon, makeWorkspace, spawnWorker, waitTerminal } from "./helpers.js";
+import { TestDaemon, makeWorkspace, spawnWorker, waitTerminal } from "./helpers.js";
 
 async function startMetricsDaemon(t: TestContext, prefix = "hs-metrics-"): Promise<{
   daemon: TestDaemon;
@@ -138,46 +137,6 @@ test("an explicit task can link multiple workers and receive idempotent parent u
   assert.equal(report.knownWorkerUsage.inputTokens.value, 20);
   assert.equal(report.usageCoverage.tasksWithAttributableParentUsage, 1);
   assert.equal(report.usageCoverage.tasksWithWorkerUsage, 1);
-});
-
-test("Qoder usage events feed the same task record", async (t) => {
-  const daemon = await TestDaemon.create("hs-metrics-qoder-");
-  t.after(async () => {
-    await daemon.stop().catch(() => undefined);
-  });
-  const configDir = await mkdtemp(path.join(os.tmpdir(), "hs-metrics-qoder-config-"));
-  const client = await daemon.start({
-    env: {
-      HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ENTRY,
-      HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json",
-      QODER_CONFIG_DIR: configDir,
-      QODERCN_CONFIG_DIR: configDir,
-    },
-  });
-  const cwd = await makeWorkspace("hs-metrics-qoder-work-");
-  const worker = await client.request<{ id: string; taskId?: string }>(
-    "spawn",
-    { runtime: "qoder", cwd, prompt: "[scenario:basic] metrics usage" },
-    { timeoutMs: 60_000 },
-  );
-  assert.ok(worker.taskId);
-  await waitTerminal(client, worker.id, 30_000);
-  const task = await showTask(client, worker.taskId!);
-  assert.equal(task.status, "completed");
-  assert.equal(task.usage.length, 1);
-  assert.equal(task.usage[0]?.harness, "qoder");
-  assert.equal(task.usage[0]?.inputTokens, 1);
-  assert.equal(task.usage[0]?.outputTokens, 1);
-  assert.equal(task.usage[0]?.confidence, "partial");
-
-  const near = await client.request<{ id: string; taskId?: string }>(
-    "spawn",
-    { runtime: "qoder", cwd, prompt: "[scenario:multi-result-near] one settled turn" },
-    { timeoutMs: 60_000 },
-  );
-  await waitTerminal(client, near.id, 20_000);
-  const nearTask = await showTask(client, near.taskId!);
-  assert.equal(nearTask.usage.length, 1, "near-duplicate results must not count usage twice");
 });
 
 test("metrics survive a daemon restart without duplicating runtime usage", async (t) => {

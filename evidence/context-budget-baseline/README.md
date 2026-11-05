@@ -1,6 +1,6 @@
 # 上下文预算基线（阶段 0）
 
-对应需求文档：[docs/notification-context-budget.md](../../docs/notification-context-budget.md)
+对应需求文档：[docs/2026-10-28-notification-context-budget.md](../../docs/2026-10-28-notification-context-budget.md)
 
 ## 测了什么
 

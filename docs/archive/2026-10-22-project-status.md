@@ -329,7 +329,7 @@ flowchart LR
 | `delivery.state=delivered` | `codex queue` 返回成功并入队 | 桌面主 Agent 被唤醒或已读取 |
 | `worker.result.text` | Harness 自述的最终文本 | 结果真实、测试通过、无副作用 |
 
-本仓库现有文档已在 `src/adapters/qoder/adapter.ts` capabilities、MCP `worker_send` 描述、README §5、`docs/v0.2-report.md` 中明确这些边界。
+本仓库现有文档已在 `src/adapters/qoder/adapter.ts` capabilities、MCP `worker_send` 描述、README §5、`docs/v0.2.0-report.md` 中明确这些边界。
 
 ---
 
@@ -485,9 +485,9 @@ Notifier.deliver
 | --- | --- | --- |
 | `README.md` §9（约 L526） | 写"62 tests，60 pass" | 当前为 106/104/2；该段还未列出 v0.2 新增测试 |
 | `README.md` §9（约 L588） | 仍写 Qoder "真实 cancel 未验证" | cancel 已在 1.1.76 真实验证；steer 仍未生效 |
-| `docs/v0.2-report.md` §7 | 写 40 个文件/+4232、src 13 个/+1767 | 实际 45 个/+4748、src 14 个/+1850 |
-| `docs/v0.2-report.md` §8 | 只列 5 个提交 | 实际 6 个（漏 `3d28ce7`） |
-| `docs/v0.2-report.md` §5 | 写"300 条进度" | fixture 为 150 组 tool_start/tool_end = 300 条 `run.progress`（表述应写"150 组/300 条"） |
+| `docs/v0.2.0-report.md` §7 | 写 40 个文件/+4232、src 13 个/+1767 | 实际 45 个/+4748、src 14 个/+1850 |
+| `docs/v0.2.0-report.md` §8 | 只列 5 个提交 | 实际 6 个（漏 `3d28ce7`） |
+| `docs/v0.2.0-report.md` §5 | 写"300 条进度" | fixture 为 150 组 tool_start/tool_end = 300 条 `run.progress`（表述应写"150 组/300 条"） |
 
 这些属于文档准确性问题，不影响代码行为，但会误导后续判断，应在本轮之后修正（本轮按要求未改代码/未提交）。
 ---
@@ -634,7 +634,7 @@ c69d0d7 docs: remove duplicate tool list heading
 - 失败投递显式重试重置预算；自动重试保持有界。
 - 新增：投递中杀 daemon 后补投、通知文件丢失后按稳定 ID 重建、150 组工具对（300 条进度事件）压力、Qoder 200ms/2000ms 双 result 确定性测试、PID 复用（含 cancel 诚实报错）、120 Worker 延迟、200KB 结果截断。
 - `src/util/process.ts` + 对账/resume/cancel 集成。
-- `docs/v0.2-report.md` 补齐 9 项报告，明确 B 级结论。
+- `docs/v0.2.0-report.md` 补齐 9 项报告，明确 B 级结论。
 
 ### 9.7 第二次审计通过的原因与保留意见
 
@@ -765,7 +765,7 @@ c69d0d7 docs: remove duplicate tool list heading
 
 ## 附录：审计方法
 
-- 读取：`src/*`（全部核心模块）、`test/*`（测试与 fixture）、`README.md`、`AGENTS.md`、`docs/v0.2-report.md`、`evidence/**`。
+- 读取：`src/*`（全部核心模块）、`test/*`（测试与 fixture）、`README.md`、`AGENTS.md`、`docs/v0.2.0-report.md`、`evidence/**`。
 - 运行：`npm test`（106 项）、`npm run build`、`test/integration/perf.test.ts` 诊断输出、Git 检查（`branch`/`log`/`status`/`worktree`/`diff --stat`）。
 - 未运行：付费真实模型 E2E（Pi/Codex/Qoder）、GUI 操作、任何 daemon 启停（除测试内部临时 daemon）。
 - 数据来源均标注于正文；未测量项明确写为"未知"。

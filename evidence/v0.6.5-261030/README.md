@@ -33,7 +33,7 @@
 - 共享 managed daemon 的 `thread/loaded/list` 为空。
 
 见 [codex-steer-cross-process.json](codex-steer-cross-process.json) 与
-[`docs/codex-steer-261030.md`](../../docs/codex-steer-261030.md)。
+[`docs/2026-10-30-codex-steer.md`](../../docs/2026-10-30-codex-steer.md)。
 
 ## 自动化
 

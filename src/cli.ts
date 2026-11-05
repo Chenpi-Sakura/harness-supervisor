@@ -50,7 +50,7 @@ Daemon:
 
 Workers:
   spawn --prompt <text> [--cwd <dir>] [--name <n>] [--model <m>] [--provider <p>]
-        [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder|mcode]
+        [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder|mcode|dsh]
         [--extra-args '["--no-extensions"]'] [--request-id <key>] [--wait] [--json]
         [--task <taskId>]
         [--notify-thread <verified-thread-id> | --notify-none]

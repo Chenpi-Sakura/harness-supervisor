@@ -1,6 +1,6 @@
 {
   "name": "harness-supervisor",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "A small lifecycle and messaging layer for native AI agent harnesses (Pi first).",
   "type": "module",
   "license": "MIT",
@@ -30,7 +30,6 @@
     "test:e2e": "npm run build && node test/run.mjs e2e",
     "e2e:parent": "npm run build && node scripts/e2e-parent-pi.mjs",
     "e2e:codex": "npm run build && node scripts/e2e-codex.mjs",
-    "e2e:qoder": "npm run build && node scripts/e2e-qoder.mjs",
     "e2e:mcode": "npm run build && node scripts/e2e-mcode.mjs",
     "e2e:mcode:long": "npm run build && node scripts/e2e-mcode-long-turn.mjs",
     "e2e:mcode:final": "npm run build && node scripts/e2e-mcode-final-message.mjs",
@@ -38,8 +37,8 @@
     "cli": "node dist/src/cli.js",
     "mcp": "node dist/src/mcp.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "e2e:qoder:interactions": "npm run build && node scripts/e2e-qoder-interactions.mjs",
     "e2e:qoder:acp": "npm run build && node scripts/e2e-qoder-acp.mjs",
+    "e2e:dsh:acp": "npm run build && node scripts/e2e-dsh-acp.mjs",
     "e2e:codex:wake": "npm run build && node scripts/e2e-codex-wake.mjs"
   },
   "dependencies": {

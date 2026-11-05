@@ -1,12 +1,13 @@
 # 后续事项 Backlog
 
-更新日期：2026-11-04。
+更新日期：2026-11-05。
+最近补充：2026-11-05，0.8.0 完成 DSH（DeepSeek Harness）桌面端 ACP PoC：新增通用 ACP 传输层与 `dsh` runtime，真实 0.2.1-rc.5 的 spawn/模型与推理配置/`session/resume`/工作区写入/工作区外提权审批/`danger-full-access` 无审批写入/取消通过；`steer`/`followUp`/`tools`/`extraArgs` 明确不支持，`usage_update` 只作上下文占用。权限模式由 `HARNESS_SUPERVISOR_DSH_PERMISSION_MODE` 控制，原生默认是 `workspace-write` + `ask`。代码位于独立分支，暂不合并进生产默认。证据见 `evidence/dsh-acp-real/`。
 最近补充：2026-11-04，0.7.0 实现 Qoder ACP 并在真实 1.1.82 验收后**设为默认传输**（`HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json` 可回退），spawn/resume/Write 审批/AskUserQuestion/取消全部通过；版本号保持 0.7.0。ACP steer/follow-up、Token 用量与默认传输的长期稳定性仍待后续验证。
-最近补充：2026-11-04，完成 Pi / Qoder / mcode 的 ACP 改造可行性评估（`docs/acp-feasibility-261104.md`）：Qoder ACP 已真实验证工具审批和 elicitation 提问，建议作为可选传输层；mcode 已是 ACP，只考虑共享内核；Pi 官方无 ACP，第三方适配器缺少权限映射，建议保留原生 RPC。
+最近补充：2026-11-04，完成 Pi / Qoder / mcode 的 ACP 改造可行性评估（`docs/2026-11-04-acp-feasibility.md`）：Qoder ACP 已真实验证工具审批和 elicitation 提问，建议作为可选传输层；mcode 已是 ACP，只考虑共享内核；Pi 官方无 ACP，第三方适配器缺少权限映射，建议保留原生 RPC。
 最近补充：2026-11-04，0.6.6 修复 Qoder CLI 1.1.82 的启动参数冲突与懒初始化（`system init` 需首条 user 消息触发），真实 1.1.82 spawn/resume 通过；1.1.82 的 stream-json 不再暴露 AskUserQuestion 权限请求，ACP 已做官方握手与 Write 审批探测，列为下一阶段可选传输层。
-最近补充：2026-10-30，0.6.5 完成终态 `lastProgress`、输入请求有效期/结构化恢复提示、通知统计范围拆分、Resume 时间线与事件读取边界；Qoder 输入窗口改为 30 分钟并经真实 1.1.79 验证。Codex app-server `turn/steer` 协议与模型应用已真实验证，但 Desktop 私有 stdio app-server 与活动 writer 锁使 HS 无法接入，0.6.5 不实现宿主 steer，边界见 `docs/codex-steer-261030.md`。
+最近补充：2026-10-30，0.6.5 完成终态 `lastProgress`、输入请求有效期/结构化恢复提示、通知统计范围拆分、Resume 时间线与事件读取边界；Qoder 输入窗口改为 30 分钟并经真实 1.1.79 验证。Codex app-server `turn/steer` 协议与模型应用已真实验证，但 Desktop 私有 stdio app-server 与活动 writer 锁使 HS 无法接入，0.6.5 不实现宿主 steer，边界见 `docs/2026-10-30-codex-steer.md`。
 最近补充：2026-10-28，0.5.x 已移除 0.4.4 的 Codex 消费前 ACK hook（源码、安装器、测试、文档与 bin 入口）；收件箱/ACK/重试/投递前失效检查保留。已安装旧 hook 的机器需手动在 `/hooks` 禁用或删除对应 `UserPromptSubmit`，HS 不修改用户配置。
-最近补充：2026-10-27，0.5.0 完成任务度量阶段一/二（任务关联、运行时可用 Token、覆盖率报告）；费用不采集（积分制无法直接核对），验收/返工/干预/对照分析仍在阶段三/四，见 `docs/metrics-phase12-report.md`。
+最近补充：2026-10-27，0.5.0 完成任务度量阶段一/二（任务关联、运行时可用 Token、覆盖率报告）；费用不采集（积分制无法直接核对），验收/返工/干预/对照分析仍在阶段三/四，见 `docs/v0.5.0-metrics-phase12-report.md`。
 
 当前阶段以原型实际使用为主。用户通常保持宿主 7×24 小时运行；以下事项全部暂缓，不作为当前原型交付的前置条件，也不安排主动轮询或自动测试任务。只有实际使用遇到问题或用户重新安排时再启动。
 
@@ -23,6 +24,8 @@
 | 任务度量阶段四 | 对照与导出 | 不做费用采集（积分制无法核对）；只有存在同验收标准的非 HS 基线时才做 Token/耗时对照；不接受用会话总 Token 摊派到单任务 | 后续 |
 | MiniMax Code Token 用量 | 运行时用量 | 最新 0.6.13 实测：ACP prompt result 只有 stopReason，usage_update 只有上下文 used/size 与 cost=0；headless `exec --output-format json` 有结构化 usage。需上游在 ACP 补 usage，或评估非交互 worker；不读私有会话库，不用上下文量代替 Token | 待上游/待验证 |
 | Codex Desktop 实时 steer | 宿主能力 | app-server `turn/steer` 已在真实活动回合验证（含错误 turn 拒绝与模型应用）；但 Desktop 的 app-server 是私有 stdio，共享 daemon 无法取得活动 writer 锁。只有出现受支持的 Desktop 控制端点或宿主级 API 时再实现；不写 queue SQLite、不猜活动回合 | 阻塞 |
+| DSH ACP 默认稳定性（PoC） | 运行时验证 | 桌面端 0.2.1-rc.5 已真实验证 spawn / 模型与推理配置 / `session/resume` / 工作区写入 / 工作区外提权 / `danger-full-access` 写入 / 取消；仍需多轮并发、长上下文、错误路径与桌面端升级兼容验证。当前 `steer`/`followUp`/`tools`/`extraArgs` 明确不支持；合并进生产前先评审 PoC 分支与证据 | PoC/待验证 |
+| DSH ACP 权限路径 | 运行时能力 | 已真实验证：原生默认 `workspace-write` + `ask`，工作区外写入被拒绝后触发一次 `session/request_permission`，经 `worker_answer` 允许后写入成功；`HARNESS_SUPERVISOR_DSH_PERMISSION_MODE=danger-full-access` 下同一路径写入无审批。`read-only` 仅做映射与单元测试，未跑真实拒绝场景；超时/拒绝路径仍只有协议测试 | 已验证（PoC）；read-only 与超时待补 |
 | Qoder ACP 默认稳定性 | 运行时验证 | 0.7.0 已将 ACP 设为默认（默认值切换不升级版本号），真实 1.1.82 的 spawn/resume/Write 审批/AskUserQuestion/取消通过且无 `run.error`。仍需补测多轮并发、长上下文、错误路径与桌面环境；发现问题时可用 `HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json` 回退。见 `docs/v0.7.0-report.md` | 待验证 |
 | Qoder ACP steer/follow-up | 运行时能力 | `initialize._meta.qoder.promptQueueing=true` 已观察到，但尚未验证 queued prompt 对 run 边界的影响；当前 ACP capabilities 明确 `steer=false`、`followUp=false`，不伪造支持 | 待验证 |
 | Qoder ACP Token 用量 | 运行时用量 | 真实 1.1.82 ACP prompt result usage 全零；HS 不写 `run.usage`。需上游在 ACP 补 token 计数，或改用有结构化 usage 的非 ACP 路径；不读私有会话库 | 待上游 |

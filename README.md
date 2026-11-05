@@ -1,8 +1,16 @@
+<div align="center">
+
 # Harness Supervisor
 
 ![version](https://img.shields.io/badge/version-0.8.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
-Harness Supervisor（HS）是一个本地、轻量、运行时无关的 **Agent Worker 生命周期与通信层**。主 Agent（下称 **Master**）通过 **CLI** 或 **MCP** 启动、观察、指导、取消和恢复其他厂商的原生 Harness；每个被启动的 Harness 进程称为 **Worker**。HS 只管理进程、会话与事件；规划、工具调用和上下文管理由各 Harness 自己完成。
+<hr />
+
+**本地、轻量、运行时无关的 Agent Worker 生命周期与通信层**
+
+主 Agent（下称 **Master**）通过 **CLI** 或 **MCP** 启动、观察、指导、取消和恢复其他厂商的原生 Harness；每个被启动的 Harness 进程称为 **Worker**。HS 只管理进程、会话与事件；规划、工具调用和上下文管理由各 Harness 自己完成。
+
+</div>
 
 ## 核心理念
 

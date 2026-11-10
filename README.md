@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.8.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.9.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -153,7 +153,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up
-node dist/src/cli.js info        # 核对 version=0.8.0 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.9.0 与 stateDir
 ```
 
 若 `npm ci` 因网络镜像失败，改用 `npm install`，再用 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -245,6 +245,9 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 | `worker_answer` | 回答输入请求或权限询问 |
 | `worker_cancel` | 取消并确认终态；不影响其他 Worker |
 | `worker_resume` | 用新指令恢复已有 session |
+| `worker_continue` | 在 idle 的 persistent Worker 上提交下一轮；沿用同一 native session |
+| `worker_admin` | pin / unpin、archive / unarchive、retire / unretire |
+| `worker_forget` | 删除终态 Worker 的 HS 记录与事件；保留 native session 文件 |
 | `supervisor_info` | 版本、限制、runtime 能力、通知通道 |
 | `supervisor_notifications` | 读取通知收件箱（production 默认全部未确认；development 默认 pending） |
 | `supervisor_notifications_ack` | 确认通知（幂等） |
@@ -260,10 +263,11 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 | --- | --- | --- |
 | 守护进程 | `up` `down` `daemon` `info` | 启动、关闭、前台运行 daemon，查看版本与状态目录 |
 | Worker 管理 | `spawn` `list` `status` `events` | 创建 Worker，列出、查询状态，增量读取事件 |
-| Worker 通信 | `wait` `send` `answer` `cancel` `resume` | 有界等待、追加指令、回答输入、取消、恢复 |
+| Worker 通信 | `wait` `send` `answer` `cancel` `resume` `continue` | 有界等待、追加指令、回答输入、取消、恢复、继续同一 Worker 的下一轮 |
+| Worker 管理 | `admin` `forget` | 固定、归档、退役、取消退役；删除 HS 记录但保留 native session |
 | 通知 | `inbox` `ack` `notify-target` `retry-notifications` | 读取与确认收件箱，登记投递目标，重试投递 |
 | 度量 | `metrics create\|show\|report\|export\|record-usage` | 创建任务，查看单任务/汇总报告，导出，补录用量 |
-| 维护 | `prune` | 清理终态且没有未确认通知的 Worker |
+| 维护 | `prune` `compact` | 清理终态且没有未确认通知的 Worker；压缩终态 Worker 的旧进度事件 |
 
 ### 状态与事件
 
@@ -273,7 +277,7 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 | 终态 | `completed` `failed` `cancelled` `crashed` `orphaned` `interrupted` |
 | Worker 事件 | `worker.starting` `worker.started` `worker.session` |
 | 运行事件 | `run.accepted` `run.started` `run.progress` `run.usage` `run.needs_input` `run.input_answered` `run.message_sent` `run.error` `run.completed` `run.failed` `run.cancelled` |
-| 生命周期事件 | `worker.cancel_requested` `worker.exited` `worker.crashed` `worker.orphaned` `worker.interrupted` `worker.resumed` `worker.resume_failed` |
+| 生命周期事件 | `worker.cancel_requested` `worker.exited` `worker.crashed` `worker.orphaned` `worker.interrupted` `worker.resumed` `worker.continued` `worker.resume_failed` |
 
 `run.usage` 是结构化、低频的运行时用量报告；`run.progress` 中旧的 `kind=usage` 仍保留以兼容既有事件消费者，但任务度量只消费 `run.usage`。`run.usage` 只描述 Token，不包含费用。
 
@@ -287,8 +291,38 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 | `worker_wait` | 有界等待；超时只表示等待窗口结束，不带游标时应先检查当前状态 |
 | `run.message_sent` | 只表示消息被 Harness 接受；模型是否看到或采纳需以事件与结果为准 |
 | `resume` | 使用新进程加载持久化 session；不会续接原进程内存，也不会自动重跑中断任务 |
-| `prune` | 显式维护操作；只清理终态且没有未确认通知的 Worker |
+| `continue` | 仅用于 `persistent` Worker；要求同一 session 仍可恢复，拒绝时不会创建替代 Worker |
+| `pin` | 保护 Worker 不被 `prune` 或 `forget` 删除 |
+| `archive` | 仅从默认 `list` 隐藏；记录、事件与 session 引用保留 |
+| `retire` | 停止接受新的 `continue` / `resume`；`unretire` 可恢复 |
+| `forget` | 显式删除 HS 记录与事件；native session 文件保留，需无未确认通知 |
+| `prune` | 显式维护操作；只清理终态、未 pin 且没有未确认通知的 Worker |
+| `compact` | 只处理终态、未 pin、无运行中进程且非 orphaned 的 Worker；保留全部生命周期事件与最新进度，seq 游标不变 |
 | `requestId` | 不带 `requestId` 时不具备幂等性；带 `requestId` 时也不提供跨组件的 exactly-once |
+
+### Persistent Worker（开发分支能力）
+
+> 状态：0.9 Release Candidate。实现与验收范围见 [RC 报告](docs/2026-11-09-hs-0.9-release-candidate.md)；Codex Desktop 多线程唤醒仍待人工验收，步骤见 [Desktop Runbook](docs/2026-11-09-desktop-e2e-runbook.md)。
+
+`worker_spawn` 传入 `persistence="persistent"`（CLI 为 `spawn --persistence persistent`）后，Worker 的身份和 native session 会跨 Turn 保留。每轮结束后 Activation 进程退出，`status` 仍记录本轮终态（通常为 `completed`），派生字段 `lifecycle` 变为 `idle`；下一轮通过 `worker_continue` 在同一个 `workerId` 和同一个 session 上启动新的 Activation。
+
+| 字段 | 含义 |
+| --- | --- |
+| `persistence` | `oneshot`（默认，兼容旧行为）或 `persistent` |
+| `lifecycle` | `active` `awaiting_input` `activating` `idle` `orphaned` `unavailable` `unknown`；由状态、进程与 session 可用性派生，不额外持久化 |
+| `session.available` | 记录的 session locator 存在 |
+| `session.restorable` | 当前可以安全启动新的 Activation；进程可能仍在运行、Worker orphaned 或文件缺失时为 `false` |
+| `session.reason` | `restorable=false` 的原因，例如 `session_file_missing`、`process_may_be_running` |
+
+`continue` 与 `resume` 分工：`continue` 用于正常交付下一轮工作；`resume` 保留原有恢复语义。Worker 为 `persistent` 但 session 不可恢复时，`continue` 返回真实错误，不会静默新建 Worker 或伪造上下文连续性。旧记录没有该字段时按 `oneshot` 读取。
+
+进程退出只释放运行资源；HS 不会因 Turn 结束删除 native session，也不会自动把 Worker 标记为退役。`pin` 保护记录，`archive` 只影响默认列表，`retire` 阻止新的 Turn，`forget` 删除 HS 记录与事件但保留 native session 文件，`compact` 只裁剪旧进度事件、不改动 session。原生 Session 删除尚未提供。
+
+### 存储诊断
+
+`supervisor_info`（CLI 为 `info`）的 `storage` 字段提供状态目录的事件字节总量、最大事件文件、active / idle / other Worker 数量以及上次启动各阶段耗时。数值来自已加载的事件文件长度，不做额外全盘扫描；`startup.store.eventBytes` 是启动时快照，不是当前值。
+
+`compact [workerId] [--keep-progress 200] [--dry-run] [--json]` 用于压缩终态 Worker 的事件日志：保留全部非 `run.progress` 事件、最新 N 条进度以及最后一条事件，原子重写 `events.jsonl` 并在记录中写入 `compacted` 标记。序列号保持不变，因此已有游标仍可继续读取；`worker.compacted.retainedFromSeq` 标明仍保留的最小序号，失去的中间序号属于显式压缩，重启时不会被误报为历史损坏。压缩后的记录仍可 `continue`（persistent Worker），`forget` 与原生 session 行为不变。`--dry-run` 只报告可回收的事件与字节数；活跃、orphaned、pinned 或仍有运行中进程的 Worker 会被拒绝或跳过。
 
 ### 持久化与幂等
 
@@ -317,10 +351,10 @@ $env:HARNESS_SUPERVISOR_WORKER_PROTOCOL = '0'
 
 | Runtime | 状态 | 已验证范围 |
 | --- | --- | --- |
-| Pi | 完整 | 原生 RPC；spawn / steer / follow-up / cancel / resume；dialog 尚未单独真实覆盖 |
-| Qoder CLI | 实验性 | ACP 默认：spawn / resume / 审批 / 提问 / 取消。stream-json 回退：spawn / cancel / resume；steer、follow-up 被接受但未生效 |
-| MiniMax Code | 实验性 | ACP：spawn / 完成 / 取消 / resume；活跃回合内 steer；queue 入队；Ask 模式尚未触发 |
-| DSH | PoC | ACP v1：spawn / resume / 模型与推理配置 / 工作区写入 / 工作区外提权 / 完全权限 / 取消 |
+| Pi | 完整 | 原生 RPC；spawn / steer / follow-up / cancel / resume；Persistent 3 轮连续协作（同 Worker / 同 Session）；dialog 尚未单独真实覆盖 |
+| Qoder CLI | 实验性 | ACP 默认：spawn / resume / 审批 / 提问 / 取消 / Persistent 3 轮连续协作。stream-json 回退：spawn / cancel / resume；steer、follow-up 被接受但未生效 |
+| MiniMax Code | 实验性 | ACP：spawn / 完成 / 取消 / resume / Persistent 3 轮连续协作；活跃回合内 steer；queue 入队；Ask 模式尚未触发 |
+| DSH | PoC | ACP v1：spawn / resume / 模型与推理配置 / 工作区写入 / 工作区外提权 / 完全权限 / 取消 / Persistent 3 轮连续协作 |
 
 ### 操作能力对比
 
@@ -333,6 +367,7 @@ $env:HARNESS_SUPERVISOR_WORKER_PROTOCOL = '0'
 | 流式文本 / 思考 / 工具事件 | 是 | 是 | 是 | 是 | 是（无 plan） |
 | 取消 | 是 | 是 | 是 | 是 | 是 |
 | resume | 是（Pi session 文件） | 是（`session/load`） | 是（`--resume`，校验 session id） | 是（`session/load`） | 是（`session/resume`，要求相同绝对 cwd） |
+| Idle continue（同一 Worker / Session 下一轮） | L3（真实 3 轮） | L3（真实 3 轮） | L2（未跑 3 轮；resume 已真实验证） | L3（真实 3 轮） | L3（真实 3 轮） |
 | 运行中 steer | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 steer 扩展；活跃回合内已验证） | 否 |
 | follow-up 队列 | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 queue 扩展；已验证入队） | 否 |
 | 交互输入（审批 / 提问 / 对话框） | 是（extension dialog） | 是（permission + elicitation） | 1.1.79 及以前支持；1.1.82 不支持提问/审批 | 是（Ask 模式触发时） | 仅审批；请求不含工具名/输入，无 elicitation |

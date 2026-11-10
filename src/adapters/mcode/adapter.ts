@@ -35,18 +35,28 @@ const CAPABILITIES: RuntimeCapabilities = {
   resume: true,
   pause: false,
   interactiveInput: true,
+  idleContinue: "L3",
   notes:
-    "MiniMax Code Agent Client Protocol (ACP) over ndJSON stdio (`mcode acp`). The protocol version was verified against a real 0.6.12 process: initialize, session/new, session/prompt, session/cancel and session/load all answered on the wire, and agent_message_chunk updates arrived during a live turn. session/prompt blocks until the turn ends and the agent rejects a second concurrent prompt. Steering goes through the mcode/session/steer extension and queued follow-ups through mcode/session/queue/enqueue; both require a build that advertises those extensions and are otherwise reported as unsupported. Against a real 0.6.12 process both were confirmed: a steer sent during an active turn was accepted with mode 'steered' and the agent acted on it, and queue/enqueue returned a queued receipt. Steering outside an active turn is rejected by the agent ('Steering requires an admitted, active ACP prompt Turn'), so a steer sent after the turn ended is not delivered. Permission requests arrive as client-side session/request_permission calls and are surfaced as awaiting_input; the reply must reuse the request id and one of the offered option ids. HS requests bypassPermissions by default (MiniMax Code's native default, matching the explicit full-execution authorization); set HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=default to opt into Ask, which surfaces approvals as awaiting_input. There is no sandbox: cwd is not a file-isolation boundary.",
+    "MiniMax Code Agent Client Protocol (ACP) over ndJSON stdio (`mcode acp`). The protocol version was verified against a real 0.6.12 process: initialize, session/new, session/prompt, session/cancel and session/load all answered on the wire, and agent_message_chunk updates arrived during a live turn. session/prompt blocks until the turn ends and the agent rejects a second concurrent prompt. Steering goes through the mcode/session/steer extension and queued follow-ups through mcode/session/queue/enqueue; both require a build that advertises those extensions and are otherwise reported as unsupported. Against a real 0.6.12 process both were confirmed: a steer sent during an active turn was accepted with mode 'steered' and the agent acted on it, and queue/enqueue returned a queued receipt. Steering outside an active turn is rejected by the agent ('Steering requires an admitted, active ACP prompt Turn'), so a steer sent after the turn ended is not delivered. Permission requests arrive as client-side session/request_permission calls and are surfaced as awaiting_input; the reply must reuse the request id and one of the offered option ids. HS requests bypassPermissions by default (MiniMax Code's native default, matching the explicit full-execution authorization); set HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=default to opt into Ask, which surfaces approvals as awaiting_input. Persistent idle continuation was verified on real 0.7.0 with a 3-Turn session (same worker and session, both earlier codewords recalled without restatement). There is no sandbox: cwd is not a file-isolation boundary.",
 };
 
 export class McodeAdapter implements HarnessAdapter {
   readonly name = "mcode";
   readonly capabilities = CAPABILITIES;
+  readonly processIdentity = "conservative" as const;
   private readonly options: McodeAdapterOptions;
   private launch: McodeLaunch | null = null;
 
   constructor(options: McodeAdapterOptions = {}) {
     this.options = options;
+  }
+
+  instanceRef(): string {
+    try {
+      return `mcode:${this.resolveLaunch().file}`;
+    } catch {
+      return "mcode";
+    }
   }
 
   async spawn(spec: HarnessSpawnSpec, callbacks: HarnessCallbacks): Promise<HarnessSession> {

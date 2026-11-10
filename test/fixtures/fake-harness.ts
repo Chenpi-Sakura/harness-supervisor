@@ -57,6 +57,7 @@ let ignoreAbort = false;
 let lastAssistantText = null;
 let lastUiRequest = null;
 let uiResolver = null;
+let priorUserText = null;
 const steerQueue = [];
 const followUpQueue = [];
 
@@ -157,6 +158,9 @@ function respond(id, command, success, data, error) {
 }
 
 function finalText(scenario, prompt) {
+  if (scenario === "recall") {
+    return `RECALL:${priorUserText ?? "NONE"}`;
+  }
   if (scenario === "report") {
     const requested = Number(process.env.FAKE_PI_REPORT_CHARS || 20_000);
     const size = Math.max(1_000, Math.min(Number.isFinite(requested) ? requested : 20_000, 60 * 1024));
@@ -210,6 +214,13 @@ async function runPrompt(prompt) {
   followUpQueue.length = 0;
   lastUiRequest = null;
 
+  const prior = [...messages].reverse().find((message) => message.role === "user");
+  priorUserText =
+    typeof prior?.content === "string"
+      ? prior.content
+      : prior?.content
+        ? JSON.stringify(prior.content)
+        : null;
   const userMessage = { role: "user", content: prompt, timestamp: Date.now() };
   appendSession(userMessage);
   emit({ type: "agent_start" });

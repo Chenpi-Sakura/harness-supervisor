@@ -1,0 +1,73 @@
+{
+  "startedAt": "2026-11-09T12:43:56.671Z",
+  "runtime": "pi",
+  "model": "deepseek-v4.1-flash-1017",
+  "provider": "new-api",
+  "stateDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-pi-state-Gk7ppB",
+  "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-pi-work-myqH17",
+  "nonceA": "A-75b3848b",
+  "nonceB": "B-e31befc4",
+  "workerId": "w-mw996096-57b21ada",
+  "sessionId": "01a1c056-360f-730d-9d2b-632142cb0e13",
+  "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-pi-state-Gk7ppB\\sessions\\w-mw996096-57b21ada\\2026-11-09T12-43-57-840Z_01a1c056-360f-730d-9d2b-632142cb0e13.jsonl",
+  "turns": [
+    {
+      "turn": 1,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "01a1c056-360f-730d-9d2b-632142cb0e13",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-pi-state-Gk7ppB\\sessions\\w-mw996096-57b21ada\\2026-11-09T12-43-57-840Z_01a1c056-360f-730d-9d2b-632142cb0e13.jsonl",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 0,
+      "result": "TURN1_READY",
+      "error": null
+    },
+    {
+      "turn": 2,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "01a1c056-360f-730d-9d2b-632142cb0e13",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-pi-state-Gk7ppB\\sessions\\w-mw996096-57b21ada\\2026-11-09T12-43-57-840Z_01a1c056-360f-730d-9d2b-632142cb0e13.jsonl",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 1,
+      "result": "TURN2_READY",
+      "error": null
+    },
+    {
+      "turn": 3,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "01a1c056-360f-730d-9d2b-632142cb0e13",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-pi-state-Gk7ppB\\sessions\\w-mw996096-57b21ada\\2026-11-09T12-43-57-840Z_01a1c056-360f-730d-9d2b-632142cb0e13.jsonl",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 2,
+      "result": "A-75b3848b, B-e31befc4",
+      "error": null
+    }
+  ],
+  "assertions": {
+    "turn1Completed": true,
+    "turn1Idle": true,
+    "turn1Session": true,
+    "sameWorker": true,
+    "sameSessionAfterTurn2": true,
+    "turn2Completed": true,
+    "sameSessionAfterTurn3": true,
+    "contextHadNonceA": true,
+    "contextHadNonceB": true,
+    "turn3Idle": true,
+    "allProcessesExited": true,
+    "resumeCount": true
+  },
+  "error": null,
+  "ok": true
+}

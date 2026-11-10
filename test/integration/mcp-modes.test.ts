@@ -210,7 +210,18 @@ test("production hides diagnostics while development keeps the legacy status pay
   assert.equal(spawned.status, "running", "spawn returns acceptance, not completion");
   assert.deepEqual(
     Object.keys(spawned).sort(),
-    ["id", "lastSeq", "notificationBinding", "notifyTarget", "runtime", "status", "taskId"],
+    [
+      "id",
+      "lastSeq",
+      "lifecycle",
+      "notificationBinding",
+      "notifyTarget",
+      "persistence",
+      "runtime",
+      "session",
+      "status",
+      "taskId",
+    ],
   );
   assert.deepEqual(spawned.notifyTarget, { channel: "none" });
   assert.equal(spawned.notificationBinding.source, "explicit");
@@ -780,7 +791,16 @@ test("production event pagination stays lossless and explicit progress still wor
 
   const list = parseTool(await call(production, "worker_list", {}));
   assert.equal(list.length, 1);
-  assert.deepEqual(Object.keys(list[0]).sort(), ["id", "lastSeq", "runtime", "status", "taskId"]);
+  assert.deepEqual(Object.keys(list[0]).sort(), [
+    "id",
+    "lastSeq",
+    "lifecycle",
+    "persistence",
+    "runtime",
+    "session",
+    "status",
+    "taskId",
+  ]);
 });
 
 test("compact failure status is bounded and the full error stays retrievable", async (t) => {

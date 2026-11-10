@@ -1,0 +1,64 @@
+{
+  "date": "2026-11-09",
+  "purpose": "Real 0.8.0 state compatibility: a state directory written by a daemon built from main@7649b34, then opened by the 0.9 RC daemon built from feat-261109-hs-09.",
+  "host": {
+    "os": "Windows 10.0.26300 x64",
+    "node": "v24.22.1"
+  },
+  "oldEnvironment": {
+    "source": "detached git worktree of main@7649b34",
+    "commit": "7649b34",
+    "version": "0.8.0",
+    "daemonPid": 23416,
+    "harness": "test/fixtures/fake-harness.js from the same commit",
+    "spawnCommand": "node D:/tmp/hs-080/dist/src/cli.js --state-dir D:/tmp/hs-080-state spawn --prompt \"legacy compatibility worker\" --cwd D:/tmp --wait --json",
+    "workerId": "w-mw98z9yv-6408f3dc",
+    "status": "completed",
+    "sessionId": "d362da62-dfd4-47d9-9b81-97bfe571b74a",
+    "sessionFile": "<temp>/hs-080-state/sessions/w-mw98z9yv-6408f3dc/fake_013571cc-ac7f-42c7-9965-916caad15cae.jsonl",
+    "result": "FAKE_PI_OK",
+    "inboxIdBefore": "w-mw98z9yv-6408f3dc#11"
+  },
+  "newDaemonFirstStart": {
+    "version": "0.8.0",
+    "workers": 1,
+    "warnings": 0,
+    "store": { "checkpointed": 0, "scanned": 1, "eventBytes": 2459 },
+    "timings": {
+      "notifierInitMs": 2,
+      "idempotencyInitMs": 1,
+      "metricsInitMs": 2,
+      "storeInitMs": 13,
+      "reconcileMetricsMs": 4,
+      "reconcileNotificationsMs": 6,
+      "totalMs": 28
+    },
+    "persistence": "oneshot",
+    "lifecycle": "idle",
+    "sessionAvailable": true,
+    "sessionRestorable": true,
+    "resumeAvailable": true,
+    "continue": {
+      "code": "UNSUPPORTED",
+      "message": "This worker is not persistent. Spawn it with persistence=\"persistent\" to continue it across Turns."
+    },
+    "resume": {
+      "sameWorkerId": true,
+      "sameSessionId": true,
+      "sameSessionFile": true,
+      "status": "completed",
+      "result": "RESUMED FAKE_PI_OK",
+      "resumeCount": 1,
+      "turns": 2
+    },
+    "inboxAfterResumeIds": ["w-mw98z9yv-6408f3dc#11", "w-mw98z9yv-6408f3dc#24"]
+  },
+  "newDaemonSecondStart": {
+    "store": { "checkpointed": 1, "scanned": 0, "eventBytes": 5385 },
+    "timings": { "storeInitMs": 9, "totalMs": 23 },
+    "inboxIds": ["w-mw98z9yv-6408f3dc#11", "w-mw98z9yv-6408f3dc#24"],
+    "duplicateNotificationIds": 0,
+    "warnings": 0
+  },
+  "scope": "Real old daemon state, synthetic Pi harness. No production state directory was read or modified. The old worktree and temporary state directory were removed after collecting these facts."
+}

@@ -30,6 +30,82 @@ export function isTerminal(status: WorkerStatus): boolean {
   return TERMINAL_STATUSES.has(status);
 }
 
+export type WorkerPersistence = "oneshot" | "persistent";
+
+export type WorkerAdminAction =
+  | "pin"
+  | "unpin"
+  | "archive"
+  | "unarchive"
+  | "retire"
+  | "unretire";
+
+export interface ForgetWorkerResult {
+  workerId: string;
+  forgotten: boolean;
+  sessionPreserved: true;
+  note: string;
+}
+
+export interface CompactWorkerResult {
+  workerId: string;
+  dryRun: boolean;
+  removedEvents: number;
+  keptEvents: number;
+  removedBytes: number;
+  keptBytes: number;
+  skipped?: string;
+}
+
+export interface CompactResult {
+  dryRun: boolean;
+  workers: CompactWorkerResult[];
+  removedEvents: number;
+  removedBytes: number;
+}
+
+/**
+ * Read-time projection, never a second persisted state. A terminal `completed`
+ * status can still be `idle` when its native session is restorable; that is the
+ * difference between a finished Turn and a retired Worker.
+ */
+export type WorkerLifecycle =
+  | "active"
+  | "awaiting_input"
+  | "activating"
+  | "recovering"
+  | "idle"
+  | "orphaned"
+  | "unavailable"
+  | "retired"
+  | "unknown";
+
+/** Minimal reference to a native session; HS owns the reference, not the transcript. */
+export interface NativeSessionRef {
+  runtime: string;
+  runtimeInstanceRef: string;
+  sessionId?: string;
+  sessionLocator?: string;
+  cwd?: string;
+  capabilitiesObservedAt?: string;
+}
+
+export interface WorkerSessionProjection {
+  /** The persisted locator exists. */
+  available: boolean;
+  /** A new activation can be attempted on this exact native session now. */
+  restorable: boolean;
+  reason?: string;
+  ref?: NativeSessionRef;
+}
+
+/**
+ * Evidence level for a capability. L3 means a real native-harness 3-Turn
+ * continuation test passed; L4 additionally requires a real Master/Codex loop.
+ * Declared protocol methods never get L3 without an end-to-end effect check.
+ */
+export type CapabilityLevel = "L0" | "L1" | "L2" | "L3" | "L4";
+
 export interface RuntimeCapabilities {
   runtime: string;
   steer: boolean;
@@ -38,6 +114,8 @@ export interface RuntimeCapabilities {
   resume: boolean;
   pause: false;
   interactiveInput: boolean;
+  /** Highest verified level for HS idle continuation (same worker + session). */
+  idleContinue?: CapabilityLevel;
   notes: string;
 }
 
@@ -108,12 +186,47 @@ export interface WorkerRecord {
   pid?: number;
   sessionId?: string;
   sessionFile?: string;
+  /** Defaults to oneshot for records written before this field existed. */
+  persistence?: WorkerPersistence;
+  /** Minimal native-session reference. Session content stays with the Harness. */
+  sessionRef?: NativeSessionRef;
+  /** Pinned workers are protected from explicit and retention cleanup. */
+  pinned?: boolean;
+  /** Hidden from the default list; identity and session reference are kept. */
+  archived?: boolean;
+  /** Present once retired; no new Turn is accepted until unretired. */
+  retiredAt?: string;
+  /**
+   * Marker for intentional seq gaps. Without it, a gap means incomplete or
+   * damaged history; with it, startup accepts the compacted file as a whole.
+   */
+  compacted?: {
+    removedEvents: number;
+    keepProgress: number;
+    at: string;
+    /** First seq still present in events.jsonl after compaction. */
+    retainedFromSeq?: number;
+    /** Event count and last seq at compaction time, for later loss detection. */
+    retainedEventCount?: number;
+    retainedLastSeq?: number;
+  };
   exit?: ExitInfo;
   result?: WorkerResult;
   error?: string;
   pendingInput?: PendingInput;
   lastSeq: number;
   eventCount: number;
+  /**
+   * Fast-path proof that events.jsonl was fully scanned at this size. Startup
+   * trusts it only when the file size and both counters still match; otherwise
+   * it rescans from the beginning. Absent on records written by older versions.
+   */
+  eventCheckpoint?: {
+    bytes: number;
+    eventCount: number;
+    lastSeq: number;
+    endsWithNewline: boolean;
+  };
   stats: WorkerStats;
   capabilities: RuntimeCapabilities;
   config: WorkerConfig;
@@ -131,6 +244,11 @@ export interface WorkerRecord {
 export interface WorkerSummary extends WorkerRecord {
   resumeAvailable: boolean;
   pidAlive: boolean | null;
+  /** Effective persistence mode; legacy records read as oneshot. */
+  persistence: WorkerPersistence;
+  /** Derived from status, live control and native-session availability. */
+  lifecycle: WorkerLifecycle;
+  session: WorkerSessionProjection;
   /**
    * Effective notification binding for this worker, present on spawn/resume
    * responses only. It is computed, never persisted: `source` would otherwise
@@ -175,7 +293,9 @@ export type WorkerEventType =
   | "worker.orphaned"
   | "worker.interrupted"
   | "worker.resumed"
-  | "worker.resume_failed";
+  | "worker.continued"
+  | "worker.resume_failed"
+  | "worker.admin";
 
 export interface WorkerEvent {
   seq: number;
@@ -199,6 +319,8 @@ export interface SpawnInput {
   cwd: string;
   prompt: string;
   name?: string;
+  /** Opt-in persistent collaboration; absent keeps the legacy oneshot behavior. */
+  persistence?: WorkerPersistence;
   model?: string;
   provider?: string;
   tools?: string[];
@@ -344,6 +466,22 @@ export interface SupervisorLimits {
   maxEventStringBytes: number;
 }
 
+export interface StorageDiagnostics {
+  workers: number;
+  eventBytes: number;
+  largestEventFileBytes: number;
+  largestEventWorkerId?: string;
+  activeWorkers: number;
+  idleWorkers: number;
+  otherWorkers: number;
+  /** Last startup reconciliation, not a fresh measurement. */
+  startup: {
+    totalMs: number;
+    storeInitMs: number;
+    store: { checkpointed: number; scanned: number; eventBytes: number };
+  };
+}
+
 export interface SupervisorInfo {
   name: string;
   version: string;
@@ -381,6 +519,8 @@ export interface SupervisorInfo {
     reason: string;
   };
   runtimes: RuntimeCapabilities[];
+  /** Absent on older daemons. */
+  storage?: StorageDiagnostics;
 }
 
 export type SendMode = "steer" | "follow-up";
@@ -601,6 +741,15 @@ export interface HarnessSpawnSpec {
 export interface HarnessAdapter {
   readonly name: string;
   readonly capabilities: RuntimeCapabilities;
+  /**
+   * How a live PID can be attributed after a daemon restart. `command-line`
+   * means worker/session tokens appear in argv (Pi, Qoder stream-json).
+   * `conservative` means they do not (ACP transports): an unverifiable live PID
+   * must block resume rather than be mistaken for PID reuse.
+   */
+  readonly processIdentity?: "command-line" | "conservative";
+  /** Best-effort identity of the installed runtime/config instance, never credentials. */
+  instanceRef?(): string;
   spawn(spec: HarnessSpawnSpec, callbacks: HarnessCallbacks): Promise<HarnessSession>;
   resume(
     spec: HarnessSpawnSpec,

@@ -1,7 +1,7 @@
 import { open, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { SupervisorError } from "../errors.js";
-import { isPidAlive } from "../util/async.js";
+import { inspectProcess } from "../util/process.js";
 import { ensureDir, readJsonFile } from "../util/fsx.js";
 import { randomToken, type EndpointInfo } from "./protocol.js";
 
@@ -20,7 +20,7 @@ interface LockInfo {
 export async function acquireDaemonLock(stateDir: string): Promise<DaemonLock> {
   await ensureDir(stateDir);
   const lockPath = path.join(stateDir, "daemon.lock");
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const handle = await open(lockPath, "wx", 0o600);
       const info: LockInfo = {
@@ -42,14 +42,50 @@ export async function acquireDaemonLock(stateDir: string): Promise<DaemonLock> {
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const existing = await readJsonFile<LockInfo>(lockPath).catch(() => null);
-      if (existing?.pid && existing.pid !== process.pid && isPidAlive(existing.pid)) {
+      const raw = await readFile(lockPath, "utf8").catch(() => null);
+      let existing: LockInfo | null = null;
+      try {
+        existing = raw ? (JSON.parse(raw) as LockInfo) : null;
+      } catch {
+        existing = null;
+      }
+      if (!existing || !Number.isInteger(existing.pid) || existing.pid <= 0) {
+        // A corrupt lock may be mid-write by the owning daemon. Recycling it
+        // here could start a second daemon on the same state directory.
         throw new SupervisorError(
           "INVALID_STATE",
-          `Another supervisor daemon appears to be running (pid ${existing.pid})`,
-          { pid: existing.pid, lockFile: lockPath },
+          `The daemon lock is unreadable (${lockPath}). Confirm no supervisor daemon is running before removing it.`,
+          { lockFile: lockPath },
         );
       }
+      if (existing.pid !== process.pid) {
+        const identity = await inspectProcess(existing.pid, [
+          existing.stateDir ?? stateDir,
+          "daemon-entry",
+        ]);
+        // A generic "harness-supervisor" token also matches CLI commands for the
+        // same state directory; require a daemon-shaped command line as well.
+        const commandLine = identity.commandLine;
+        const looksLikeDaemon =
+          commandLine === null ||
+          commandLine.includes("daemon-entry") ||
+          /\bdaemon\b/.test(commandLine);
+        if (identity.alive && identity.verified !== false && looksLikeDaemon) {
+          throw new SupervisorError(
+            "INVALID_STATE",
+            identity.verified === true
+              ? `Another supervisor daemon appears to be running (pid ${existing.pid})`
+              : `A live process (pid ${existing.pid}) holds the daemon lock but its identity could not be verified; refusing to recycle the lock`,
+            { pid: existing.pid, lockFile: lockPath, pidVerified: identity.verified },
+          );
+        }
+        // verified === false means the PID was reused by an unrelated process;
+        // the lock is stale and can be removed without touching a daemon.
+      }
+      // Do not unlink a lock that another starter replaced while we inspected
+      // it; retry the exclusive create instead.
+      const currentRaw = await readFile(lockPath, "utf8").catch(() => null);
+      if (currentRaw !== raw) continue;
       await unlink(lockPath).catch(() => undefined);
     }
   }

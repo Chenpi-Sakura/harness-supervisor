@@ -12,7 +12,15 @@ import type {
   UsageRecord,
   UsageSummary,
 } from "./metrics.js";
-import type { NotificationBinding, NotifyTarget, WorkerEvent, WorkerStatus, WorkerSummary } from "./types.js";
+import type {
+  CompactResult,
+  ForgetWorkerResult,
+  NotificationBinding,
+  NotifyTarget,
+  WorkerEvent,
+  WorkerStatus,
+  WorkerSummary,
+} from "./types.js";
 import type { ReadEventsResult, WorkerStatusResult } from "./types.js";
 import {
   EVENTS_BUDGET_BYTES,
@@ -52,9 +60,9 @@ Workers:
   spawn --prompt <text> [--cwd <dir>] [--name <n>] [--model <m>] [--provider <p>]
         [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder|mcode|dsh]
         [--extra-args '["--no-extensions"]'] [--request-id <key>] [--wait] [--json]
-        [--task <taskId>]
+        [--persistence persistent|oneshot] [--task <taskId>]
         [--notify-thread <verified-thread-id> | --notify-none]
-  list [--status running,failed] [--limit 50] [--json]
+  list [--status running,failed] [--limit 50] [--include-archived] [--json]
   status <workerId> [--full] [--json]
   events <workerId> [--since <seq>] [--limit 100] [--seq <n>] [--full] [--json]
          Compact by default: bounded result preview, lifecycle events only.
@@ -68,6 +76,14 @@ Workers:
   resume <workerId> --prompt <text> [--model <m>] [--provider <p>] [--json]
         [--notify-thread <verified-thread-id> | --notify-none]
         Omit notification flags to preserve the original worker binding.
+  continue <workerId> --prompt <text> [--model <m>] [--provider <p>] [--json]
+        Submit the next Turn to an idle persistent worker on its existing session.
+        The worker must have been spawned with --persistence persistent.
+  admin <workerId> --action pin|unpin|archive|unarchive|retire|unretire
+  forget <workerId>       Remove the HS record and events; the native session file is kept.
+  compact [workerId] [--keep-progress 200] [--dry-run] [--json]
+        Prune old progress events from finished workers. Lifecycle events, the
+        latest progress and the final result stay readable; seq cursors are kept.
 
 Notifications:
   inbox [--state pending|delivered|failed|all] [--worker <id>] [--limit 50] [--json]
@@ -282,11 +298,18 @@ function printMetricsReport(report: MetricsReport): void {
 
 function printWorker(worker: WorkerSummary): void {
   const lines = [
-    `${worker.id}  ${worker.status}  runtime=${worker.runtime}${worker.name ? `  name=${worker.name}` : ""}`,
+    `${worker.id}  ${worker.status}  ${worker.lifecycle ?? "unknown"}  runtime=${worker.runtime}${worker.name ? `  name=${worker.name}` : ""}`,
     `  cwd: ${worker.cwd}`,
     `  created: ${worker.createdAt}${worker.endedAt ? `  ended: ${worker.endedAt}` : ""}`,
-    `  pid: ${worker.pid ?? "-"}  session: ${worker.sessionId ?? "-"}  resumable: ${worker.resumeAvailable ? "yes" : "no"}`,
+    `  persistence: ${worker.persistence ?? "oneshot"}  session: ${worker.sessionId ?? "-"}  restorable: ${worker.session?.restorable ? "yes" : "no"}${worker.session?.reason ? ` (${worker.session.reason})` : ""}`,
+    `  pid: ${worker.pid ?? "-"}  resumable: ${worker.resumeAvailable ? "yes" : "no"}`,
   ];
+  const admin = [
+    worker.pinned ? "pinned" : "",
+    worker.archived ? "archived" : "",
+    worker.retiredAt ? `retired_at=${worker.retiredAt}` : "",
+  ].filter(Boolean);
+  if (admin.length > 0) lines.push(`  admin: ${admin.join("  ")}`);
   if (worker.pendingInput) {
     lines.push(
       `  pending input: ${worker.pendingInput.method} ${worker.pendingInput.requestId} ${worker.pendingInput.title ?? ""}`.trim(),
@@ -303,7 +326,10 @@ function printWorker(worker: WorkerSummary): void {
     lines.push(`  result: ${preview}${worker.result.text.length > 1200 ? "\n    [truncated in CLI display]" : ""}`);
   }
   if (worker.error) lines.push(`  error: ${worker.error}`);
-  lines.push(`  events: ${worker.eventCount} (cursor ${worker.lastSeq})`);
+  const retained = worker.compacted?.retainedFromSeq;
+  lines.push(
+    `  events: ${worker.eventCount} (cursor ${worker.lastSeq}${retained ? `, retained from ${retained}` : ""})`,
+  );
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
@@ -536,6 +562,7 @@ async function main(): Promise<void> {
         cwd: { type: "string" },
         prompt: { type: "string" },
         name: { type: "string" },
+        persistence: { type: "string" },
         runtime: { type: "string" },
         model: { type: "string" },
         provider: { type: "string" },
@@ -570,6 +597,7 @@ async function main(): Promise<void> {
         "older-than-days": { type: "string" },
         keep: { type: "string" },
         "dry-run": { type: "boolean" },
+        "keep-progress": { type: "string" },
         "include-sessions": { type: "boolean" },
         state: { type: "string" },
         states: { type: "string" },
@@ -592,6 +620,8 @@ async function main(): Promise<void> {
         "usage-id": { type: "string" },
         note: { type: "string" },
         "include-tasks": { type: "boolean" },
+        action: { type: "string" },
+        "include-archived": { type: "boolean" },
       },
     });
   } catch (error) {
@@ -643,17 +673,35 @@ async function main(): Promise<void> {
             pid: number;
             stateDir: string;
             version: string;
-            runtimes: Array<{ runtime: string; resume: boolean; pause: boolean }>;
+            runtimes: Array<{
+              runtime: string;
+              resume: boolean;
+              pause: boolean;
+              idleContinue?: string;
+            }>;
+            storage?: {
+              workers: number;
+              eventBytes: number;
+              largestEventFileBytes: number;
+              activeWorkers: number;
+              idleWorkers: number;
+              otherWorkers: number;
+              startup: { totalMs: number; storeInitMs: number };
+            };
           };
+          const storage = typed.storage;
           process.stdout.write(
             `supervisor running  pid=${typed.pid}  version=${typed.version}\nstate: ${typed.stateDir}\n` +
               typed.runtimes
                 .map(
                   (runtime) =>
-                    `runtime ${runtime.runtime}: resume=${runtime.resume} pause=${runtime.pause}`,
+                    `runtime ${runtime.runtime}: resume=${runtime.resume} pause=${runtime.pause} idleContinue=${runtime.idleContinue ?? "unverified"}`,
                 )
                 .join("\n") +
-              "\n",
+              "\n" +
+              (storage
+                ? `storage: workers=${storage.workers} active=${storage.activeWorkers} idle=${storage.idleWorkers} other=${storage.otherWorkers} eventBytes=${storage.eventBytes} largestEventFile=${storage.largestEventFileBytes} startupMs=${storage.startup.totalMs}\n`
+                : ""),
           );
         }
         return;
@@ -670,6 +718,7 @@ async function main(): Promise<void> {
             cwd: stringArg(values.cwd, "cwd") ?? process.cwd(),
             prompt,
             name: stringArg(values.name, "name"),
+            persistence: stringArg(values.persistence, "persistence"),
             taskId: stringArg(values.task, "task"),
             model: stringArg(values.model, "model"),
             provider: stringArg(values.provider, "provider"),
@@ -718,6 +767,7 @@ async function main(): Promise<void> {
         const workers = await client.request<WorkerSummary[]>("list", {
           statuses,
           limit: intArg(values.limit, "limit", 50),
+          ...(boolArg(values["include-archived"]) ? { includeArchived: true } : {}),
         });
         if (json) printJson(workers);
         else if (workers.length === 0) process.stdout.write("No workers.\n");
@@ -951,6 +1001,91 @@ async function main(): Promise<void> {
         else {
           printWorker(result);
           printNotificationBinding(result.notificationBinding);
+        }
+        return;
+      }
+      case "continue": {
+        const workerId = positionals[1];
+        if (!workerId) throw new SupervisorError("BAD_REQUEST", "workerId is required");
+        const prompt = await readPrompt(
+          stringArg(values.prompt, "prompt"),
+          positionals.slice(2),
+        );
+        const result = await client.request<WorkerSummary>(
+          "continue",
+          {
+            workerId,
+            prompt,
+            notifyTarget: workerNotifyTarget(values),
+            model: stringArg(values.model, "model"),
+            provider: stringArg(values.provider, "provider"),
+            tools: parseList(values.tools),
+            thinking: stringArg(values.thinking, "thinking"),
+            maxDurationMs: intArg(values["max-duration-ms"], "max-duration-ms"),
+            extraArgs: parseExtraArgs(values["extra-args"]),
+            requestId: stringArg(values["request-id"], "request-id"),
+          },
+          { timeoutMs: 90_000 },
+        );
+        if (json) printJson(result);
+        else {
+          printWorker(result);
+          printNotificationBinding(result.notificationBinding);
+        }
+        return;
+      }
+      case "admin": {
+        const workerId = positionals[1];
+        if (!workerId) throw new SupervisorError("BAD_REQUEST", "workerId is required");
+        const action = stringArg(values.action, "action");
+        const allowed = ["pin", "unpin", "archive", "unarchive", "retire", "unretire"];
+        if (!action || !allowed.includes(action)) {
+          throw new SupervisorError("BAD_REQUEST", `--action must be one of ${allowed.join(", ")}`);
+        }
+        const result = await client.request<WorkerSummary>("admin", { workerId, action });
+        if (json) printJson(result);
+        else printWorker(result);
+        return;
+      }
+      case "forget": {
+        const workerId = positionals[1];
+        if (!workerId) throw new SupervisorError("BAD_REQUEST", "workerId is required");
+        const result = await client.request<ForgetWorkerResult>("forget", { workerId });
+        if (json) printJson(result);
+        else process.stdout.write(`${result.note}\n`);
+        return;
+      }
+      case "compact": {
+        const workerId = positionals[1];
+        const result = await client.request<CompactResult>(
+          "compact",
+          {
+            workerId,
+            keepProgress: intArg(values["keep-progress"], "keep-progress", 200),
+            dryRun: boolArg(values["dry-run"]),
+          },
+          { timeoutMs: 120_000 },
+        );
+        if (json) {
+          printJson(result);
+        } else if (result.workers.length === 0) {
+          process.stdout.write("No workers to compact.\n");
+        } else {
+          const suffix = result.dryRun ? " [dry-run]" : "";
+          for (const item of result.workers) {
+            if (item.skipped) {
+              process.stdout.write(`${item.workerId}  skipped: ${item.skipped}\n`);
+            } else {
+              process.stdout.write(
+                `${item.workerId}  removed ${item.removedEvents} event(s) / ${item.removedBytes} byte(s); kept ${item.keptEvents} (${item.keptBytes} bytes)${suffix}\n`,
+              );
+            }
+          }
+          if (result.workers.length > 1) {
+            process.stdout.write(
+              `total removed ${result.removedEvents} event(s) / ${result.removedBytes} byte(s)${suffix}\n`,
+            );
+          }
         }
         return;
       }

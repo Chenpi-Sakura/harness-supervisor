@@ -35,19 +35,29 @@ const CAPABILITIES: RuntimeCapabilities = {
   resume: true,
   pause: false,
   interactiveInput: true,
+  idleContinue: "L3",
   notes:
-    "DeepSeek Harness ACP over ndJSON stdio (`dsh --profile acp`). Verified against the desktop-bundled CLI 0.2.1-rc.5 (agent 0.0.1): initialize advertises ACP v1 plus session close/list/resume, session/new and session/resume work, model and reasoning_effort are selectable config options, session/prompt blocks until the turn and descendants settle, session/cancel returns stopReason=cancelled, and stdin EOF exits the process cleanly. session/resume restores the persisted conversation in a new process and requires the identical absolute cwd; there is no session/load, fork, delete or transcript replay. The shipped acp profile reads DSH_PERMISSION_MODE at boot and defaults to workspace-write with approval ask: file writes inside the workspace or platform temp are allowed without a prompt, while an outside write is denied and can trigger session/request_permission for a one-time danger-full-access escalation (verified). HARNESS_SUPERVISOR_DSH_PERMISSION_MODE selects read-only, workspace-write or danger-full-access; danger-full-access removes the file sandbox and sets approval to never. DSH's permission request carries only a tool call id, not the tool name or input; the adapter answers with the offered allow-once/reject-once option. ACP has no active-turn steer, so steer and follow-up are unsupported; a second prompt is rejected while one is active. No plan, commands, terminal, client filesystem, elicitation, MCP stdio or images. usage_update is context occupancy, not billed token usage. DSH's ACP codec maps native aborted/blocked/error turn endings to end_turn, so HS cannot always distinguish those from a normal completion. cwd is not a filesystem sandbox.",
+    "DeepSeek Harness ACP over ndJSON stdio (`dsh --profile acp`). Verified against the desktop-bundled CLI 0.2.1-rc.5 (agent 0.0.1): initialize advertises ACP v1 plus session close/list/resume, session/new and session/resume work, model and reasoning_effort are selectable config options, session/prompt blocks until the turn and descendants settle, session/cancel returns stopReason=cancelled, and stdin EOF exits the process cleanly. session/resume restores the persisted conversation in a new process and requires the identical absolute cwd; there is no session/load, fork, delete or transcript replay. The shipped acp profile reads DSH_PERMISSION_MODE at boot and defaults to workspace-write with approval ask: file writes inside the workspace or platform temp are allowed without a prompt, while an outside write is denied and can trigger session/request_permission for a one-time danger-full-access escalation (verified). HARNESS_SUPERVISOR_DSH_PERMISSION_MODE selects read-only, workspace-write or danger-full-access; danger-full-access removes the file sandbox and sets approval to never. DSH's permission request carries only a tool call id, not the tool name or input; the adapter answers with the offered allow-once/reject-once option. ACP has no active-turn steer, so steer and follow-up are unsupported; a second prompt is rejected while one is active. No plan, commands, terminal, client filesystem, elicitation, MCP stdio or images. usage_update is context occupancy, not billed token usage. DSH's ACP codec maps native aborted/blocked/error turn endings to end_turn, so HS cannot always distinguish those from a normal completion. Persistent idle continuation was verified with a real 3-Turn session (same worker and session, same absolute cwd, both earlier codewords recalled without restatement). cwd is not a filesystem sandbox.",
 };
 
 export class DshAdapter implements HarnessAdapter {
   readonly name = "dsh";
   readonly capabilities = CAPABILITIES;
+  readonly processIdentity = "conservative" as const;
   private readonly options: DshAdapterOptions;
   private launch: DshLaunch | null = null;
   private permissionMode: DshPermissionMode | null = null;
 
   constructor(options: DshAdapterOptions = {}) {
     this.options = options;
+  }
+
+  instanceRef(): string {
+    try {
+      return `dsh:${this.resolveLaunch().file}`;
+    } catch {
+      return "dsh";
+    }
   }
 
   async spawn(spec: HarnessSpawnSpec, callbacks: HarnessCallbacks): Promise<HarnessSession> {

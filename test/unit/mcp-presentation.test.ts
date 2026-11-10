@@ -10,6 +10,7 @@ import {
   presentNotifications,
   presentStatus,
   presentWait,
+  presentWorkerAdmin,
   resolveMcpMode,
 } from "../../src/mcp-presentation.js";
 import type {
@@ -419,9 +420,9 @@ test("production info keeps every advertised runtime on a terse note", () => {
         resume: true,
         pause: false,
         interactiveInput: true,
+        idleContinue: "L3",
         notes: longNote,
-      },
-      {
+      },      {
         runtime: "qoder",
         steer: true,
         followUp: true,
@@ -454,12 +455,46 @@ test("production info keeps every advertised runtime on a terse note", () => {
         notes: longNote,
       },
     ],
+    storage: {
+      workers: 3,
+      eventBytes: 12345,
+      largestEventFileBytes: 9000,
+      largestEventWorkerId: "w-1",
+      activeWorkers: 1,
+      idleWorkers: 2,
+      otherWorkers: 0,
+      startup: {
+        totalMs: 12,
+        storeInitMs: 7,
+        store: { checkpointed: 2, scanned: 1, eventBytes: 12345 },
+      },
+    },
   } as unknown as SupervisorInfo;
 
   const view = presentInfo(info, "production", "production") as {
-    runtimes: { runtime: string; notes: string }[];
+    runtimes: { runtime: string; notes: string; idleContinue?: string }[];
+    storage?: Record<string, unknown>;
   };
   assert.equal(view.runtimes.length, 4);
+  assert.deepEqual(view.storage, {
+    workers: 3,
+    eventBytes: 12345,
+    largestEventFileBytes: 9000,
+    activeWorkers: 1,
+    idleWorkers: 2,
+    otherWorkers: 0,
+    startupMs: 12,
+  });
+  assert.equal(
+    view.runtimes.find((runtime) => runtime.runtime === "pi")?.idleContinue,
+    "L3",
+    "a verified idle-continuation level must survive the production trim",
+  );
+  assert.equal(
+    "idleContinue" in (view.runtimes.find((runtime) => runtime.runtime === "qoder") ?? {}),
+    false,
+    "an unverified level stays absent instead of being invented",
+  );
   for (const runtime of view.runtimes) {
     assert.notEqual(
       runtime.notes,
@@ -474,4 +509,24 @@ test("production info keeps every advertised runtime on a terse note", () => {
   const mcode = view.runtimes.find((runtime) => runtime.runtime === "mcode");
   assert.ok(mcode, "the mcode runtime must be advertised");
   assert.match(mcode.notes, /steer/i);
+});
+
+test("admin presentation carries management flags and hides them when absent", () => {
+  const base = {
+    id: "w-1",
+    status: "completed",
+    lifecycle: "idle",
+    lastSeq: 7,
+  } as unknown as WorkerSummary;
+  const plain = presentWorkerAdmin(base, "production") as Record<string, unknown>;
+  assert.deepEqual(Object.keys(plain).sort(), ["id", "lastSeq", "lifecycle", "status"]);
+
+  const managed = presentWorkerAdmin(
+    { ...base, pinned: true, archived: true, retiredAt: "2026-11-09T00:00:00.000Z" } as WorkerSummary,
+    "production",
+  ) as Record<string, unknown>;
+  assert.equal(managed.pinned, true);
+  assert.equal(managed.archived, true);
+  assert.equal(managed.retiredAt, "2026-11-09T00:00:00.000Z");
+  assert.equal("promptPreview" in managed, false);
 });

@@ -58,9 +58,11 @@ test("persists records and events and reloads them with a valid cursor", async (
   assert.equal(page.hasMore, true);
 
   const reloaded = new Store(dir);
-  const { workers, warnings } = await reloaded.init();
+  const { workers, warnings, stats } = await reloaded.init();
   assert.equal(warnings.length, 0);
   assert.equal(workers.length, 1);
+  assert.equal(stats.checkpointed, 1, "a matching size/counter checkpoint skips the full scan");
+  assert.equal(stats.scanned, 0);
   assert.equal(workers[0]!.lastSeq, 5);
   assert.equal(workers[0]!.eventCount, 5);
   assert.equal(reloaded.getWorker(record.id)?.status, "completed");
@@ -68,6 +70,135 @@ test("persists records and events and reloads them with a valid cursor", async (
     reloaded.getEvents(record.id, 0, 100).events.map((event) => event.seq),
     [1, 2, 3, 4, 5],
   );
+});
+
+test("interleaved appends across many workers stay isolated and ordered", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-store-parallel-"));
+  const store = new Store(dir);
+  await store.init();
+  const workerCount = 12;
+  const eventsPerWorker = 200;
+  const records = Array.from({ length: workerCount }, (_, index) =>
+    makeRecord(`w-par-${String(index).padStart(2, "0")}`),
+  );
+  for (const record of records) await store.createWorker(record);
+  for (let n = 1; n <= eventsPerWorker; n += 1) {
+    for (const record of records) {
+      store.appendEvent(record.id, "run.progress", { kind: "tick", n });
+    }
+  }
+  await Promise.all(records.map((record) => store.flush(record.id)));
+  for (const record of records) {
+    record.status = "completed";
+    await store.saveWorker(record);
+  }
+  await Promise.all(records.map((record) => store.flush(record.id)));
+
+  const reloaded = new Store(dir);
+  const { workers, warnings, stats } = await reloaded.init();
+  assert.equal(warnings.length, 0);
+  assert.equal(workers.length, workerCount);
+  assert.equal(stats.checkpointed, workerCount);
+  for (const record of records) {
+    const page = await reloaded.readEvents(record.id, 0, eventsPerWorker + 10);
+    assert.equal(page.events.length, eventsPerWorker);
+    assert.deepEqual(
+      page.events.map((event) => event.seq),
+      Array.from({ length: eventsPerWorker }, (_, index) => index + 1),
+    );
+    assert.equal(new Set(page.events.map((event) => event.workerId)).size, 1);
+    assert.equal(page.events[0]!.workerId, record.id);
+    assert.equal(reloaded.getWorker(record.id)?.eventCount, eventsPerWorker);
+  }
+});
+
+test("a crash between the compaction marker and the log rewrite is recoverable", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-store-compact-crash-"));
+  const store = new Store(dir);
+  await store.init();
+  const record = makeRecord("w-test-compact-crash");
+  await store.createWorker(record);
+  for (let i = 0; i < 20; i += 1) {
+    store.appendEvent(record.id, "run.progress", { kind: "tick", n: i });
+  }
+  store.appendEvent(record.id, "run.completed", { text: "done" });
+  record.status = "completed";
+  await store.saveWorker(record);
+  await store.flush(record.id);
+
+  const eventsFile = path.join(dir, "workers", record.id, "events.jsonl");
+  const fullLog = await readFile(eventsFile, "utf8");
+  const compacted = await store.compactWorker(record.id, { keepProgress: 2 });
+  assert.ok(compacted.removedEvents > 0);
+  assert.ok(JSON.parse(await readFile(path.join(dir, "workers", record.id, "worker.json"), "utf8")).compacted);
+
+  // Simulate a crash after worker.json was persisted but before the rename.
+  await writeFile(eventsFile, fullLog, "utf8");
+  const reloaded = new Store(dir);
+  const { workers, warnings } = await reloaded.init();
+  assert.equal(warnings.length, 0);
+  assert.equal(workers[0]!.eventCount, 21, "the full old log is still readable");
+  assert.equal((await reloaded.readEvents(record.id, 0, 100)).events.length, 21);
+});
+
+test("losing intact events after compaction is still reported as incomplete", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-store-compact-loss-"));
+  const store = new Store(dir);
+  await store.init();
+  const record = makeRecord("w-test-compact-loss");
+  await store.createWorker(record);
+  for (let i = 0; i < 20; i += 1) {
+    store.appendEvent(record.id, "run.progress", { kind: "tick", n: i });
+  }
+  store.appendEvent(record.id, "run.completed", { text: "done" });
+  record.status = "completed";
+  await store.saveWorker(record);
+  await store.flush(record.id);
+  await store.compactWorker(record.id, { keepProgress: 2 });
+
+  const eventsFile = path.join(dir, "workers", record.id, "events.jsonl");
+  const lines = (await readFile(eventsFile, "utf8")).split("\n").filter(Boolean);
+  const progressIndex = lines.findIndex((line) => JSON.parse(line).type === "run.progress");
+  assert.ok(progressIndex >= 0);
+  lines.splice(progressIndex, 1);
+  await writeFile(eventsFile, `${lines.join("\n")}\n`, "utf8");
+
+  const reloaded = new Store(dir);
+  const { warnings } = await reloaded.init();
+  assert.ok(
+    warnings.some((warning) => /incomplete/i.test(warning)),
+    "a compacted marker must not excuse later interior loss",
+  );
+  await assert.rejects(() => reloaded.readEvents(record.id, 0, 100), /incomplete/i);
+});
+
+test("a stale event checkpoint falls back to a full scan", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-store-stale-cp-"));
+  const store = new Store(dir);
+  await store.init();
+  const record = makeRecord("w-test-stale");
+  await store.createWorker(record);
+  store.appendEvent(record.id, "run.started");
+  await store.flush(record.id);
+  await store.saveWorker(record);
+  await store.flush(record.id);
+
+  const eventsFile = path.join(dir, "workers", record.id, "events.jsonl");
+  const extra = {
+    seq: 2,
+    workerId: record.id,
+    ts: new Date().toISOString(),
+    type: "worker.exited",
+    data: { code: 0, signal: null },
+  };
+  await appendFile(eventsFile, `${JSON.stringify(extra)}\n`, "utf8");
+
+  const reloaded = new Store(dir);
+  const { workers, stats } = await reloaded.init();
+  assert.equal(stats.checkpointed, 0);
+  assert.equal(stats.scanned, 1, "a size mismatch must not trust the checkpoint");
+  assert.equal(workers[0]!.eventCount, 2);
+  assert.equal(workers[0]!.lastSeq, 2);
 });
 
 test("ignores a corrupt trailing event line on reload", async () => {

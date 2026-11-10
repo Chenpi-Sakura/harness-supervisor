@@ -1,0 +1,71 @@
+{
+  "startedAt": "2026-11-09T12:44:49.047Z",
+  "runtime": "mcode",
+  "stateDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-mcode-state-C49fgg",
+  "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-mcode-work-4sIvnP",
+  "nonceA": "A-884038f2",
+  "nonceB": "B-57eec715",
+  "workerId": "w-mw9974la-a819cf5c",
+  "sessionId": "mvs_61e09fd258e54f1288b062fc35d66153",
+  "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-mcode-state-C49fgg\\sessions\\w-mw9974la-a819cf5c\\mcode-session.json",
+  "turns": [
+    {
+      "turn": 1,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "mvs_61e09fd258e54f1288b062fc35d66153",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-mcode-state-C49fgg\\sessions\\w-mw9974la-a819cf5c\\mcode-session.json",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 0,
+      "result": "TURN1_READY",
+      "error": null
+    },
+    {
+      "turn": 2,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "mvs_61e09fd258e54f1288b062fc35d66153",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-mcode-state-C49fgg\\sessions\\w-mw9974la-a819cf5c\\mcode-session.json",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 1,
+      "result": "TURN2_READY",
+      "error": null
+    },
+    {
+      "turn": 3,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "mvs_61e09fd258e54f1288b062fc35d66153",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-mcode-state-C49fgg\\sessions\\w-mw9974la-a819cf5c\\mcode-session.json",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 2,
+      "result": "A-884038f2, B-57eec715",
+      "error": null
+    }
+  ],
+  "assertions": {
+    "turn1Completed": true,
+    "turn1Idle": true,
+    "turn1Session": true,
+    "sameWorker": true,
+    "sameSessionAfterTurn2": true,
+    "turn2Completed": true,
+    "sameSessionAfterTurn3": true,
+    "contextHadNonceA": true,
+    "contextHadNonceB": true,
+    "turn3Idle": true,
+    "allProcessesExited": true,
+    "resumeCount": true
+  },
+  "error": null,
+  "ok": true
+}

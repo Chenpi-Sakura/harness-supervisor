@@ -9,9 +9,13 @@ export async function ensureDir(dir: string): Promise<void> {
 }
 
 export async function atomicWriteJson(file: string, value: unknown): Promise<void> {
+  await atomicWriteText(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+export async function atomicWriteText(file: string, text: string): Promise<void> {
   await ensureDir(path.dirname(file));
   const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await writeFile(temp, text, { encoding: "utf8", mode: 0o600 });
   // Windows scanners/readers can briefly deny replacement even after the temp
   // file is closed. Retry only that rename; never unlink the existing record.
   for (let attempt = 0; ; attempt += 1) {

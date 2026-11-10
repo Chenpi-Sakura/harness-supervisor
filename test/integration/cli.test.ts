@@ -196,3 +196,153 @@ test("CLI spawn --wait returns one final JSON document", async (t) => {
   assert.equal(parsed.worker.status, "completed");
   assert.equal(parsed.worker.result?.text, "FAKE_PI_OK");
 });
+
+test("CLI spawn --persistence persistent and continue keep the same session", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-cli-persistent-"));
+  const cwd = await makeWorkspace();
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HARNESS_SUPERVISOR_HOME: stateDir,
+    HARNESS_SUPERVISOR_PI_ENTRY: FAKE_ENTRY,
+    FAKE_PI_STEP_MS: "20",
+  };
+  t.after(async () => {
+    await cli(["down"], { env, timeout: 20_000 }).catch(() => undefined);
+  });
+
+  const spawned = await cli(
+    [
+      "spawn",
+      "--cwd",
+      cwd,
+      "--prompt",
+      "CLI_PERSISTENT_TOKEN_7d1",
+      "--persistence",
+      "persistent",
+      "--wait",
+      "--json",
+    ],
+    { env, timeout: 60_000 },
+  );
+  const first = JSON.parse(spawned.stdout) as {
+    worker: {
+      id: string;
+      status: string;
+      persistence: string;
+      lifecycle: string;
+      sessionId: string;
+      sessionFile: string;
+    };
+  };
+  assert.equal(first.worker.status, "completed");
+  assert.equal(first.worker.persistence, "persistent");
+  assert.equal(first.worker.lifecycle, "idle");
+
+  const continued = await cli(
+    [
+      "continue",
+      first.worker.id,
+      "--prompt",
+      "[scenario:recall] CLI second turn",
+      "--json",
+    ],
+    { env, timeout: 60_000 },
+  );
+  const accepted = JSON.parse(continued.stdout) as { id: string; status: string };
+  assert.equal(accepted.id, first.worker.id);
+  const waited = await cli(
+    ["wait", first.worker.id, "--since", "0", "--timeout-ms", "15000", "--json"],
+    { env, timeout: 30_000 },
+  );
+  const second = JSON.parse(waited.stdout) as {
+    worker: {
+      id: string;
+      status: string;
+      lifecycle: string;
+      sessionId: string;
+      sessionFile: string;
+      result?: { text: string };
+    };
+  };
+  assert.equal(second.worker.id, first.worker.id);
+  assert.equal(second.worker.status, "completed");
+  assert.equal(second.worker.lifecycle, "idle");
+  assert.equal(second.worker.sessionId, first.worker.sessionId);
+  assert.equal(second.worker.sessionFile, first.worker.sessionFile);
+  assert.match(second.worker.result?.text ?? "", /CLI_PERSISTENT_TOKEN_7d1/);
+});
+
+test("CLI admin and forget manage a terminal worker without deleting its session", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-cli-admin-"));
+  const cwd = await makeWorkspace();
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HARNESS_SUPERVISOR_HOME: stateDir,
+    HARNESS_SUPERVISOR_PI_ENTRY: FAKE_ENTRY,
+    FAKE_PI_STEP_MS: "20",
+  };
+  t.after(async () => {
+    await cli(["down"], { env, timeout: 20_000 }).catch(() => undefined);
+  });
+
+  const spawned = await cli(
+    ["spawn", "--cwd", cwd, "--prompt", "[scenario:busy] CLI admin", "--persistence", "persistent", "--wait", "--json"],
+    { env, timeout: 60_000 },
+  );
+  const worker = JSON.parse(spawned.stdout) as {
+    worker: { id: string; sessionFile: string };
+  };
+
+  const pinned = await cli(["admin", worker.worker.id, "--action", "pin", "--json"], { env });
+  assert.equal(JSON.parse(pinned.stdout).pinned, true);
+  const unpinned = await cli(["admin", worker.worker.id, "--action", "unpin", "--json"], { env });
+  assert.equal(JSON.parse(unpinned.stdout).pinned, undefined);
+
+  const archived = await cli(["admin", worker.worker.id, "--action", "archive", "--json"], { env });
+  assert.equal(JSON.parse(archived.stdout).archived, true);
+  const hidden = await cli(["list", "--json"], { env });
+  assert.equal(JSON.parse(hidden.stdout).some((item: { id: string }) => item.id === worker.worker.id), false);
+  const shown = await cli(["list", "--include-archived", "--json"], { env });
+  assert.equal(JSON.parse(shown.stdout).some((item: { id: string }) => item.id === worker.worker.id), true);
+  await cli(["admin", worker.worker.id, "--action", "unarchive", "--json"], { env });
+
+  const retired = await cli(["admin", worker.worker.id, "--action", "retire", "--json"], { env });
+  assert.equal(JSON.parse(retired.stdout).lifecycle, "retired");
+  await cli(["admin", worker.worker.id, "--action", "unretire", "--json"], { env });
+
+  const dryCompaction = await cli(
+    ["compact", worker.worker.id, "--keep-progress", "2", "--dry-run", "--json"],
+    { env },
+  );
+  const dry = JSON.parse(dryCompaction.stdout) as {
+    dryRun: boolean;
+    workers: Array<{ removedEvents: number; skipped?: string }>;
+  };
+  assert.equal(dry.dryRun, true);
+  assert.equal(dry.workers[0]!.skipped, undefined);
+  assert.ok(dry.workers[0]!.removedEvents > 0);
+  const compaction = await cli(
+    ["compact", worker.worker.id, "--keep-progress", "2", "--json"],
+    { env },
+  );
+  const compacted = JSON.parse(compaction.stdout) as {
+    workers: Array<{ removedEvents: number; keptEvents: number; skipped?: string }>;
+  };
+  assert.equal(compacted.workers[0]!.skipped, undefined);
+  assert.ok(compacted.workers[0]!.removedEvents > 0);
+  assert.ok(compacted.workers[0]!.keptEvents > 0);
+
+  const inbox = await cli(
+    ["inbox", "--state", "all", "--worker", worker.worker.id, "--json"],
+    { env },
+  );
+  const ids = (JSON.parse(inbox.stdout) as { notifications: Array<{ id: string }> }).notifications.map(
+    (record) => record.id,
+  );
+  assert.ok(ids.length > 0);
+  await cli(["ack", "--ids", ids.join(",")], { env });
+
+  const forgotten = await cli(["forget", worker.worker.id, "--json"], { env });
+  assert.equal(JSON.parse(forgotten.stdout).forgotten, true);
+  await assert.rejects(() => cli(["status", worker.worker.id, "--json"], { env }), /Command failed/);
+});

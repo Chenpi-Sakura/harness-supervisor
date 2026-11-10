@@ -28,8 +28,9 @@ const CAPABILITIES: RuntimeCapabilities = {
   resume: true,
   pause: false,
   interactiveInput: true,
+  idleContinue: "L3",
   notes:
-    "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported.",
+    "Native Pi RPC. Steering and follow-ups use Pi queues. Cancellation uses abort. Resume loads a persisted Pi session file; pause is not supported. Persistent idle continuation was verified with a real 3-Turn session (same worker and session, earlier codewords recalled without restatement).",
 };
 
 export class PiAdapter implements HarnessAdapter {
@@ -40,6 +41,10 @@ export class PiAdapter implements HarnessAdapter {
 
   constructor(options: PiAdapterOptions = {}) {
     this.options = options;
+  }
+
+  instanceRef(): string {
+    return this.launch ? `pi:${this.launch.file}` : "pi";
   }
 
   async spawn(spec: HarnessSpawnSpec, callbacks: HarnessCallbacks): Promise<HarnessSession> {

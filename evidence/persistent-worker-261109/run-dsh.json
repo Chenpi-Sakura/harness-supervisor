@@ -1,0 +1,71 @@
+{
+  "startedAt": "2026-11-09T12:45:16.198Z",
+  "runtime": "dsh",
+  "stateDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-dsh-state-IFZuZO",
+  "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-dsh-work-oxiH7q",
+  "nonceA": "A-58a5302f",
+  "nonceB": "B-0223b81e",
+  "workerId": "w-mw997q5i-26bce24a",
+  "sessionId": "fe4130ed-5c4a-437c-b3e4-6f9cabab3bcc",
+  "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-dsh-state-IFZuZO\\sessions\\w-mw997q5i-26bce24a\\dsh-session.json",
+  "turns": [
+    {
+      "turn": 1,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "fe4130ed-5c4a-437c-b3e4-6f9cabab3bcc",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-dsh-state-IFZuZO\\sessions\\w-mw997q5i-26bce24a\\dsh-session.json",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 0,
+      "result": "TURN1_READY",
+      "error": null
+    },
+    {
+      "turn": 2,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "fe4130ed-5c4a-437c-b3e4-6f9cabab3bcc",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-dsh-state-IFZuZO\\sessions\\w-mw997q5i-26bce24a\\dsh-session.json",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 1,
+      "result": "TURN2_READY",
+      "error": null
+    },
+    {
+      "turn": 3,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "fe4130ed-5c4a-437c-b3e4-6f9cabab3bcc",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-dsh-state-IFZuZO\\sessions\\w-mw997q5i-26bce24a\\dsh-session.json",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 2,
+      "result": "A-58a5302f, B-0223b81e",
+      "error": null
+    }
+  ],
+  "assertions": {
+    "turn1Completed": true,
+    "turn1Idle": true,
+    "turn1Session": true,
+    "sameWorker": true,
+    "sameSessionAfterTurn2": true,
+    "turn2Completed": true,
+    "sameSessionAfterTurn3": true,
+    "contextHadNonceA": true,
+    "contextHadNonceB": true,
+    "turn3Idle": true,
+    "allProcessesExited": true,
+    "resumeCount": true
+  },
+  "error": null,
+  "ok": true
+}

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { SCHEMA_VERSION, type WorkerRecord } from "../../src/types.js";
+import { SCHEMA_VERSION, type WorkerRecord, type WorkerSummary } from "../../src/types.js";
 import { TestDaemon } from "./helpers.js";
 
 function seedRecord(id: string, index: number): WorkerRecord {
@@ -105,6 +105,69 @@ test("list/status/events stay fast with many persisted workers and events", asyn
   const result = inbox.value as { counts: { pending: number; unacked: number } };
   assert.equal(result.counts.pending, workerCount);
   assert.equal(result.counts.unacked, workerCount);
+});
+
+test("archive and prune stay bounded with many persisted workers", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-perf-maintenance-"));
+  await mkdir(path.join(stateDir, "sessions"), { recursive: true });
+  const workerCount = 120;
+  const eventsPerWorker = 40;
+  for (let index = 0; index < workerCount; index += 1) {
+    const id = `w-maint-${String(index).padStart(4, "0")}`;
+    const dir = path.join(stateDir, "workers", id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "worker.json"), JSON.stringify(seedRecord(id, index)), "utf8");
+    await writeFile(path.join(dir, "events.jsonl"), seedEvents(id, eventsPerWorker), "utf8");
+  }
+
+  const daemon = new TestDaemon(stateDir);
+  const client = await daemon.start({ readyTimeoutMs: 30_000 });
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+
+  const archivedCount = 20;
+  const archiveStarted = Date.now();
+  for (let index = 0; index < archivedCount; index += 1) {
+    const workerId = `w-maint-${String(index).padStart(4, "0")}`;
+    await client.request("admin", { workerId, action: "archive" });
+  }
+  const archiveMs = Date.now() - archiveStarted;
+  const defaultList = await client.request<WorkerSummary[]>("list", { limit: 200 });
+  assert.equal(defaultList.length, workerCount - archivedCount);
+  const fullList = await client.request<WorkerSummary[]>("list", {
+    limit: 200,
+    includeArchived: true,
+  });
+  assert.equal(fullList.length, workerCount);
+
+  const inbox = await client.request<{ notifications: Array<{ id: string }> }>(
+    "notifications",
+    { state: "all", limit: 500 },
+  );
+  assert.equal(inbox.notifications.length, workerCount);
+  await client.request("notification_ack", {
+    ids: inbox.notifications.map((item) => item.id),
+    by: "perf",
+  });
+
+  const pruneStarted = Date.now();
+  const pruned = await client.request<{ removed: string[] }>("prune", {
+    olderThanDays: 0,
+    keep: 0,
+  });
+  const pruneMs = Date.now() - pruneStarted;
+  assert.equal(pruned.removed.length, workerCount);
+  const after = await client.request<WorkerSummary[]>("list", {
+    limit: 200,
+    includeArchived: true,
+  });
+  assert.equal(after.length, 0);
+  t.diagnostic(
+    `archive ${archivedCount}=${archiveMs}ms prune ${workerCount}=${pruneMs}ms`,
+  );
+  assert.ok(archiveMs < 2000, `archiving 20 workers took ${archiveMs}ms`);
+  assert.ok(pruneMs < 10_000, `pruning 120 workers took ${pruneMs}ms`);
 });
 
 test("a very large final answer is truncated in both the record and the event", async (t) => {

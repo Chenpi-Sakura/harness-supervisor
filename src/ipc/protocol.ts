@@ -73,6 +73,7 @@ const SpawnSchema = z
     prompt: z.string().min(1).max(256 * 1024),
     name: z.string().min(1).max(200).optional(),
     taskId: z.string().min(1).max(120).optional(),
+    persistence: z.enum(["oneshot", "persistent"]).optional(),
     // Per-call Codex caller identity (MCP `_meta.threadId`). Only used for
     // auto-binding when no explicit notifyTarget is supplied.
     callerThreadId: z
@@ -107,6 +108,21 @@ const UiResponseSchema = z.union([
 export const METHOD_SCHEMAS = {
   spawn: SpawnSchema,
   resume: ResumeSchema,
+  continue: ResumeSchema,
+  admin: z
+    .object({
+      workerId: WorkerIdSchema,
+      action: z.enum(["pin", "unpin", "archive", "unarchive", "retire", "unretire"]),
+    })
+    .strict(),
+  forget: z.object({ workerId: WorkerIdSchema }).strict(),
+  compact: z
+    .object({
+      workerId: WorkerIdSchema.optional(),
+      keepProgress: z.number().int().min(0).max(100_000).optional(),
+      dryRun: z.boolean().optional(),
+    })
+    .strict(),
   status: z
     .object({ workerId: WorkerIdSchema, recentEvents: z.number().int().min(0).max(100).optional() })
     .strict(),
@@ -114,6 +130,7 @@ export const METHOD_SCHEMAS = {
     .object({
       statuses: z.array(WorkerStatusSchema).max(20).optional(),
       limit: z.number().int().min(1).max(500).optional(),
+      includeArchived: z.boolean().optional(),
     })
     .strict(),
   events: z

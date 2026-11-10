@@ -540,6 +540,8 @@ export class MetricsStore {
   private readonly usageByTask = new Map<string, Set<string>>();
   private writeQueue: Promise<void> = Promise.resolve();
   private initialized = false;
+  /** True when this process had to start without the persisted metrics file. */
+  private storeMissing = false;
 
   constructor(stateDir: string, logger?: Logger) {
     this.stateDir = path.resolve(stateDir);
@@ -551,6 +553,29 @@ export class MetricsStore {
     return this.initialized;
   }
 
+  /**
+   * A missing metrics file invalidates usage checkpoints: the records they say
+   * were applied are gone, so callers must rebuild from the event log.
+   */
+  wasStoreMissing(): boolean {
+    return this.storeMissing;
+  }
+
+  /**
+   * Highest run.usage event already represented by a usage record. Startup can
+   * begin after it instead of replaying progress events that carry no usage.
+   */
+  lastRuntimeUsageSeq(workerId: string): number {
+    const prefix = `runtime:${workerId}:`;
+    let max = 0;
+    for (const record of this.usage.values()) {
+      if (record.workerId !== workerId || !record.id.startsWith(prefix)) continue;
+      const seq = Number(record.id.slice(prefix.length));
+      if (Number.isInteger(seq) && seq > max) max = seq;
+    }
+    return max;
+  }
+
   async init(): Promise<string[]> {
     if (this.initialized) return [...this.warnings];
     await ensureDir(path.dirname(this.file));
@@ -559,6 +584,7 @@ export class MetricsStore {
       raw = await readFile(this.file, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      this.storeMissing = true;
     }
     let invalid = 0;
     let incompatible = 0;

@@ -117,6 +117,33 @@ test("100k-event history: startup streams the file and keeps only 500 events cac
   assert.ok(initMs < 15_000, `startup should stay bounded, took ${initMs.toFixed(0)} ms`);
 });
 
+test("100k-event history: a persisted checkpoint makes the next startup read only the tail", async (t) => {
+  const workerId = "w-history-100k-cp";
+  const { dir } = await makeStateDir(workerId);
+  const first = new Store(dir);
+  await first.init();
+
+  const second = new Store(dir);
+  const startedAt = performance.now();
+  const { workers, stats } = await second.init();
+  const initMs = performance.now() - startedAt;
+
+  assert.equal(stats.checkpointed, 1, "the size/counter checkpoint is trusted");
+  assert.equal(stats.scanned, 0, "startup does not re-scan the 100k lines");
+  assert.equal(workers[0]!.eventCount, TOTAL);
+  assert.equal(workers[0]!.lastSeq, TOTAL);
+  const cache = second.cacheStats(workerId);
+  assert.equal(cache.cached, 500);
+  assert.equal(cache.evicted, TOTAL - 500);
+
+  const nearTail = await second.readEvents(workerId, TOTAL - 10, 5);
+  assert.deepEqual(
+    nearTail.events.map((event) => event.seq),
+    [TOTAL - 9, TOTAL - 8, TOTAL - 7, TOTAL - 6, TOTAL - 5],
+  );
+  t.diagnostic(`checkpointed startup of ${TOTAL} events: ${initMs.toFixed(1)} ms`);
+});
+
 test("100k-event history: full paginated read is ordered, complete and cursor-safe", async (t) => {
   const workerId = "w-history-paged";
   const { dir } = await makeStateDir(workerId);

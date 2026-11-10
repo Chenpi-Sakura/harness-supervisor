@@ -1,8 +1,14 @@
 import { EventEmitter } from "node:events";
 import { appendFile, open, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { SCHEMA_VERSION, type WorkerEvent, type WorkerEventType, type WorkerRecord } from "./types.js";
-import { appendTextCapped, atomicWriteJson, ensureDir, readTail } from "./util/fsx.js";
+import {
+  SCHEMA_VERSION,
+  type CompactWorkerResult,
+  type WorkerEvent,
+  type WorkerEventType,
+  type WorkerRecord,
+} from "./types.js";
+import { appendTextCapped, atomicWriteJson, atomicWriteText, ensureDir, readTail } from "./util/fsx.js";
 import type { Logger } from "./util/logger.js";
 import { redactText, redactValue, safeText } from "./util/redact.js";
 
@@ -25,10 +31,18 @@ const STREAM_CHUNK_BYTES = 64 * 1024;
  * event would be dropped on a cold read.
  */
 const STREAM_MAX_LINE_BYTES = MAX_EVENT_LINE_BYTES * 4 + 64 * 1024;
+/** Upper bound for the startup tail read that rebuilds the recent-event cache. */
+const MAX_EVENT_TAIL_BYTES = 4 * 1024 * 1024;
 
 export interface StoreInitResult {
   workers: WorkerRecord[];
   warnings: string[];
+  /** How much history startup had to walk: fast-path tails vs full scans. */
+  stats: {
+    checkpointed: number;
+    scanned: number;
+    eventBytes: number;
+  };
 }
 
 /**
@@ -59,6 +73,18 @@ export interface EventCacheStats {
 interface EventIndexEntry {
   seq: number;
   offset: number;
+}
+
+interface LoadedEvents {
+  cache: EventCache;
+  index: EventIndexEntry[];
+  count: number;
+  maxSeq: number;
+  endsWithNewline: boolean;
+  gaps: boolean;
+  invalid: number;
+  /** The whole file was scanned without gaps or malformed lines. */
+  clean: boolean;
 }
 
 interface RawLine {
@@ -94,6 +120,11 @@ class EventCache {
     return this.evicted;
   }
 
+  /** Used by the tail fast path, which loads only the newest window. */
+  markEvicted(count: number): void {
+    this.evicted = Math.max(this.evicted, Math.max(0, Math.trunc(count)));
+  }
+
   first(): WorkerEvent | undefined {
     return this.size > 0 ? this.items[this.head] : undefined;
   }
@@ -122,10 +153,15 @@ export class Store {
   private readonly events = new Map<string, EventCache>();
   private readonly eventIndexes = new Map<string, EventIndexEntry[]>();
   private readonly indexCounters = new Map<string, number>();
+  /** Exact number of bytes currently committed to events.jsonl per worker. */
+  private readonly eventBytes = new Map<string, number>();
+  /** Only a fully scanned, gap-free history may publish a startup checkpoint. */
+  private readonly checkpointEligible = new Set<string>();
   private readonly needsLineBreak = new Set<string>();
   private readonly stderrTails = new Map<string, string>();
   private readonly writeQueues = new Map<string, Promise<void>>();
   private readonly writeErrors = new Map<string, Error>();
+  private readonly compacting = new Set<string>();
   /** Failed appends remain a history defect even after flush reports the error. */
   private readonly historyErrors = new Map<string, Error>();
   private readonly bus = new EventEmitter();
@@ -146,6 +182,9 @@ export class Store {
     const warnings: string[] = [];
     const entries = await readdir(this.workersDir, { withFileTypes: true });
     const workers: WorkerRecord[] = [];
+    let checkpointed = 0;
+    let scanned = 0;
+    let eventBytesTotal = 0;
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const workerDir = path.join(this.workersDir, entry.name);
@@ -166,8 +205,57 @@ export class Store {
         continue;
       }
       const eventsFile = this.eventsFile(record.id);
-      const loaded = await this.loadEvents(eventsFile, record.id, warnings);
-      if (loaded.gaps || (record.lastSeq ?? 0) > loaded.maxSeq) {
+      const fileBytes = await fileSize(eventsFile);
+      let loaded: LoadedEvents | null = null;
+      const checkpoint = record.eventCheckpoint;
+      if (
+        checkpoint &&
+        checkpoint.bytes === fileBytes &&
+        checkpoint.lastSeq === (record.lastSeq ?? 0) &&
+        checkpoint.eventCount === (record.eventCount ?? 0)
+      ) {
+        const tail = await this.loadEventTail(
+          eventsFile,
+          record.id,
+          checkpoint.eventCount,
+          checkpoint.lastSeq,
+        );
+        if (tail) {
+          loaded = {
+            ...tail,
+            count: checkpoint.eventCount,
+            maxSeq: checkpoint.lastSeq,
+            gaps: false,
+            invalid: 0,
+            clean: true,
+          };
+          checkpointed += 1;
+        }
+      }
+      if (!loaded) {
+        loaded = await this.loadEvents(eventsFile, record.id, warnings);
+        scanned += 1;
+      }
+      eventBytesTotal += fileBytes;
+      // Compaction intentionally removes events, leaving cursor gaps. The record
+      // marker distinguishes them from a genuinely damaged history.
+      const compactedGaps = loaded.gaps && loaded.invalid === 0 && Boolean(record.compacted);
+      let incomplete = (loaded.gaps && !compactedGaps) || (record.lastSeq ?? 0) > loaded.maxSeq;
+      const marker = record.compacted;
+      if (
+        compactedGaps &&
+        marker?.retainedEventCount !== undefined &&
+        marker.retainedLastSeq !== undefined
+      ) {
+        // Appends after compaction are contiguous, so any shortfall is real loss
+        // inside the compacted file rather than an intentional gap.
+        const expected =
+          marker.retainedEventCount + Math.max(0, (record.lastSeq ?? 0) - marker.retainedLastSeq);
+        if (loaded.count < expected) {
+          incomplete = true;
+        }
+      }
+      if (incomplete) {
         const message = `Event history for ${record.id} is incomplete: missing confirmed sequence(s)`;
         this.historyErrors.set(record.id, new Error(message));
         warnings.push(message);
@@ -180,14 +268,29 @@ export class Store {
       this.records.set(record.id, record);
       this.events.set(record.id, loaded.cache);
       this.eventIndexes.set(record.id, loaded.index);
+      this.eventBytes.set(record.id, fileBytes);
+      if ((loaded.clean || compactedGaps) && !incomplete) this.checkpointEligible.add(record.id);
       // A partial trailing line must not swallow the next appended event.
       if (!loaded.endsWithNewline) this.needsLineBreak.add(record.id);
+      if ((loaded.clean || compactedGaps) && !incomplete) {
+        record.eventCheckpoint = {
+          bytes: fileBytes,
+          eventCount: record.eventCount,
+          lastSeq: record.lastSeq,
+          endsWithNewline: loaded.endsWithNewline,
+        };
+        await this.writeWorker(record);
+      }
       const tail = await readTail(path.join(workerDir, "stderr.log"), MAX_STDERR_TAIL_CHARS * 2);
       if (tail) this.stderrTails.set(record.id, tail);
       workers.push(record);
     }
     this.initialized = true;
-    return { workers, warnings };
+    return {
+      workers,
+      warnings,
+      stats: { checkpointed, scanned, eventBytes: eventBytesTotal },
+    };
   }
 
   /**
@@ -198,14 +301,7 @@ export class Store {
     file: string,
     workerId: string,
     warnings: string[],
-  ): Promise<{
-    cache: EventCache;
-    index: EventIndexEntry[];
-    count: number;
-    maxSeq: number;
-    endsWithNewline: boolean;
-    gaps: boolean;
-  }> {
+  ): Promise<LoadedEvents> {
     const cache = new EventCache(MAX_CACHED_EVENTS);
     const index: EventIndexEntry[] = [];
     let count = 0;
@@ -231,14 +327,94 @@ export class Store {
       endsWithNewline = await fileEndsWithNewline(file);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return { cache, index, count: 0, maxSeq: 0, endsWithNewline: true, gaps: false };
+      return {
+        cache,
+        index,
+        count: 0,
+        maxSeq: 0,
+        endsWithNewline: true,
+        gaps: false,
+        invalid: 0,
+        clean: true,
+      };
     }
     if (invalid > 0) {
       const warning = `Ignored ${invalid} malformed event line(s) for ${workerId}`;
       warnings.push(warning);
       this.logger?.warn(warning);
     }
-    return { cache, index, count, maxSeq, endsWithNewline, gaps };
+    return { cache, index, count, maxSeq, endsWithNewline, gaps, invalid, clean: !gaps && invalid === 0 };
+  }
+
+  /**
+   * Startup fast path. The checkpoint proves the file was already scanned at
+   * this exact size, so only the newest window and a tail index are rebuilt.
+   * Any anomaly falls back to the full scan, which keeps warnings and gap
+   * detection authoritative.
+   */
+  private async loadEventTail(
+    file: string,
+    workerId: string,
+    expectedCount: number,
+    expectedLastSeq: number,
+  ): Promise<{ cache: EventCache; index: EventIndexEntry[]; endsWithNewline: boolean } | null> {
+    let size: number;
+    try {
+      size = (await stat(file)).size;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && expectedCount === 0) {
+        return { cache: new EventCache(MAX_CACHED_EVENTS), index: [], endsWithNewline: true };
+      }
+      return null;
+    }
+    if (expectedCount === 0) {
+      return size === 0
+        ? { cache: new EventCache(MAX_CACHED_EVENTS), index: [], endsWithNewline: true }
+        : null;
+    }
+    const length = Math.min(size, MAX_EVENT_TAIL_BYTES);
+    const start = size - length;
+    const buffer = Buffer.alloc(length);
+    const handle = await open(file, "r");
+    try {
+      await handle.read(buffer, 0, length, start);
+    } finally {
+      await handle.close();
+    }
+    let skip = 0;
+    if (start > 0) {
+      // The first bytes may cut a line (and a multibyte character) in half.
+      const newline = buffer.indexOf(0x0a);
+      if (newline < 0) return null;
+      skip = newline + 1;
+    }
+    const baseOffset = start + skip;
+    const text = buffer.subarray(skip).toString("utf8");
+    const endsWithNewline = size > 0 && buffer[buffer.length - 1] === 0x0a;
+    const lines = text.split("\n");
+    if (endsWithNewline) lines.pop();
+    const lineEntries: Array<{ line: string; offset: number }> = [];
+    let offset = baseOffset;
+    for (const line of lines) {
+      if (line.trim()) lineEntries.push({ line, offset });
+      offset += Buffer.byteLength(line, "utf8") + 1;
+    }
+    const window = lineEntries.slice(-MAX_CACHED_EVENTS);
+    if (window.length === 0) return null;
+    if (window.length > expectedCount) return null;
+    const cache = new EventCache(MAX_CACHED_EVENTS);
+    const index: EventIndexEntry[] = [];
+    for (let i = 0; i < window.length; i += 1) {
+      const entry = window[i]!;
+      const event = parseEventLine(entry.line, workerId);
+      if (!event) return null;
+      if (i % EVENT_INDEX_STRIDE === 0) index.push({ seq: event.seq, offset: entry.offset });
+      cache.push(event);
+    }
+    const lastSeq = cache.recent(1)[0]?.seq ?? 0;
+    if (lastSeq !== expectedLastSeq) return null;
+    cache.markEvicted(expectedCount - cache.size);
+    return { cache, index, endsWithNewline };
   }
 
   assertInitialized(): void {
@@ -257,6 +433,8 @@ export class Store {
     this.events.set(record.id, new EventCache(MAX_CACHED_EVENTS));
     this.eventIndexes.set(record.id, []);
     this.indexCounters.set(record.id, 0);
+    this.eventBytes.set(record.id, 0);
+    this.checkpointEligible.add(record.id);
     await this.saveWorker(record);
     await this.flush(record.id);
   }
@@ -269,6 +447,172 @@ export class Store {
     return [...this.records.values()];
   }
 
+  /** On-disk event sizes already tracked for checkpointing; no extra IO. */
+  storageStats(): {
+    workers: number;
+    eventBytes: number;
+    largestEventFileBytes: number;
+    largestEventWorkerId?: string;
+  } {
+    let eventBytes = 0;
+    let largestEventFileBytes = 0;
+    let largestEventWorkerId: string | undefined;
+    for (const [workerId, bytes] of this.eventBytes) {
+      eventBytes += bytes;
+      if (bytes > largestEventFileBytes) {
+        largestEventFileBytes = bytes;
+        largestEventWorkerId = workerId;
+      }
+    }
+    return {
+      workers: this.records.size,
+      eventBytes,
+      largestEventFileBytes,
+      ...(largestEventWorkerId ? { largestEventWorkerId } : {}),
+    };
+  }
+
+  /**
+   * Rewrite one event log, keeping every lifecycle event and only the newest
+   * `keepProgress` run.progress events. Sequence numbers are preserved, so
+   * cursors stay valid; `record.compacted` marks the remaining gaps as
+   * intentional for startup validation.
+   */
+  async compactWorker(
+    workerId: string,
+    options: { keepProgress?: number; dryRun?: boolean } = {},
+  ): Promise<CompactWorkerResult> {
+    this.assertInitialized();
+    const record = this.records.get(workerId);
+    if (!record) throw new Error(`Unknown worker ${workerId}`);
+    const keepProgress = Math.max(0, Math.trunc(options.keepProgress ?? 200));
+    const dryRun = options.dryRun === true;
+    const result: CompactWorkerResult = {
+      workerId,
+      dryRun,
+      removedEvents: 0,
+      keptEvents: record.eventCount,
+      removedBytes: 0,
+      keptBytes: this.eventBytes.get(workerId) ?? 0,
+    };
+    if (this.compacting.has(workerId)) {
+      result.skipped = "compaction already in progress";
+      return result;
+    }
+    await this.flush(workerId);
+    this.compacting.add(workerId);
+    try {
+      await this.enqueue(workerId, async () => {
+        if (this.historyErrors.has(workerId)) {
+          result.skipped = "event history is incomplete";
+          return;
+        }
+        const file = this.eventsFile(workerId);
+        const expectedLastSeq = record.lastSeq;
+        const events: WorkerEvent[] = [];
+        let invalid = 0;
+        try {
+          for await (const { line } of streamLines(file)) {
+            if (!line.trim()) continue;
+            const event = parseEventLine(line, workerId);
+            if (!event || (events.length > 0 && event.seq <= events[events.length - 1]!.seq)) {
+              invalid += 1;
+              continue;
+            }
+            events.push(event);
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (invalid > 0) {
+          result.skipped = "event history contains malformed or unordered lines";
+          return;
+        }
+        const onDiskLastSeq = events[events.length - 1]?.seq ?? 0;
+        if (onDiskLastSeq !== expectedLastSeq || record.lastSeq !== expectedLastSeq) {
+          result.skipped = "event history changed while compacting";
+          return;
+        }
+        const progress = events.filter((event) => event.type === "run.progress");
+        if (progress.length <= keepProgress) {
+          result.skipped = "no progress events to compact";
+          result.keptEvents = events.length;
+          result.keptBytes = this.eventBytes.get(workerId) ?? 0;
+          return;
+        }
+        const drop = new Set(progress.slice(0, progress.length - keepProgress).map((e) => e.seq));
+        const kept = events.filter((event) => !drop.has(event.seq));
+        const last = events[events.length - 1];
+        if (last && !kept.some((event) => event.seq === last.seq)) kept.push(last);
+        const lines = kept.map((event) => `${JSON.stringify(event)}\n`);
+        const keptBytes = Buffer.byteLength(lines.join(""), "utf8");
+        result.removedEvents = events.length - kept.length;
+        result.keptEvents = kept.length;
+        result.keptBytes = keptBytes;
+        result.removedBytes = Math.max(0, (this.eventBytes.get(workerId) ?? 0) - keptBytes);
+        if (dryRun) return;
+        const keptBytesTotal = kept.reduce(
+          (total, _event, index) => total + Buffer.byteLength(lines[index]!, "utf8"),
+          0,
+        );
+        const previous = {
+          eventCount: record.eventCount,
+          compacted: record.compacted,
+          eventCheckpoint: record.eventCheckpoint,
+        };
+        record.eventCount = kept.length;
+        record.compacted = {
+          removedEvents: result.removedEvents,
+          keepProgress,
+          at: new Date().toISOString(),
+          retainedFromSeq: kept[0]?.seq ?? record.lastSeq,
+          retainedEventCount: kept.length,
+          retainedLastSeq: record.lastSeq,
+        };
+        record.eventCheckpoint = {
+          bytes: keptBytesTotal,
+          eventCount: kept.length,
+          lastSeq: record.lastSeq,
+          endsWithNewline: true,
+        };
+        try {
+          // Marker before the rename: a crash can leave a full old log with a
+          // marker, but never a gapped log without one.
+          await atomicWriteJson(
+            path.join(this.workerDir(workerId), "worker.json"),
+            redactValue(structuredClone(record)),
+          );
+          await atomicWriteText(file, lines.join(""));
+        } catch (error) {
+          record.eventCount = previous.eventCount;
+          if (previous.compacted) record.compacted = previous.compacted;
+          else delete record.compacted;
+          if (previous.eventCheckpoint) record.eventCheckpoint = previous.eventCheckpoint;
+          else delete record.eventCheckpoint;
+          throw error;
+        }
+        const cache = new EventCache(MAX_CACHED_EVENTS);
+        const index: EventIndexEntry[] = [];
+        let offset = 0;
+        for (let i = 0; i < kept.length; i += 1) {
+          if (i % EVENT_INDEX_STRIDE === 0) index.push({ seq: kept[i]!.seq, offset });
+          cache.push(kept[i]!);
+          offset += Buffer.byteLength(lines[i]!, "utf8");
+        }
+        this.events.set(workerId, cache);
+        this.eventIndexes.set(workerId, index);
+        this.indexCounters.set(workerId, 0);
+        this.eventBytes.set(workerId, offset);
+        this.needsLineBreak.delete(workerId);
+        this.checkpointEligible.add(workerId);
+        this.historyErrors.delete(workerId);
+      });
+    } finally {
+      this.compacting.delete(workerId);
+    }
+    return result;
+  }
+
   /**
    * Drop an in-memory worker after its directory was removed by retention.
    * Only ever used for terminal workers that the caller already validated.
@@ -278,10 +622,13 @@ export class Store {
     this.events.delete(workerId);
     this.eventIndexes.delete(workerId);
     this.indexCounters.delete(workerId);
+    this.eventBytes.delete(workerId);
+    this.checkpointEligible.delete(workerId);
     this.needsLineBreak.delete(workerId);
     this.stderrTails.delete(workerId);
     this.writeErrors.delete(workerId);
     this.historyErrors.delete(workerId);
+    this.writeQueues.delete(workerId);
   }
 
   /**
@@ -509,6 +856,9 @@ export class Store {
     this.assertInitialized();
     const record = this.records.get(workerId);
     if (!record) throw new Error(`Unknown worker ${workerId}`);
+    if (this.compacting.has(workerId)) {
+      throw new Error(`Worker ${workerId} is being compacted; retry the event append`);
+    }
     const seq = record.lastSeq + 1;
     const event: WorkerEvent = {
       seq,
@@ -544,12 +894,19 @@ export class Store {
       try {
         await appendFile(this.eventsFile(workerId), `${prefix}${safeLine}`, "utf8");
         this.needsLineBreak.delete(workerId);
+        this.eventBytes.set(
+          workerId,
+          (this.eventBytes.get(workerId) ?? 0) + Buffer.byteLength(prefix + safeLine, "utf8"),
+        );
       } catch (error) {
         this.needsLineBreak.add(workerId);
+        // A partially written or failed history can never publish a checkpoint.
+        this.checkpointEligible.delete(workerId);
         throw error;
       }
       await this.extendEventIndex(workerId, seq, lineBytes + prefix.length);
     }).catch((error: unknown) => {
+      this.checkpointEligible.delete(workerId);
       this.historyErrors.set(workerId, new Error(`Event history for ${workerId} is incomplete: an append failed`, { cause: error }));
       this.logWriteError(workerId, error);
     });
@@ -582,9 +939,27 @@ export class Store {
 
   saveWorker(record: WorkerRecord): Promise<void> {
     this.assertInitialized();
+    return this.writeWorker(record);
+  }
+
+  /** Used by init before the store is marked initialized. */
+  private writeWorker(record: WorkerRecord): Promise<void> {
     this.records.set(record.id, record);
     const snapshot = redactValue(structuredClone(record)) as WorkerRecord;
     return this.enqueue(record.id, async () => {
+      // The write queue has already applied every append queued before this
+      // save, so the committed byte count matches the snapshot's counters.
+      const bytes = this.eventBytes.get(record.id);
+      if (bytes !== undefined && this.checkpointEligible.has(record.id)) {
+        snapshot.eventCheckpoint = {
+          bytes,
+          eventCount: snapshot.eventCount,
+          lastSeq: snapshot.lastSeq,
+          endsWithNewline: !this.needsLineBreak.has(record.id),
+        };
+      } else {
+        delete snapshot.eventCheckpoint;
+      }
       await atomicWriteJson(path.join(this.workerDir(record.id), "worker.json"), snapshot);
     }).catch((error: unknown) => {
       this.logWriteError(record.id, error);
@@ -665,6 +1040,15 @@ export class Store {
 
 function cloneEvent(event: WorkerEvent): WorkerEvent {
   return JSON.parse(JSON.stringify(event)) as WorkerEvent;
+}
+
+async function fileSize(file: string): Promise<number> {
+  try {
+    return (await stat(file)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
 }
 
 function emptyPage(sinceSeq: number, source: "cache" | "disk"): EventPage {

@@ -198,6 +198,28 @@ export class IpcServer {
         >[1];
         return supervisor.resume(workerId, input, { requestId });
       }
+      case "continue": {
+        const { workerId, requestId, ...input } = params as { workerId: string; requestId?: string } & Parameters<
+          Supervisor["continue"]
+        >[1];
+        return supervisor.continue(workerId, input, { requestId });
+      }
+      case "admin": {
+        const { workerId, action } = params as {
+          workerId: string;
+          action: Parameters<Supervisor["admin"]>[1];
+        };
+        return supervisor.admin(workerId, action);
+      }
+      case "forget": {
+        const { workerId } = params as { workerId: string };
+        return supervisor.forget(workerId);
+      }
+      case "compact": {
+        return supervisor.compact(
+          params as { workerId?: string; keepProgress?: number; dryRun?: boolean },
+        );
+      }
       case "status": {
         const { workerId, recentEvents } = params as {
           workerId: string;

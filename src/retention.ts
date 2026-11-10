@@ -23,6 +23,8 @@ export interface PruneOptions {
   keep?: number;
   dryRun?: boolean;
   includeSessions?: boolean;
+  /** Runtime/activation ids the supervisor knows are still live. */
+  protectedWorkerIds?: Set<string>;
 }
 
 export interface PruneResult {
@@ -69,6 +71,27 @@ export class Retention {
         result.skipped.push({ workerId: record.id, reason: "within keep window" });
         continue;
       }
+      if (record.pinned) {
+        result.skipped.push({ workerId: record.id, reason: "pinned" });
+        continue;
+      }
+      // An orphaned record means the supervisor lost its control channel while the
+      // original harness process may still be running. Never delete its files until
+      // startup reconciliation proves the process is gone or the PID was reused.
+      if (record.status === "orphaned") {
+        result.skipped.push({ workerId: record.id, reason: "orphaned worker may still be running" });
+        continue;
+      }
+      // A persistent Worker's native session is its long-lived context. Removing
+      // the record would orphan that session silently; use the explicit forget
+      // operation after reviewing the native session.
+      if ((record.persistence ?? "oneshot") === "persistent") {
+        result.skipped.push({
+          workerId: record.id,
+          reason: "persistent worker retains its native session; use forget",
+        });
+        continue;
+      }
       if (Number.isNaN(endedAt) || endedAt > cutoff) {
         result.skipped.push({ workerId: record.id, reason: "too recent" });
         continue;
@@ -77,10 +100,22 @@ export class Retention {
         result.skipped.push({ workerId: record.id, reason: "unacknowledged notification" });
         continue;
       }
+      if (options.protectedWorkerIds?.has(record.id)) {
+        result.skipped.push({ workerId: record.id, reason: "activation or runtime is still live" });
+        continue;
+      }
       const dir = this.store.workerDir(record.id);
       const bytes = await directorySize(dir);
       if (!dryRun) {
         try {
+          await this.store.flush(record.id);
+          if (options.protectedWorkerIds?.has(record.id)) {
+            result.skipped.push({
+              workerId: record.id,
+              reason: "activation or runtime is still live",
+            });
+            continue;
+          }
           await rm(dir, { recursive: true, force: true });
           if (options.includeSessions) {
             await rm(path.join(this.sessionsDir, record.id), { recursive: true, force: true });

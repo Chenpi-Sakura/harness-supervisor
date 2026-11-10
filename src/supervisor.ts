@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { SupervisorError, errorMessage } from "./errors.js";
 import {
@@ -17,6 +17,7 @@ import {
 } from "./notify.js";
 import { Retention, type PruneOptions, type PruneResult } from "./retention.js";
 import { Store } from "./store.js";
+import { readConsumerCheckpoint, writeConsumerCheckpoint } from "./consumer-checkpoints.js";
 import { withWorkerProtocol } from "./worker-protocol.js";
 import { isThreadUuid } from "./caller-thread.js";
 import {
@@ -44,6 +45,8 @@ import {
   type HarnessEvent,
   type HarnessExit,
   type HarnessSession,
+  type CompactResult,
+  type CompactWorkerResult,
   type HarnessSpawnSpec,
   type NotificationsResult,
   type NotificationBinding,
@@ -53,17 +56,23 @@ import {
   type PendingInput,
   type ReadEventsResult,
   type ResumeInput,
+  type ForgetWorkerResult,
   type SendMode,
   type SpawnInput,
   type SupervisorInfo,
   type SupervisorLimits,
+  type StorageDiagnostics,
   type WaitResult,
+  type WorkerAdminAction,
   type WorkerConfig,
   type WorkerEvent,
   type WorkerEventType,
   type WorkerInputState,
   type WorkerLastProgress,
+  type WorkerLifecycle,
+  type WorkerPersistence,
   type WorkerRecord,
+  type WorkerSessionProjection,
   type WorkerStatus,
   type WorkerStatusResult,
   type WorkerSummary,
@@ -205,10 +214,17 @@ export class Supervisor {
   private readonly runtimes = new Map<string, Runtime>();
   private readonly resuming = new Set<string>();
   private pendingSpawns = 0;
+  /** One destructive maintenance operation at a time; blocks new activations. */
+  private maintenance: string | null = null;
   private initialized = false;
   private shuttingDown = false;
   private metricsReady = false;
   private metricsError: string | undefined;
+  private startupStorage: StorageDiagnostics["startup"] = {
+    totalMs: 0,
+    storeInitMs: 0,
+    store: { checkpointed: 0, scanned: 0, eventBytes: 0 },
+  };
   private readonly evidenceCache = new Map<
     string,
     {
@@ -267,8 +283,22 @@ export class Supervisor {
 
   async init(): Promise<void> {
     if (this.initialized) return;
+    const initStartedAt = Date.now();
+    const timings = {
+      notifierInitMs: 0,
+      idempotencyInitMs: 0,
+      metricsInitMs: 0,
+      storeInitMs: 0,
+      reconcileMetricsMs: 0,
+      reconcileNotificationsMs: 0,
+    };
+    let phaseStartedAt = Date.now();
     await this.notifier.init();
+    timings.notifierInitMs = Date.now() - phaseStartedAt;
+    phaseStartedAt = Date.now();
     await this.idempotency.init();
+    timings.idempotencyInitMs = Date.now() - phaseStartedAt;
+    phaseStartedAt = Date.now();
     try {
       const warnings = await this.metrics.init();
       this.metricsReady = true;
@@ -283,13 +313,23 @@ export class Supervisor {
         error: this.metricsError,
       });
     }
+    timings.metricsInitMs = Date.now() - phaseStartedAt;
     this.store.onAnyEvent((event) => {
       const record = this.store.getWorker(event.workerId);
       if (!record) return;
-      this.notifier.ingest(record, event);
+      try {
+        this.notifier.ingest(record, event);
+      } catch (error) {
+        // A malformed persisted route must not break the event append path.
+        this.logger.warn(`Failed to ingest notification for ${event.workerId}`, {
+          error: errorMessage(error),
+        });
+      }
       this.ingestMetricsEvent(record, event);
     });
-    const { workers, warnings } = await this.store.init();
+    phaseStartedAt = Date.now();
+    const { workers, warnings, stats: storeStats } = await this.store.init();
+    timings.storeInitMs = Date.now() - phaseStartedAt;
     const now = new Date().toISOString();
     for (const record of workers) {
       if (!record.notifyTarget) {
@@ -297,6 +337,54 @@ export class Supervisor {
         // global default or the most recently used Codex session.
         record.notifyTarget = { channel: "none" };
         await this.store.saveWorker(record);
+      } else {
+        try {
+          record.notifyTarget = validateNotifyTarget(record.notifyTarget);
+        } catch (error) {
+          this.logger.warn(
+            `Worker ${record.id} has an invalid persisted notification target; using the inbox only`,
+            { error: errorMessage(error) },
+          );
+          record.notifyTarget = { channel: "none" };
+          await this.store.saveWorker(record);
+        }
+      }
+      if (record.status === "orphaned") {
+        // Orphaned is terminal, so the ordinary reconciliation below skips it.
+        // Re-check the recorded process instead: keeping the label forever would
+        // protect a dead record from retention, and would misdescribe a PID that
+        // now belongs to another process.
+        const identity = await inspectProcess(record.pid, [
+          record.id,
+          record.sessionId,
+          record.sessionFile,
+        ]);
+        const pidAlive = identity.alive;
+        const pidOurs = this.pidMayBelongToWorker(record, identity);
+        if (!pidAlive || !pidOurs) {
+          const now = new Date().toISOString();
+          record.status = "interrupted";
+          record.statusReason = pidAlive
+            ? "The recorded PID is alive but its command line does not match this worker (PID reused); the original process is gone and the outcome is unknown"
+            : "Supervisor restarted after the orphaned harness process was lost; outcome unknown";
+          record.pendingInput = undefined;
+          record.updatedAt = now;
+          record.endedAt ??= now;
+          this.store.appendEvent(record.id, "worker.interrupted", {
+            pid: record.pid,
+            pidAlive,
+            pidVerified: identity.verified,
+            previousStatus: "orphaned",
+            note: "Orphan protection released only after the recorded process was confirmed gone or reused.",
+          });
+          await this.store.saveWorker(record);
+          await this.store.flush(record.id).catch((error: unknown) => {
+            this.logger.error(`Failed to persist orphan reconciliation for ${record.id}`, {
+              error: errorMessage(error),
+            });
+          });
+        }
+        continue;
       }
       if (!isTerminal(record.status)) {
         const previousStatus = record.status;
@@ -306,10 +394,10 @@ export class Supervisor {
           record.sessionFile,
         ]);
         const pidAlive = identity.alive;
-        // A live PID is only treated as our harness when its command line carries
-        // one of our worker/session tokens. Otherwise it is a reused PID and the
-        // original process is gone.
-        const pidOurs = identity.verified !== false;
+        // A live PID is only treated as ours when its command line carries a
+        // worker/session token, or when the runtime (ACP) cannot expose one and
+        // the conservative policy keeps the session locked.
+        const pidOurs = this.pidMayBelongToWorker(record, identity);
         const orphaned = pidAlive && pidOurs;
         const status: WorkerStatus = orphaned ? "orphaned" : "interrupted";
         record.status = status;
@@ -343,29 +431,55 @@ export class Supervisor {
       }
     }
     this.initialized = true;
+    phaseStartedAt = Date.now();
     await this.reconcileMetricsUsage();
+    timings.reconcileMetricsMs = Date.now() - phaseStartedAt;
+    phaseStartedAt = Date.now();
     await this.reconcileNotifications();
+    timings.reconcileNotificationsMs = Date.now() - phaseStartedAt;
     this.logger.info("Supervisor initialized", {
       workers: workers.length,
       warnings: warnings.length,
+      store: storeStats,
+      timings: { ...timings, totalMs: Date.now() - initStartedAt },
     });
+    this.startupStorage = {
+      totalMs: Date.now() - initStartedAt,
+      storeInitMs: timings.storeInitMs,
+      store: storeStats,
+    };
   }
 
   /**
    * Rebuild inbox records for important events that were persisted before a
    * crash (event written, notification not yet written). Ids are derived from
-   * (worker, seq), so this can never duplicate a notification.
+   * (worker, seq), so this can never duplicate a notification. The per-worker
+   * checkpoint skips history that was already ingested and flushed.
    */
   private async reconcileNotifications(): Promise<void> {
     let created = 0;
+    const advanced = new Map<string, number>();
+    // A missing inbox means the records covered by any checkpoint are gone;
+    // rebuild from the event log instead of trusting the position.
+    const resetCheckpoints = this.notifier.wasStoreMissing();
     for (const record of this.store.listWorkers()) {
+      const workerDir = this.store.workerDir(record.id);
+      // The persisted consumer checkpoint is the authoritative ingest position.
+      // Do not jump to the newest surviving inbox id: that would skip an earlier
+      // record lost from the inbox and never rebuild it.
+      const checkpoint = resetCheckpoints
+        ? 0
+        : Math.min(await readConsumerCheckpoint(workerDir, "notifications"), record.lastSeq);
+      let lastSeq = checkpoint;
       try {
-        for await (const event of this.store.scanEvents(record.id)) {
+        for await (const event of this.store.scanEvents(record.id, { sinceSeq: checkpoint })) {
+          lastSeq = Math.max(lastSeq, event.seq);
           if (notificationKindFor(event.type) && !this.notifier.has(notificationId(record.id, event.seq))) {
             created += 1;
           }
           this.notifier.ingest({ ...record, notifyTarget: { channel: "none" } }, event);
         }
+        if (lastSeq > checkpoint) advanced.set(record.id, lastSeq);
       } catch (error) {
         // A damaged history must not prevent the daemon controlling other workers.
         this.logger.warn(`Cannot fully rebuild notifications for ${record.id}`, { error: errorMessage(error) });
@@ -375,6 +489,15 @@ export class Supervisor {
       this.logger.info("Reconciled notification inbox from persisted events", { created });
     }
     await this.notifier.flush();
+    for (const [workerId, seq] of advanced) {
+      await writeConsumerCheckpoint(this.store.workerDir(workerId), "notifications", seq).catch(
+        (error: unknown) => {
+          this.logger.warn(`Failed to persist notification checkpoint for ${workerId}`, {
+            error: errorMessage(error),
+          });
+        },
+      );
+    }
     void this.notifier.retryPending(["pending"]).catch((error: unknown) => {
       this.logger.warn("Failed to retry pending notifications", {
         error: errorMessage(error),
@@ -396,26 +519,50 @@ export class Supervisor {
   private async reconcileMetricsUsage(): Promise<void> {
     if (!this.metricsReady) return;
     let created = 0;
+    const advanced = new Map<string, number>();
+    // A missing metrics file means the usage records covered by any checkpoint
+    // are gone; rebuild from events instead of trusting the position.
+    const resetCheckpoints = this.metrics.wasStoreMissing();
     for (const record of this.store.listWorkers()) {
       if (!record.taskId) continue;
+      const workerDir = this.store.workerDir(record.id);
+      const checkpoint = resetCheckpoints
+        ? 0
+        : Math.min(await readConsumerCheckpoint(workerDir, "metrics"), record.lastSeq);
+      let lastSeq = checkpoint;
       try {
-        for await (const event of this.store.scanEvents(record.id)) {
+        for await (const event of this.store.scanEvents(record.id, { sinceSeq: checkpoint })) {
+          lastSeq = Math.max(lastSeq, event.seq);
           if (event.type !== "run.usage") continue;
           const existed = this.metrics.hasUsage(`runtime:${record.id}:${event.seq}`);
           const usage = this.metrics.ingestEvent(record, event);
           if (usage && !existed) created += 1;
         }
+        if (lastSeq > checkpoint) advanced.set(record.id, lastSeq);
       } catch (error) {
         this.logger.warn(`Cannot fully rebuild metrics usage for ${record.id}`, {
           error: errorMessage(error),
         });
       }
     }
+    let flushed = true;
     await this.metrics.flush().catch((error: unknown) => {
+      flushed = false;
       this.logger.warn("Failed to flush reconciled metrics usage", {
         error: errorMessage(error),
       });
     });
+    if (flushed) {
+      for (const [workerId, seq] of advanced) {
+        await writeConsumerCheckpoint(this.store.workerDir(workerId), "metrics", seq).catch(
+          (error: unknown) => {
+            this.logger.warn(`Failed to persist metrics checkpoint for ${workerId}`, {
+              error: errorMessage(error),
+            });
+          },
+        );
+      }
+    }
     if (created > 0) {
       this.logger.info("Reconciled task usage from persisted events", { created });
     }
@@ -511,11 +658,30 @@ export class Supervisor {
    */
   async prune(options: PruneOptions = {}): Promise<PruneResult & { compacted: unknown }> {
     this.assertInitialized();
-    const result = await this.retention.prune(options);
-    if (options.dryRun) return { ...result, compacted: null };
-    const notifications = await this.notifier.compact({ olderThanDays: 30 });
-    const idempotency = await this.idempotency.compact();
-    return { ...result, compacted: { notifications, idempotency } };
+    return this.withMaintenance("prune", async () => {
+      const protectedWorkerIds = new Set<string>([
+        ...this.runtimes.keys(),
+        ...this.resuming.keys(),
+      ]);
+      const result = await this.retention.prune({ ...options, protectedWorkerIds });
+      if (options.dryRun) return { ...result, compacted: null };
+      const notifications = await this.notifier.compact({ olderThanDays: 30 });
+      const idempotency = await this.idempotency.compact();
+      // Records dropped by inbox compaction must not be recreated from an old
+      // per-worker checkpoint on the next daemon start.
+      for (const record of this.store.listWorkers()) {
+        await writeConsumerCheckpoint(
+          this.store.workerDir(record.id),
+          "notifications",
+          record.lastSeq,
+        ).catch((error: unknown) => {
+          this.logger.warn(`Failed to advance notification checkpoint for ${record.id}`, {
+            error: errorMessage(error),
+          });
+        });
+      }
+      return { ...result, compacted: { notifications, idempotency } };
+    });
   }
 
   info(): SupervisorInfo {
@@ -543,6 +709,33 @@ export class Supervisor {
           "Codex app-server turn/steer was verified against a real active turn, including rejection of a wrong expectedTurnId. HS cannot use it for Codex Desktop: Desktop owns its thread in a private stdio app-server, and the shared app-server refuses to resume a thread with an active writer (\"already has an active writer\"). codex-queue remains the supported delivery path.",
       },
       runtimes: [...this.adapters.values()].map((adapter) => adapter.capabilities),
+      storage: this.storageDiagnostics(),
+    };
+  }
+
+  private storageDiagnostics(): StorageDiagnostics {
+    const stats = this.store.storageStats();
+    let activeWorkers = 0;
+    let idleWorkers = 0;
+    let otherWorkers = 0;
+    for (const record of this.store.listWorkers()) {
+      if (ACTIVE_STATUSES.has(record.status)) {
+        activeWorkers += 1;
+        continue;
+      }
+      const pidAlive = record.pid !== undefined ? isPidAlive(record.pid) : null;
+      if (isTerminal(record.status) && this.sessionProjection(record, pidAlive).restorable) {
+        idleWorkers += 1;
+      } else {
+        otherWorkers += 1;
+      }
+    }
+    return {
+      ...stats,
+      activeWorkers,
+      idleWorkers,
+      otherWorkers,
+      startup: { ...this.startupStorage },
     };
   }
 
@@ -582,7 +775,7 @@ export class Supervisor {
    * silently re-executed.
    */
   private async withIdempotency(
-    method: "spawn" | "resume" | "send",
+    method: "spawn" | "resume" | "continue" | "send",
     requestId: string,
     params: unknown,
     run: (workerIdOut: { value?: string }) => Promise<WorkerSummary>,
@@ -677,6 +870,10 @@ export class Supervisor {
     if (input.prompt.length > MAX_PROMPT_CHARS) {
       throw new SupervisorError("BAD_REQUEST", `prompt exceeds ${MAX_PROMPT_CHARS} characters`);
     }
+    const persistence: WorkerPersistence = input.persistence ?? "oneshot";
+    if (persistence !== "oneshot" && persistence !== "persistent") {
+      throw new SupervisorError("BAD_REQUEST", `Unknown persistence mode: ${String(persistence)}`);
+    }
     const cwd = path.resolve(input.cwd || process.cwd());
     let cwdStat;
     try {
@@ -700,6 +897,7 @@ export class Supervisor {
       cwd,
       promptPreview: safeText(input.prompt, 500),
       status: "starting",
+      persistence,
       createdAt: now,
       updatedAt: now,
       lastSeq: 0,
@@ -869,9 +1067,130 @@ export class Supervisor {
     }
     this.resuming.add(workerId);
     if (workerIdOut) workerIdOut.value = workerId;
+    let slotReserved = false;
     try {
-      return await this.resumeInternal(workerId, input, record);
+      // Resume is a new activation; it consumes the same concurrency budget.
+      this.reserveSpawnSlot();
+      slotReserved = true;
+      return await this.resumeInternal(workerId, input, record, {
+        releaseSlot: () => {
+          if (!slotReserved) return;
+          slotReserved = false;
+          this.pendingSpawns -= 1;
+        },
+      });
     } finally {
+      if (slotReserved) this.pendingSpawns -= 1;
+      this.resuming.delete(workerId);
+    }
+  }
+
+  /**
+   * Submit the next Turn to an idle persistent Worker on its existing native
+   * session. This reuses the cold-restore path; it is not a new Worker and it
+   * never invents a replacement session when the recorded one is unusable.
+   */
+  async continue(
+    workerId: string,
+    input: ResumeInput,
+    options: { requestId?: string } = {},
+  ): Promise<WorkerSummary> {
+    this.assertInitialized();
+    this.assertAcceptingWork();
+    const requestId = validateIdempotencyKey(options.requestId);
+    const source: NotificationBindingSource =
+      input.notifyTarget !== undefined ? "explicit" : "preserved";
+    const run = async (workerIdOut?: { value?: string }) =>
+      this.attachNotificationBinding(
+        await this.continueOnce(workerId, input, workerIdOut),
+        source,
+      );
+    return requestId
+      ? await this.withIdempotency("continue", requestId, { workerId, input }, (workerIdOut) =>
+          run(workerIdOut),
+        )
+      : await run();
+  }
+
+  private async continueOnce(
+    workerId: string,
+    input: ResumeInput,
+    workerIdOut?: { value?: string },
+  ): Promise<WorkerSummary> {
+    this.assertAcceptingWork();
+    const record = this.requireWorker(workerId);
+    const persistence = record.persistence ?? "oneshot";
+    if (persistence !== "persistent") {
+      throw new SupervisorError(
+        "UNSUPPORTED",
+        "This worker is not persistent. Spawn it with persistence=\"persistent\" to continue it across Turns.",
+        { workerId, persistence },
+      );
+    }
+    if (record.retiredAt) {
+      throw new SupervisorError("INVALID_STATE", "This worker is retired; unretire it before continuing", {
+        workerId,
+        retiredAt: record.retiredAt,
+      });
+    }
+    if (record.status === "orphaned") {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        "This worker is orphaned: its previous process may still hold the session. Reconcile it before continuing.",
+        { workerId, status: record.status },
+      );
+    }
+    if (ACTIVE_STATUSES.has(record.status)) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        "Worker is currently active; wait for the current Turn to settle before continuing.",
+        { workerId, status: record.status },
+      );
+    }
+    if (this.resuming.has(workerId)) {
+      throw new SupervisorError("INVALID_STATE", "A continue or resume is already in progress for this worker", {
+        workerId,
+        status: record.status,
+      });
+    }
+    this.resuming.add(workerId);
+    if (workerIdOut) workerIdOut.value = workerId;
+    let slotReserved = false;
+    try {
+      // A continuation starts a real harness process and must obey maxWorkers.
+      this.reserveSpawnSlot();
+      slotReserved = true;
+      // `isPidAlive` alone would treat a reused PID as a live activation and make
+      // this permanent; recover the same command-line proof that resume uses.
+      let pidMayBeRunning = record.pid !== undefined ? isPidAlive(record.pid) : null;
+      if (pidMayBeRunning && record.pid !== undefined) {
+        const identity = await inspectProcess(record.pid, [
+          record.id,
+          record.sessionId,
+          record.sessionFile,
+        ]);
+        if (identity.alive && !this.pidMayBelongToWorker(record, identity)) {
+          pidMayBeRunning = false;
+        }
+      }
+      const session = this.sessionProjection(record, pidMayBeRunning);
+      if (!session.restorable) {
+        throw new SupervisorError(
+          "UNSUPPORTED",
+          `The native session for this worker cannot be restored (${session.reason ?? "unknown"}). Refusing to fake continuity.`,
+          { workerId, reason: session.reason, session },
+        );
+      }
+      return await this.resumeInternal(workerId, input, record, {
+        continuation: true,
+        releaseSlot: () => {
+          if (!slotReserved) return;
+          slotReserved = false;
+          this.pendingSpawns -= 1;
+        },
+      });
+    } finally {
+      if (slotReserved) this.pendingSpawns -= 1;
       this.resuming.delete(workerId);
     }
   }
@@ -880,6 +1199,7 @@ export class Supervisor {
     workerId: string,
     input: ResumeInput,
     record: WorkerRecord,
+    options: { continuation?: boolean; releaseSlot?: () => void } = {},
   ): Promise<WorkerSummary> {
     let activeRuntime = this.runtimes.get(workerId);
     if (activeRuntime?.finalizing) {
@@ -898,6 +1218,12 @@ export class Supervisor {
     if (!isTerminal(record.status)) {
       throw new SupervisorError("INVALID_STATE", "Only a terminal or detached worker can be resumed", {
         status: record.status,
+      });
+    }
+    if (record.retiredAt) {
+      throw new SupervisorError("INVALID_STATE", "This worker is retired; unretire it before resuming", {
+        workerId,
+        retiredAt: record.retiredAt,
       });
     }
     if (!input || typeof input.prompt !== "string" || input.prompt.trim().length === 0) {
@@ -932,8 +1258,9 @@ export class Supervisor {
         record.sessionId,
         record.sessionFile,
       ]);
-      // A reused PID must not block resuming our own persisted session.
-      if (identity.alive && identity.verified !== false) {
+      // A reused PID must not block resuming our own persisted session, but an
+      // ACP child whose argv has no worker token must keep it locked.
+      if (identity.alive && this.pidMayBelongToWorker(record, identity)) {
         throw new SupervisorError(
           "INVALID_STATE",
           "The previous harness process still appears to be alive. Refusing concurrent resume of the same session.",
@@ -981,9 +1308,12 @@ export class Supervisor {
     record.exit = undefined;
     record.pid = undefined;
     record.updatedAt = new Date().toISOString();
+    // The record now counts as active, so the admission reservation can go.
+    options.releaseSlot?.();
     this.store.appendEvent(workerId, "worker.starting", {
       runtime: record.runtime,
-      resumed: true,
+      resumed: !options.continuation,
+      ...(options.continuation ? { continued: true } : {}),
       sessionFile: record.sessionFile,
     });
     const runtime = this.createRuntime(record, adapter);
@@ -1024,14 +1354,19 @@ export class Supervisor {
       record.statusReason = record.pendingInput ? "harness requested input" : undefined;
       this.store.appendEvent(workerId, "run.accepted", {
         disposition: disposition.disposition,
-        resumed: true,
+        resumed: !options.continuation,
+        ...(options.continuation ? { continued: true } : {}),
       });
       record.resumeCount += 1;
-      this.store.appendEvent(workerId, "worker.resumed", {
-        sessionId: record.sessionId,
-        sessionFile: record.sessionFile,
-        resumeCount: record.resumeCount,
-      });
+      this.store.appendEvent(
+        workerId,
+        options.continuation ? "worker.continued" : "worker.resumed",
+        {
+          sessionId: record.sessionId,
+          sessionFile: record.sessionFile,
+          resumeCount: record.resumeCount,
+        },
+      );
       this.ensureDurationTimer(runtime);
       await this.store.saveWorker(record);
       await this.store.flush(workerId);
@@ -1056,16 +1391,243 @@ export class Supervisor {
     }
   }
 
-  list(filter?: { statuses?: WorkerStatus[]; limit?: number }): WorkerSummary[] {
+  list(filter?: { statuses?: WorkerStatus[]; limit?: number; includeArchived?: boolean }): WorkerSummary[] {
     this.assertInitialized();
     const statuses = filter?.statuses ? new Set(filter.statuses) : null;
     const limit = clampInt(filter?.limit ?? 100, 1, 500);
     return this.store
       .listWorkers()
       .filter((record) => !statuses || statuses.has(record.status))
+      .filter((record) => filter?.includeArchived === true || !record.archived)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, limit)
       .map((record) => this.summary(record));
+  }
+
+  async admin(workerId: string, action: WorkerAdminAction): Promise<WorkerSummary> {
+    this.assertInitialized();
+    this.assertAcceptingWork();
+    const record = this.requireWorker(workerId);
+    const apply = async (): Promise<void> => {
+      if (action === "archive" || action === "retire") {
+        if (ACTIVE_STATUSES.has(record.status)) {
+          throw new SupervisorError(
+            "INVALID_STATE",
+            `An active worker cannot be ${action === "archive" ? "archived" : "retired"}`,
+            { workerId, status: record.status },
+          );
+        }
+        await this.awaitRuntimeQuiet(workerId);
+        if (this.runtimes.has(workerId)) {
+          throw new SupervisorError("INVALID_STATE", "Worker is still shutting down; retry shortly", {
+            workerId,
+            status: record.status,
+          });
+        }
+      }
+      const previous = {
+        pinned: record.pinned,
+        archived: record.archived,
+        retiredAt: record.retiredAt,
+        updatedAt: record.updatedAt,
+      };
+      try {
+        switch (action) {
+          case "pin":
+            record.pinned = true;
+            break;
+          case "unpin":
+            delete record.pinned;
+            break;
+          case "archive":
+            record.archived = true;
+            break;
+          case "unarchive":
+            delete record.archived;
+            break;
+          case "retire":
+            record.retiredAt = new Date().toISOString();
+            break;
+          case "unretire":
+            delete record.retiredAt;
+            break;
+          default:
+            throw new SupervisorError("BAD_REQUEST", `Unknown admin action: ${String(action)}`);
+        }
+        record.updatedAt = new Date().toISOString();
+        this.store.appendEvent(workerId, "worker.admin", {
+          action,
+          pinned: record.pinned === true,
+          archived: record.archived === true,
+          retiredAt: record.retiredAt,
+        });
+        await this.store.saveWorker(record);
+        await this.store.flush(workerId);
+      } catch (error) {
+        if (previous.pinned === undefined) delete record.pinned;
+        else record.pinned = previous.pinned;
+        if (previous.archived === undefined) delete record.archived;
+        else record.archived = previous.archived;
+        if (previous.retiredAt === undefined) delete record.retiredAt;
+        else record.retiredAt = previous.retiredAt;
+        record.updatedAt = previous.updatedAt;
+        throw error;
+      }
+    };
+    // The two state changes that promise "no new Turn" must not interleave with
+    // a continue that already passed its initial status check.
+    if (action === "archive" || action === "retire") {
+      await this.withWorkerMutation(workerId, action, apply);
+    } else {
+      await apply();
+    }
+    return this.summary(record);
+  }
+
+  /**
+   * Remove the HS record and its state directory. Native session files are
+   * deliberately preserved: forgetting HS bookkeeping is not a harness delete.
+   */
+  async forget(workerId: string): Promise<ForgetWorkerResult> {
+    this.assertInitialized();
+    this.assertAcceptingWork();
+    this.requireWorker(workerId);
+    return this.withWorkerMutation(workerId, "forget", async () => {
+      const record = this.requireWorker(workerId);
+      if (record.pinned) {
+        throw new SupervisorError("INVALID_STATE", "Unpin the worker before forgetting it", { workerId });
+      }
+      if (ACTIVE_STATUSES.has(record.status)) {
+        throw new SupervisorError("INVALID_STATE", "An active worker cannot be forgotten", {
+          workerId,
+          status: record.status,
+        });
+      }
+      if (record.status === "orphaned") {
+        throw new SupervisorError(
+          "INVALID_STATE",
+          "An orphaned worker may still hold its session; reconcile it before forgetting",
+          { workerId, status: record.status },
+        );
+      }
+      await this.awaitRuntimeQuiet(workerId);
+      if (this.runtimes.has(workerId)) {
+        throw new SupervisorError("INVALID_STATE", "Worker is still shutting down; retry shortly", {
+          workerId,
+          status: record.status,
+        });
+      }
+      if (this.notifier.unackedWorkerIds().has(workerId)) {
+        throw new SupervisorError(
+          "INVALID_STATE",
+          "Acknowledge outstanding notifications before forgetting this worker",
+          { workerId },
+        );
+      }
+      await rm(this.store.workerDir(workerId), { recursive: true, force: true });
+      this.store.forgetWorker(workerId);
+      await this.store.flush().catch(() => undefined);
+      return {
+        workerId,
+        forgotten: true,
+        sessionPreserved: true,
+        note: "HS record and events were removed; the native session file was left in place.",
+      };
+    });
+  }
+
+  /**
+   * Compact finished workers' event logs: lifecycle events are kept, only the
+   * newest progress events survive. Orphaned, pinned, active or still-running
+   * workers are never touched, and native session files are preserved.
+   */
+  async compact(
+    options: { workerId?: string; keepProgress?: number; dryRun?: boolean } = {},
+  ): Promise<CompactResult> {
+    this.assertInitialized();
+    this.assertAcceptingWork();
+    const dryRun = options.dryRun === true;
+    const keepProgress = clampInt(options.keepProgress ?? 200, 0, 100_000);
+    const workers: CompactWorkerResult[] = [];
+    const compactOne = async (record: WorkerRecord): Promise<CompactWorkerResult> =>
+      this.withWorkerMutation(record.id, "compact", async () => {
+        if (!isTerminal(record.status)) {
+          throw new SupervisorError("INVALID_STATE", "Only terminal workers can be compacted", {
+            workerId: record.id,
+            status: record.status,
+          });
+        }
+        if (record.status === "orphaned") {
+          throw new SupervisorError(
+            "INVALID_STATE",
+            "An orphaned worker may still be running; reconcile it before compacting",
+            { workerId: record.id, status: record.status },
+          );
+        }
+        if (record.pinned) {
+          throw new SupervisorError("INVALID_STATE", "Unpin the worker before compacting it", {
+            workerId: record.id,
+          });
+        }
+        await this.awaitRuntimeQuiet(record.id);
+        if (this.runtimes.has(record.id)) {
+          throw new SupervisorError("INVALID_STATE", "Worker is still shutting down; retry shortly", {
+            workerId: record.id,
+            status: record.status,
+          });
+        }
+        return this.store.compactWorker(record.id, { keepProgress, dryRun });
+      });
+
+    if (options.workerId) {
+      const record = this.requireWorker(options.workerId);
+      const result = await compactOne(record);
+      workers.push(result);
+      if (!dryRun && !result.skipped) this.evidenceCache.delete(record.id);
+    } else {
+      for (const record of this.store.listWorkers()) {
+        if (!isTerminal(record.status)) continue;
+        if (record.status === "orphaned" || record.pinned || this.runtimes.has(record.id)) continue;
+        if (this.resuming.has(record.id)) {
+          workers.push({
+            workerId: record.id,
+            dryRun,
+            removedEvents: 0,
+            keptEvents: record.eventCount,
+            removedBytes: 0,
+            keptBytes: 0,
+            skipped: "continue or resume in progress",
+          });
+          continue;
+        }
+        try {
+          const result = await compactOne(record);
+          workers.push(result);
+          if (!dryRun && !result.skipped) this.evidenceCache.delete(record.id);
+        } catch (error) {
+          workers.push({
+            workerId: record.id,
+            dryRun,
+            removedEvents: 0,
+            keptEvents: record.eventCount,
+            removedBytes: 0,
+            keptBytes: 0,
+            skipped: errorMessage(error),
+          });
+        }
+      }
+    }
+    const removedEvents = workers.reduce((total, item) => total + item.removedEvents, 0);
+    const removedBytes = workers.reduce((total, item) => total + item.removedBytes, 0);
+    if (!dryRun && removedEvents > 0) {
+      await this.store.flush().catch(() => undefined);
+      this.logger.info("Compacted worker event logs", {
+        workers: workers.filter((item) => !item.skipped).length,
+        removedEvents,
+        removedBytes,
+      });
+    }
+    return { dryRun, workers, removedEvents, removedBytes };
   }
 
   async status(workerId: string, recentEventLimit = 20): Promise<WorkerStatusResult> {
@@ -1365,14 +1927,18 @@ export class Supervisor {
         { status: record.status },
       );
     }
-    if (runtime.pendingUiTimer) {
-      clearTimeout(runtime.pendingUiTimer);
-      runtime.pendingUiTimer = undefined;
-    }
-    record.pendingInput = undefined;
-    if (!isTerminal(record.status)) {
-      record.status = "running";
-      record.statusReason = undefined;
+    // A new needs_input can replace the pending request while the answer is in
+    // flight. Only clear the request we actually answered.
+    if (record.pendingInput === pending) {
+      if (runtime.pendingUiTimer) {
+        clearTimeout(runtime.pendingUiTimer);
+        runtime.pendingUiTimer = undefined;
+      }
+      record.pendingInput = undefined;
+      if (!isTerminal(record.status)) {
+        record.status = "running";
+        record.statusReason = undefined;
+      }
     }
     this.store.appendEvent(workerId, "run.input_answered", {
       requestId,
@@ -1494,14 +2060,14 @@ export class Supervisor {
           record.sessionId,
           record.sessionFile,
         ]);
-        if (identity.alive && identity.verified !== false) {
+        if (identity.alive && this.pidMayBelongToWorker(record, identity)) {
           throw new SupervisorError(
             "UNSUPPORTED",
             "The supervisor no longer owns this live process after a restart. It cannot be cancelled through the supervisor; verify and terminate the recorded PID out-of-band.",
             { pid: record.pid, workerId, pidVerified: identity.verified },
           );
         }
-        if (identity.verified === false) {
+        if (identity.alive) {
           // The PID now belongs to an unrelated process: report that honestly
           // instead of pretending the worker was terminated.
           record.statusReason =
@@ -1533,7 +2099,7 @@ export class Supervisor {
       });
       await this.store.saveWorker(record);
       await this.store.flush(workerId).catch(() => undefined);
-      return this.summary(record);
+        return this.summary(record);
     }
     if (!runtime.cancelRequested) {
       if (runtime.finalizing || runtime.settled) {
@@ -1563,7 +2129,7 @@ export class Supervisor {
     this.shuttingDown = true;
     const drainDeadline = Date.now() + 5000;
     while (
-      (this.pendingSpawns > 0 || this.resuming.size > 0) &&
+      (this.pendingSpawns > 0 || this.resuming.size > 0 || this.maintenance !== null) &&
       Date.now() < drainDeadline
     ) {
       await sleep(25);
@@ -1738,6 +2304,7 @@ export class Supervisor {
           fileExists: true,
           refreshed: true,
         });
+        this.syncSessionRef(record, runtime.adapter);
         await this.store.saveWorker(record);
       }
     } catch (error) {
@@ -2248,6 +2815,7 @@ export class Supervisor {
       }
       record.sessionId = state.sessionId;
       record.sessionFile = state.sessionFile;
+      this.syncSessionRef(record, runtime.adapter);
       this.store.appendEvent(record.id, "worker.session", {
         sessionId: state.sessionId,
         sessionFile: state.sessionFile,
@@ -2360,6 +2928,38 @@ export class Supervisor {
     runtime.pendingUiTimer = undefined;
   }
 
+  /** Wait for a terminating activation to release its files before admin work. */
+  private async awaitRuntimeQuiet(workerId: string): Promise<void> {
+    const runtime = this.runtimes.get(workerId);
+    if (!runtime) return;
+    await this.waitForRuntimeTerminal(runtime, 10_000);
+  }
+
+  /**
+   * Serialize destructive lifecycle changes with continue/resume. `resuming`
+   * already guards new activations, so the same guard prevents retire, forget
+   * and compact from racing a Turn that passed its initial status check.
+   */
+  private async withWorkerMutation<T>(
+    workerId: string,
+    action: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    if (this.resuming.has(workerId)) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        `A continue or resume is in progress for this worker; retry ${action} shortly`,
+        { workerId },
+      );
+    }
+    this.resuming.add(workerId);
+    try {
+      return await run();
+    } finally {
+      this.resuming.delete(workerId);
+    }
+  }
+
   private async waitForRuntimeTerminal(runtime: Runtime, timeoutMs: number): Promise<boolean> {
     if (isTerminal(runtime.record.status) && !this.runtimes.has(runtime.record.id)) return true;
     try {
@@ -2415,19 +3015,117 @@ export class Supervisor {
     return { ...worker, notificationBinding: binding };
   }
 
+  private syncSessionRef(record: WorkerRecord, adapter: HarnessAdapter): void {
+    record.sessionRef = {
+      runtime: record.runtime,
+      runtimeInstanceRef: adapter.instanceRef?.() ?? record.runtime,
+      ...(record.sessionId ? { sessionId: record.sessionId } : {}),
+      ...(record.sessionFile ? { sessionLocator: record.sessionFile } : {}),
+      cwd: record.cwd,
+      capabilitiesObservedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Whether a live PID may still be this worker's harness. A matching command
+   * line proves it; an unreadable command line stays conservative. ACP children
+   * have no worker/session token in argv, so for those runtimes an alive PID is
+   * never treated as a reused PID: locking the session is safer than a
+   * concurrent writer.
+   */
+  private pidMayBelongToWorker(
+    record: WorkerRecord,
+    identity: { alive: boolean; verified: boolean | null },
+  ): boolean {
+    if (!identity.alive) return false;
+    if (identity.verified === true) return true;
+    if (identity.verified === null) return true;
+    return this.adapters.get(record.runtime)?.processIdentity === "conservative";
+  }
+
+  /**
+   * Availability of the recorded native session, derived on every read. It is
+   * deliberately conservative: a live or uncertain process, an orphaned worker
+   * and a missing file all make a concurrent activation unsafe.
+   */
+  private sessionProjection(
+    record: WorkerRecord,
+    pidAlive: boolean | null,
+  ): WorkerSessionProjection {
+    const adapter = this.adapters.get(record.runtime);
+    const ref =
+      record.sessionRef ??
+      (adapter
+        ? {
+            runtime: record.runtime,
+            runtimeInstanceRef: adapter.instanceRef?.() ?? record.runtime,
+            ...(record.sessionId ? { sessionId: record.sessionId } : {}),
+            ...(record.sessionFile ? { sessionLocator: record.sessionFile } : {}),
+            cwd: record.cwd,
+          }
+        : undefined);
+    const fileExists = Boolean(record.sessionFile && existsSync(record.sessionFile));
+    let reason: string | undefined;
+    if (!adapter) reason = "runtime_unavailable";
+    else if (!adapter.capabilities.resume) reason = "resume_unsupported";
+    else if (!record.sessionFile) reason = "no_session_locator";
+    else if (!fileExists) reason = "session_file_missing";
+    else if (record.retiredAt) reason = "retired";
+    else if (record.status === "orphaned") reason = "orphaned_session_may_be_in_use";
+    else if (ACTIVE_STATUSES.has(record.status)) reason = "worker_active";
+    else if (pidAlive) reason = "process_may_be_running";
+    return {
+      available: Boolean(record.sessionFile) && fileExists,
+      restorable: reason === undefined,
+      ...(reason ? { reason } : {}),
+      ...(ref ? { ref } : {}),
+    };
+  }
+
+  private lifecycleFor(
+    record: WorkerRecord,
+    pidAlive: boolean | null,
+    session: WorkerSessionProjection,
+  ): WorkerLifecycle {
+    switch (record.status) {
+      case "starting":
+        return "activating";
+      case "running":
+        return "active";
+      case "awaiting_input":
+        return "awaiting_input";
+      case "orphaned":
+        return "orphaned";
+      default:
+        break;
+    }
+    if (record.retiredAt) return "retired";
+    if (isTerminal(record.status)) {
+      if (session.restorable) return "idle";
+      return pidAlive ? "unknown" : "unavailable";
+    }
+    return "unknown";
+  }
+
   private summary(record: WorkerRecord): WorkerSummary {
     const pidAlive = record.pid !== undefined ? isPidAlive(record.pid) : null;
     const resumeAvailable = Boolean(
-      isTerminal(record.status) &&
+      !record.retiredAt &&
+        isTerminal(record.status) &&
         record.sessionFile &&
         existsSync(record.sessionFile) &&
         !pidAlive &&
         this.adapters.get(record.runtime)?.capabilities.resume,
     );
+    const persistence: WorkerPersistence = record.persistence ?? "oneshot";
+    const session = this.sessionProjection(record, pidAlive);
     return {
       ...structuredClone(record),
       pidAlive,
       resumeAvailable,
+      persistence,
+      lifecycle: this.lifecycleFor(record, pidAlive, session),
+      session,
     };
   }
 
@@ -2450,6 +3148,7 @@ export class Supervisor {
       if (
         event.type === "worker.starting" ||
         event.type === "worker.resumed" ||
+        event.type === "worker.continued" ||
         event.type === "run.accepted"
       ) {
         return event.seq;
@@ -2476,6 +3175,27 @@ export class Supervisor {
   private assertAcceptingWork(): void {
     if (this.shuttingDown) {
       throw new SupervisorError("INVALID_STATE", "Supervisor is shutting down");
+    }
+    if (this.maintenance) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        `Maintenance (${this.maintenance}) is in progress; retry shortly`,
+      );
+    }
+  }
+
+  private async withMaintenance<T>(name: string, run: () => Promise<T>): Promise<T> {
+    if (this.maintenance) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        `Another maintenance operation (${this.maintenance}) is already running`,
+      );
+    }
+    this.maintenance = name;
+    try {
+      return await run();
+    } finally {
+      this.maintenance = null;
     }
   }
 

@@ -180,6 +180,44 @@ function eventsForProduction(events: WorkerEvent[], options: EventViewOptions = 
   return events.map((event) => eventForProduction(event, options));
 }
 
+function sessionOf(session: WorkerSummary["session"]) {
+  return {
+    available: session.available,
+    restorable: session.restorable,
+    ...(session.reason !== undefined ? { reason: session.reason } : {}),
+  };
+}
+
+/** New fields stay absent when an older daemon did not report them. */
+function persistenceFields(worker: WorkerSummary): Record<string, unknown> {
+  return {
+    ...(worker.persistence !== undefined ? { persistence: worker.persistence } : {}),
+    ...(worker.lifecycle !== undefined ? { lifecycle: worker.lifecycle } : {}),
+    ...(worker.session !== undefined ? { session: sessionOf(worker.session) } : {}),
+    ...adminFields(worker),
+  };
+}
+
+function adminFields(worker: WorkerSummary): Record<string, unknown> {
+  return {
+    ...(worker.pinned === true ? { pinned: true } : {}),
+    ...(worker.archived === true ? { archived: true } : {}),
+    ...(worker.retiredAt !== undefined ? { retiredAt: worker.retiredAt } : {}),
+  };
+}
+
+/** Pin/archive/retire result: identity plus management flags only. */
+export function presentWorkerAdmin(worker: WorkerSummary, mode: McpPresentationMode): unknown {
+  if (mode === "development") return worker;
+  return {
+    id: worker.id,
+    status: worker.status,
+    lifecycle: worker.lifecycle,
+    ...adminFields(worker),
+    lastSeq: worker.lastSeq,
+  };
+}
+
 function statusWorkerForProduction(worker: WorkerSummary) {
   return {
     id: worker.id,
@@ -188,6 +226,7 @@ function statusWorkerForProduction(worker: WorkerSummary) {
     ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
     cwd: worker.cwd,
     status: worker.status,
+    ...persistenceFields(worker),
     lastSeq: worker.lastSeq,
     createdAt: worker.createdAt,
     ...(worker.firstStartedAt !== undefined ? { firstStartedAt: worker.firstStartedAt } : {}),
@@ -209,6 +248,7 @@ export function presentAcceptedWorker(worker: WorkerSummary, mode: McpPresentati
     id: worker.id,
     runtime: worker.runtime,
     status: worker.status,
+    ...persistenceFields(worker),
     lastSeq: worker.lastSeq,
     notifyTarget: targetOf(worker.notifyTarget),
   };
@@ -291,6 +331,7 @@ export function presentWorkerList(workers: WorkerSummary[], mode: McpPresentatio
     ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
     runtime: worker.runtime,
     status: worker.status,
+    ...persistenceFields(worker),
     lastSeq: worker.lastSeq,
   }));
 }
@@ -307,13 +348,13 @@ export function presentWorkerAction(worker: WorkerSummary, mode: McpPresentation
 }
 
 const PRODUCTION_RUNTIME_NOTES: Record<string, string> = {
-  pi: "Native Pi RPC. Steering/follow-ups use Pi queues. Cancel uses abort. Resume loads a persisted session.",
+  pi: "Native Pi RPC. Steering/follow-ups use Pi queues. Cancel uses abort. Resume loads a persisted session. Idle continuation verified with a real 3-Turn session.",
   qoder:
-    "Qoder CLI stream-json. Steer/follow-up messages are accepted by the stream, but a real 1.1.76 run did not apply an accepted steer to the running turn: unverified effect. Cancel was validated (interrupt + process termination). Permission prompts surface as awaiting_input; AskUserQuestion was validated, allow/deny for Bash calls was not exercised end to end. Resume uses --resume and verifies the returned session id.",
+    "Qoder CLI stream-json. Steer/follow-up messages are accepted by the stream, but a real 1.1.76 run did not apply an accepted steer to the running turn: unverified effect. Cancel was validated (interrupt + process termination). Permission prompts surface as awaiting_input; AskUserQuestion was validated, allow/deny for Bash calls was not exercised end to end. Resume uses --resume and verifies the returned session id. Idle continuation: ACP L3, stream-json L2.",
   mcode:
-    "MiniMax Code ACP over ndJSON stdio. Steering is verified inside an active turn (the agent acted on it); a steer sent after the turn ended is dropped, so the turn must still be alive. Follow-ups are queued through the agent's queue extension. Cancel was validated on a real run. Permission prompts surface as awaiting_input and are answered with the offered option. Resume loads the recorded ACP session id.",
+    "MiniMax Code ACP over ndJSON stdio. Steering is verified inside an active turn (the agent acted on it); a steer sent after the turn ended is dropped, so the turn must still be alive. Follow-ups are queued through the agent's queue extension. Cancel was validated on a real run. Permission prompts surface as awaiting_input and are answered with the offered option. Resume loads the recorded ACP session id. Idle continuation verified with a real 3-Turn session.",
   dsh:
-    "DeepSeek Harness ACP (dsh --profile acp). Spawn/prompt, model and reasoning config, resume via session/resume, workspace writes, outside-workspace approval and cancel were verified against the desktop-bundled CLI. Resume needs the same absolute cwd. DSH defaults to workspace-write with approval ask; HARNESS_SUPERVISOR_DSH_PERMISSION_MODE selects read-only, workspace-write or danger-full-access. Permission requests carry only a tool call id. No steer/follow-up, plan, terminal, client fs or elicitation. usage_update is context occupancy, not billed tokens.",
+    "DeepSeek Harness ACP (dsh --profile acp). Spawn/prompt, model and reasoning config, resume via session/resume, workspace writes, outside-workspace approval and cancel were verified against the desktop-bundled CLI. Resume needs the same absolute cwd. DSH defaults to workspace-write with approval ask; HARNESS_SUPERVISOR_DSH_PERMISSION_MODE selects read-only, workspace-write or danger-full-access. Permission requests carry only a tool call id. No steer/follow-up, plan, terminal, client fs or elicitation. usage_update is context occupancy, not billed tokens. Idle continuation verified with a real 3-Turn session.",
 };
 
 /**
@@ -367,8 +408,22 @@ export function presentInfo(
       resume: runtime.resume,
       pause: runtime.pause,
       interactiveInput: runtime.interactiveInput,
+      ...(runtime.idleContinue !== undefined ? { idleContinue: runtime.idleContinue } : {}),
       notes: PRODUCTION_RUNTIME_NOTES[runtime.runtime] ?? UNREGISTERED_RUNTIME_NOTE,
     })),
+    ...(info.storage
+      ? {
+          storage: {
+            workers: info.storage.workers,
+            eventBytes: info.storage.eventBytes,
+            largestEventFileBytes: info.storage.largestEventFileBytes,
+            activeWorkers: info.storage.activeWorkers,
+            idleWorkers: info.storage.idleWorkers,
+            otherWorkers: info.storage.otherWorkers,
+            startupMs: info.storage.startup.totalMs,
+          },
+        }
+      : {}),
   };
 }
 

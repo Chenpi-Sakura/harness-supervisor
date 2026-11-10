@@ -238,6 +238,9 @@ test("MCP client can spawn, observe, steer, cancel, and outlive its own disconne
     "worker_answer",
     "worker_cancel",
     "worker_resume",
+    "worker_continue",
+    "worker_admin",
+    "worker_forget",
     "supervisor_info",
   ]) {
     assert.ok(toolNames.includes(name), `missing tool ${name}; stderr=${stderr}`);
@@ -365,4 +368,90 @@ test("MCP client can spawn, observe, steer, cancel, and outlive its own disconne
 
   await daemonClient.shutdown();
   daemonClient.close();
+});
+
+test("MCP worker_continue keeps the persistent worker session", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-mcp-persistent-"));
+  const cwd = await makeWorkspace();
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [MCP_ENTRY, "--state-dir", stateDir],
+    env: {
+      ...process.env,
+      HARNESS_SUPERVISOR_PI_ENTRY: FAKE_ENTRY,
+      FAKE_PI_STEP_MS: "20",
+    },
+    stderr: "pipe",
+  });
+  const mcp = new Client({ name: "harness-supervisor-persistent-test", version: "1.0.0" });
+  await mcp.connect(transport);
+  t.after(async () => {
+    try {
+      await mcp.close();
+    } catch {
+      // Already closed.
+    }
+    try {
+      const daemonClient = await connectExisting(stateDir, 5000);
+      await daemonClient.shutdown();
+      daemonClient.close();
+    } catch {
+      // Daemon may already be stopped.
+    }
+  });
+
+  const first = parseTool(
+    (await mcp.callTool({
+      name: "worker_spawn",
+      arguments: {
+        cwd,
+        prompt: "[scenario:slow] MCP_PERSISTENT_TOKEN_51ab",
+        persistence: "persistent",
+        notifyTarget: { channel: "none" },
+      },
+    })) as ToolResult,
+  );
+  assert.equal(first.persistence, "persistent");
+  assert.equal(first.lifecycle, "active");
+
+  const settled = parseTool(
+    (await mcp.callTool({
+      name: "worker_wait",
+      arguments: { workerId: first.id, timeoutMs: 15_000, until: "terminal" },
+    })) as ToolResult,
+  );
+  assert.equal(settled.worker.status, "completed");
+  assert.equal(settled.worker.lifecycle, "idle");
+  assert.equal(settled.worker.session.restorable, true);
+  const sessionId = settled.worker.sessionId;
+
+  const continued = parseTool(
+    (await mcp.callTool({
+      name: "worker_continue",
+      arguments: { workerId: first.id, prompt: "[scenario:recall] MCP second Turn" },
+    })) as ToolResult,
+  );
+  assert.equal(continued.id, first.id);
+  assert.ok(["active", "idle"].includes(continued.lifecycle));
+
+  const second = parseTool(
+    (await mcp.callTool({
+      name: "worker_wait",
+      arguments: { workerId: first.id, timeoutMs: 15_000, until: "terminal" },
+    })) as ToolResult,
+  );
+  assert.equal(second.worker.status, "completed");
+  assert.equal(second.worker.lifecycle, "idle");
+  assert.equal(second.worker.sessionId, sessionId);
+  assert.match(second.worker.result?.text ?? "", /MCP_PERSISTENT_TOKEN_51ab/);
+
+  const status = parseTool(
+    (await mcp.callTool({
+      name: "worker_status",
+      arguments: { workerId: first.id },
+    })) as ToolResult,
+  );
+  assert.equal(status.worker.persistence, "persistent");
+  assert.equal(status.worker.lifecycle, "idle");
+  assert.equal(status.worker.session.restorable, true);
 });

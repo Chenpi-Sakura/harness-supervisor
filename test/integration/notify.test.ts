@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SupervisorClient } from "../../src/ipc/client.js";
-import type { NotificationsResult } from "../../src/types.js";
+import { SCHEMA_VERSION } from "../../src/types.js";
+import type { NotificationsResult, WorkerRecord } from "../../src/types.js";
 import {
   TestDaemon,
   connectExisting,
@@ -55,6 +56,52 @@ test("a completed worker produces exactly one inbox record and progress never do
     "progress must never create a notification",
   );
 });
+
+test("a restart rebuilds from consumer records and persists startup checkpoints", async (t) => {
+  const daemon = await TestDaemon.create();
+  const cwd = await makeWorkspace();
+  let restarted: TestDaemon | null = null;
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+    await restarted?.stop().catch(() => undefined);
+  });
+  const client = await daemon.start();
+  const worker = await spawnWorker(client, cwd, "checkpointed task");
+  await waitTerminal(client, worker.id, 20_000);
+
+  await daemon.stop();
+  restarted = new TestDaemon(daemon.stateDir);
+  const client2 = await restarted.start();
+
+  const workerDir = path.join(daemon.stateDir, "workers", worker.id);
+  const notificationCheckpoint = await waitForJson(
+    path.join(workerDir, "notifications.checkpoint.json"),
+  );
+  const usageCheckpoint = await waitForJson(path.join(workerDir, "metrics.checkpoint.json"));
+  const record = JSON.parse(
+    await readFile(path.join(workerDir, "worker.json"), "utf8"),
+  ) as WorkerRecord;
+  assert.equal(notificationCheckpoint.seq, record.lastSeq);
+  assert.equal(notificationCheckpoint.consumer, "notifications");
+  assert.equal(usageCheckpoint.seq, record.lastSeq);
+  assert.equal(usageCheckpoint.consumer, "metrics");
+
+  const after = await inbox(client2, { workerId: worker.id });
+  assert.equal(after.notifications.length, 1, "the completed notification is not duplicated");
+  const still = await client2.request<{ worker: WorkerRecord }>("status", { workerId: worker.id });
+  assert.equal(still.worker.status, "completed");
+});
+
+async function waitForJson(file: string): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      return JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>;
+    } catch {
+      await sleep(50);
+    }
+  }
+  throw new Error(`checkpoint did not appear: ${file}`);
+}
 
 test("failed runs and input requests are recorded with actionable summaries", async (t) => {
   const daemon = await TestDaemon.create();
@@ -573,4 +620,92 @@ test("a maintenance cancel followed by a resume does not wake the host for the i
     true,
     "the final result must still be delivered",
   );
+});
+
+test("a partially lost inbox rebuilds the missing earlier notification", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-notify-partial-"));
+  const workerId = "w-notify-partial";
+  const workerDir = path.join(stateDir, "workers", workerId);
+  await mkdir(path.join(stateDir, "sessions"), { recursive: true });
+  await mkdir(workerDir, { recursive: true });
+  const now = new Date().toISOString();
+  const record: WorkerRecord = {
+    schemaVersion: SCHEMA_VERSION,
+    id: workerId,
+    runtime: "pi",
+    cwd: process.cwd(),
+    promptPreview: "partial inbox",
+    status: "completed",
+    createdAt: now,
+    updatedAt: now,
+    startedAt: now,
+    endedAt: now,
+    lastSeq: 2,
+    eventCount: 2,
+    stats: { turns: 1, toolCalls: 0, toolErrors: 0 },
+    capabilities: {
+      runtime: "pi",
+      steer: true,
+      followUp: true,
+      cancel: true,
+      resume: true,
+      pause: false,
+      interactiveInput: true,
+      notes: "seed",
+    },
+    config: {},
+    resumeCount: 0,
+    supervisorId: "seed",
+  };
+  const events = [
+    {
+      seq: 1,
+      workerId,
+      ts: now,
+      type: "run.needs_input",
+      data: { requestId: "req-1", method: "confirm", title: "approve?" },
+    },
+    {
+      seq: 2,
+      workerId,
+      ts: now,
+      type: "run.completed",
+      data: { text: "done", truncated: false },
+    },
+  ];
+  await writeFile(path.join(workerDir, "worker.json"), JSON.stringify(record), "utf8");
+  await writeFile(
+    path.join(workerDir, "events.jsonl"),
+    `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    "utf8",
+  );
+  // Only the later record survived; the earlier one must be rebuilt.
+  await writeFile(
+    path.join(stateDir, "notifications.jsonl"),
+    `${JSON.stringify({
+      id: `${workerId}#2`,
+      workerId,
+      runtime: "pi",
+      seq: 2,
+      eventType: "run.completed",
+      kind: "completed",
+      createdAt: now,
+      summary: { status: "completed", text: "done" },
+      delivery: { state: "pending", channel: "none", attempts: 0 },
+    })}\n`,
+    "utf8",
+  );
+
+  const daemon = new TestDaemon(stateDir);
+  const client = await daemon.start();
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+  const result = await inbox(client, { workerId });
+  assert.deepEqual(
+    result.notifications.map((item) => item.id).sort(),
+    [`${workerId}#1`, `${workerId}#2`],
+    "the missing earlier notification must be rebuilt from the event log",
+  );
+  assert.equal(result.notifications.find((item) => item.seq === 1)?.kind, "needs_input");
 });

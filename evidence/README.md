@@ -169,4 +169,23 @@ The added regression coverage:
 - Still not verified: permission allow/deny. No `can_use_tool` request was observed in either attempt.
 - See [qoder-real-1.1.78/result.json](qoder-real-1.1.78/result.json), [qoder-real-1.1.78/events.jsonl](qoder-real-1.1.78/events.jsonl), [qoder-real-1.1.78/test-run.txt](qoder-real-1.1.78/test-run.txt), [qoder-interactions-1.1.78/summary.json](qoder-interactions-1.1.78/summary.json), and [qoder-interactions-1.1.78/run.log](qoder-interactions-1.1.78/run.log).
 
+## 17. Persistent Worker 3-turn E2E 与 0.8.0 state compatibility (executed 2026-11-09)
+
+- Code: `feat-261109-hs-09`, version 0.8.0, Windows 10.0.26300 x64, Node v24.22.1. All runs used isolated temporary state/work directories; the production daemon and state directory were untouched.
+- Commands: `node scripts/e2e-persistent-pi.mjs --runtime pi|qoder|mcode|dsh`.
+- Result: all four real harnesses completed three Turns on one stable worker and session, recalled both random codewords without restatement, exited the activation process after every Turn (`pidAlive=false`), and reported `resumeCount=2`. Pi 1.4.0, Qoder CLI 1.1.82 (ACP), MiniMax Code 0.7.0, DSH desktop bundle 0.2.1-rc.5.
+- Worker ids: Pi `w-mw996096-57b21ada`, Qoder `w-mw99699n-93f73f35`, MiniMax Code `w-mw9974la-a819cf5c`, DSH `w-mw997q5i-26bce24a`.
+- Real 0.8.0 state compatibility: a daemon built from `main@7649b34` wrote worker `w-mw98z9yv-6408f3dc` and its inbox record; the 0.9 RC daemon opened the same state directory, read it as `oneshot`, rejected `continue` with `UNSUPPORTED`, resumed the same session to `RESUMED FAKE_PI_OK`, and used the persisted checkpoint (`checkpointed=1, scanned=0`) on the next start without duplicating notifications.
+- See [persistent-worker-261109/README.md](persistent-worker-261109/README.md), the four [run-*.json](persistent-worker-261109/) files and [legacy-state-probe.json](persistent-worker-261109/legacy-state-probe.json).
+- Not covered: Stage 3 thread switch/unload/full exit (Stage 1/2 are recorded in section 18), 331 MB production-state startup, and downgrade to an older daemon after compaction. The desktop acceptance steps are in `docs/2026-11-09-desktop-e2e-runbook.md`.
+
+## 18. Codex Desktop Stage 1/2 (executed 2026-11-10)
+
+- Real Codex Desktop threads; acceptance build `0.8.0` in `D:/tmp/hs-09-rc-state`; release version `0.9.0` differs only in the version number; production daemon and state directory untouched.
+- Stage 1: two Pi persistent Workers were spawned by two threads with spawn-only turns. Both threads auto-started new turns without user input, each notification stayed on its own thread, and Thread A's `worker_continue` kept the same worker/session (`resumeCount=1`, both tokens recalled).
+- Stage 2: one DSH persistent Worker. Its `needs_input` wake arrived after the continue turn ended; the first run exercised the Reject path. A retry answered `Allow once` (`value`, not `confirmed`), wrote `C:\Users\Lenovo\hs-09-rc-outside.txt` with `RC_DSH_OK`, completed, and woke the thread again on the same session (`resumeCount=2`).
+- All 8 notifications had `attempts=1`, were `delivered` to the correct thread, and were acknowledged. S3 was verified by automatic new turns; S4 by `worker_status` / `worker_events` plus ACK. `delivered` alone was not treated as wake evidence.
+- Stage 3 (thread switch/unload/full exit) was not re-run this round; it follows the earlier verification and has no new 0.9 evidence.
+- See [desktop-stage1-2-261110/README.md](desktop-stage1-2-261110/README.md) and the RC report section 16.
+
 > Note: the original temp state/work directories may be cleaned up; the artifacts relevant to each run are copied into these evidence folders.

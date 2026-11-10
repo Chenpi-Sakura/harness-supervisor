@@ -1,0 +1,71 @@
+{
+  "startedAt": "2026-11-09T12:44:08.342Z",
+  "runtime": "qoder",
+  "stateDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-qoder-state-AMPfNO",
+  "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-qoder-work-MsSpmt",
+  "nonceA": "A-04231f77",
+  "nonceB": "B-af17c09c",
+  "workerId": "w-mw99699n-93f73f35",
+  "sessionId": "43255c59-774c-4fd9-a33c-97a43f24d739",
+  "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-qoder-state-AMPfNO\\sessions\\w-mw99699n-93f73f35\\qoder-acp-session.json",
+  "turns": [
+    {
+      "turn": 1,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "43255c59-774c-4fd9-a33c-97a43f24d739",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-qoder-state-AMPfNO\\sessions\\w-mw99699n-93f73f35\\qoder-acp-session.json",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 0,
+      "result": "TURN1_READY",
+      "error": null
+    },
+    {
+      "turn": 2,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "43255c59-774c-4fd9-a33c-97a43f24d739",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-qoder-state-AMPfNO\\sessions\\w-mw99699n-93f73f35\\qoder-acp-session.json",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 1,
+      "result": "TURN2_READY",
+      "error": null
+    },
+    {
+      "turn": 3,
+      "acceptedStatus": "running",
+      "acceptedLifecycle": "active",
+      "status": "completed",
+      "lifecycle": "idle",
+      "sessionId": "43255c59-774c-4fd9-a33c-97a43f24d739",
+      "sessionFile": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\hs-persistent-qoder-state-AMPfNO\\sessions\\w-mw99699n-93f73f35\\qoder-acp-session.json",
+      "restorable": true,
+      "pidAlive": false,
+      "resumeCount": 2,
+      "result": "A-04231f77,B-af17c09c",
+      "error": null
+    }
+  ],
+  "assertions": {
+    "turn1Completed": true,
+    "turn1Idle": true,
+    "turn1Session": true,
+    "sameWorker": true,
+    "sameSessionAfterTurn2": true,
+    "turn2Completed": true,
+    "sameSessionAfterTurn3": true,
+    "contextHadNonceA": true,
+    "contextHadNonceB": true,
+    "turn3Idle": true,
+    "allProcessesExited": true,
+    "resumeCount": true
+  },
+  "error": null,
+  "ok": true
+}

@@ -1,6 +1,6 @@
 {
   "name": "harness-supervisor",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "A small lifecycle and messaging layer for native AI agent harnesses (Pi first).",
   "type": "module",
   "license": "MIT",
@@ -29,6 +29,10 @@
     "test:integration": "npm run build && node test/run.mjs integration",
     "test:e2e": "npm run build && node test/run.mjs e2e",
     "e2e:parent": "npm run build && node scripts/e2e-parent-pi.mjs",
+    "e2e:persistent:pi": "npm run build && node scripts/e2e-persistent-pi.mjs --runtime pi",
+    "e2e:persistent:qoder": "npm run build && node scripts/e2e-persistent-pi.mjs --runtime qoder",
+    "e2e:persistent:mcode": "npm run build && node scripts/e2e-persistent-pi.mjs --runtime mcode",
+    "e2e:persistent:dsh": "npm run build && node scripts/e2e-persistent-pi.mjs --runtime dsh",
     "e2e:codex": "npm run build && node scripts/e2e-codex.mjs",
     "e2e:mcode": "npm run build && node scripts/e2e-mcode.mjs",
     "e2e:mcode:long": "npm run build && node scripts/e2e-mcode-long-turn.mjs",

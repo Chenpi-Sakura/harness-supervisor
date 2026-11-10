@@ -220,6 +220,8 @@ export class Notifier {
   private readonly dispatchTimers = new Map<string, NodeJS.Timeout>();
   private started = false;
   private writeError?: Error;
+  /** True when this process had to start without a persisted inbox file. */
+  private storeMissing = false;
   private needsLineBreak = false;
   private targetChanges: Promise<unknown> = Promise.resolve();
   private target: NotifyTarget;
@@ -262,6 +264,28 @@ export class Notifier {
     await this.loadRecords();
     await this.loadTarget();
     this.started = true;
+  }
+
+  /**
+   * A missing inbox means any per-worker checkpoint that survived it cannot be
+   * trusted: the records they claim to cover are gone. Callers fall back to a
+   * full event scan for this startup.
+   */
+  wasStoreMissing(): boolean {
+    return this.storeMissing;
+  }
+
+  /**
+   * Highest event already represented in the inbox. Reconciliation can start
+   * there even when no checkpoint was written, because every important event
+   * creates exactly one record with its seq.
+   */
+  lastSeqForWorker(workerId: string): number {
+    let max = 0;
+    for (const record of this.records.values()) {
+      if (record.workerId === workerId && record.seq > max) max = record.seq;
+    }
+    return max;
   }
 
   getTarget(): NotifyTarget {
@@ -795,7 +819,10 @@ export class Notifier {
     try {
       raw = await readFile(this.file, "utf8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        this.storeMissing = true;
+        return;
+      }
       throw error;
     }
     this.needsLineBreak = raw.length > 0 && !raw.endsWith("\n");

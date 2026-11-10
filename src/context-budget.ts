@@ -344,6 +344,19 @@ export function compactStatus(
         ...(worker.name !== undefined ? { name: worker.name } : {}),
         ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
         cwd: worker.cwd,
+        ...(worker.persistence !== undefined ? { persistence: worker.persistence } : {}),
+        ...(worker.lifecycle !== undefined ? { lifecycle: worker.lifecycle } : {}),
+        ...(worker.session
+          ? {
+              session: {
+                available: worker.session.available,
+                restorable: worker.session.restorable,
+                ...(worker.session.reason !== undefined
+                  ? { reason: worker.session.reason }
+                  : {}),
+              },
+            }
+          : {}),
         ...(reason ? { statusReason: reason.preview } : {}),
         ...(worker.result
           ? { result: resultPreview(worker.result, chars) }

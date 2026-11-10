@@ -92,7 +92,58 @@ test("a live PID whose command line is not this worker is reported as interrupte
   assert.doesNotThrow(() => process.kill(process.pid, 0));
 });
 
-test("cancelling an orphaned worker whose PID was reused reports the truth instead of pretending", async (t) => {
+test("an ACP worker keeps a live unverifiable PID locked as orphaned", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-pid-acp-"));
+  const workerId = "w-pidacp-00000000";
+  const workerDir = path.join(stateDir, "workers", workerId);
+  await mkdir(path.join(stateDir, "sessions"), { recursive: true });
+  await mkdir(workerDir, { recursive: true });
+  const sessionDir = path.join(stateDir, "sessions", workerId);
+  await mkdir(sessionDir, { recursive: true });
+  const sessionFile = path.join(sessionDir, "qoder-acp-session.json");
+  await writeFile(sessionFile, '{"type":"session","id":"acp-live"}\n', "utf8");
+  const record = runningRecord(workerId, process.pid);
+  record.runtime = "qoder";
+  record.capabilities = { ...record.capabilities, runtime: "qoder" };
+  record.persistence = "persistent";
+  record.sessionId = "acp-live";
+  record.sessionFile = sessionFile;
+  await writeFile(path.join(workerDir, "worker.json"), JSON.stringify(record), "utf8");
+  await writeFile(path.join(workerDir, "events.jsonl"), "", "utf8");
+
+  const daemon = new TestDaemon(stateDir);
+  const client = await daemon.start();
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+
+  const status = await client.request<{ worker: { status: string; statusReason?: string } }>(
+    "status",
+    { workerId },
+  );
+  assert.equal(
+    status.worker.status,
+    "orphaned",
+    "ACP argv has no worker token; a live PID must not be treated as reused",
+  );
+  assert.match(status.worker.statusReason ?? "", /no longer owns the live harness/i);
+
+  for (const method of ["resume", "continue"] as const) {
+    await assert.rejects(
+      () => client.request(method, { workerId, prompt: "must not start a second writer" }),
+      (error: unknown) =>
+        error instanceof Error && /alive|orphaned|session/i.test(error.message),
+      `${method} must refuse while the ACP process may still hold the session`,
+    );
+  }
+  await assert.rejects(
+    () => client.request("cancel", { workerId }),
+    (error: unknown) => error instanceof Error && /cannot be cancelled/i.test(error.message),
+  );
+  assert.doesNotThrow(() => process.kill(process.pid, 0));
+});
+
+test("an orphaned record whose PID was reused is reconciled to interrupted without killing it", async (t) => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-pid-reuse-cancel-"));
   const workerId = "w-pidreuse-cancel";
   const workerDir = path.join(stateDir, "workers", workerId);
@@ -110,15 +161,15 @@ test("cancelling an orphaned worker whose PID was reused reports the truth inste
     await daemon.stop().catch(() => undefined);
   });
 
-  const cancelled = await client.request<{ status: string; statusReason?: string }>("cancel", {
-    workerId,
-    timeoutMs: 2000,
-  });
-  assert.equal(cancelled.status, "orphaned");
+  const reconciled = await client.request<{ worker: { status: string; statusReason?: string } }>(
+    "status",
+    { workerId },
+  );
+  assert.equal(reconciled.worker.status, "interrupted");
   assert.match(
-    cancelled.statusReason ?? "",
-    /PID reused|different process|no live harness/i,
-    "the supervisor must not claim it terminated a process it does not own",
+    reconciled.worker.statusReason ?? "",
+    /PID reused|does not match/i,
+    "the supervisor must not claim it still owns a process whose command line does not match",
   );
   assert.doesNotThrow(() => process.kill(process.pid, 0), "the reused PID is never killed");
 
@@ -126,8 +177,9 @@ test("cancelling an orphaned worker whose PID was reused reports the truth inste
     "events",
     { workerId, sinceSeq: 0, limit: 50 },
   );
-  assert.ok(
-    events.events.some((event) => event.data?.kind === "pid_identity_mismatch"),
-    "the mismatch must be recorded as an event",
-  );
+  const reconcile = events.events.find((event) => event.type === "worker.interrupted");
+  assert.ok(reconcile, "the reconciliation must be recorded as an event");
+  assert.equal(reconcile.data?.pidAlive, true);
+  assert.equal(reconcile.data?.pidVerified, false);
+  assert.equal(reconcile.data?.previousStatus, "orphaned");
 });

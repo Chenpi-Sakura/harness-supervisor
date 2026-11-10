@@ -1,6 +1,7 @@
 # 后续事项 Backlog
 
-更新日期：2026-11-05。
+更新日期：2026-11-10。
+最近补充：2026-11-10，0.9 Persistent Worker RC：同 Worker/Session 多轮、Pin/Archive/Retire/Forget、事件压缩、消费检查点、ACP 保守 PID 身份、并发准入与维护互斥已完成；完整测试 386/384/0/2。真实 0.8.0 状态可由新 Daemon 读取并续接。**Codex Desktop Stage 1/2 已通过（双 Thread 主动唤醒、通知隔离、同一 Session continue、DSH `needs_input → Allow once → completed` 再次唤醒）**，Stage 3 本轮未复验、沿用既往结论；331 MB 生产状态未验收；发布判断见 `docs/2026-11-09-hs-0.9-release-candidate.md`。
 最近补充：2026-11-05，0.8.0 完成 DSH（DeepSeek Harness）桌面端 ACP PoC：新增通用 ACP 传输层与 `dsh` runtime，真实 0.2.1-rc.5 的 spawn/模型与推理配置/`session/resume`/工作区写入/工作区外提权审批/`danger-full-access` 无审批写入/取消通过；`steer`/`followUp`/`tools`/`extraArgs` 明确不支持，`usage_update` 只作上下文占用。权限模式由 `HARNESS_SUPERVISOR_DSH_PERMISSION_MODE` 控制，原生默认是 `workspace-write` + `ask`。代码位于独立分支，暂不合并进生产默认。证据见 `evidence/dsh-acp-real/`。
 最近补充：2026-11-04，0.7.0 实现 Qoder ACP 并在真实 1.1.82 验收后**设为默认传输**（`HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json` 可回退），spawn/resume/Write 审批/AskUserQuestion/取消全部通过；版本号保持 0.7.0。ACP steer/follow-up、Token 用量与默认传输的长期稳定性仍待后续验证。
 最近补充：2026-11-04，完成 Pi / Qoder / mcode 的 ACP 改造可行性评估（`docs/2026-11-04-acp-feasibility.md`）：Qoder ACP 已真实验证工具审批和 elicitation 提问，建议作为可选传输层；mcode 已是 ACP，只考虑共享内核；Pi 官方无 ACP，第三方适配器缺少权限映射，建议保留原生 RPC。
@@ -15,6 +16,9 @@
 
 | 事项 | 类型 | 后续验收重点 | 状态 |
 | --- | --- | --- | --- |
+| Persistent Worker 桌面多 Thread 验收 | 宿主验收 | Stage 1/2 已验证：两个 Codex Thread 各一名 persistent Worker、通知只到正确 Thread、两个 Thread 均自动唤醒、同一 Worker continue、DSH `needs_input → Allow once → completed` 再次唤醒。Stage 3 的 Thread 切换 / 卸载 / 完整退出本轮未复验。按 `docs/2026-11-09-desktop-e2e-runbook.md` 执行，不用 app-server 冒充 | Stage 1/2 已通过（2026-11-10）；Stage 3 未复验 |
+| 331 MB 生产状态验收 | 规模验收 | 在目标机器只读备份后验证冷启动、分页、通知重建与 prune；不在生产目录做压力测试 | 待目标环境 |
+| Persistent Worker P2 收敛 | 代码质量 | 终态 `pidAlive` 对 PID 复用的投影、finalizer try/finally、events 响应暴露压缩游标缺口、永久损坏尾行的启动回退、CLI/MCP inbox 默认差异、生产绑定可见性 | 后续 |
 | 双对话真实工作负载 | 扩展验收 | 在已有双会话 E2E 通过基础上，用真实开发任务验证完成、失败、输入通知的正确路由及 ack，避免跨对话处理 | 暂缓 |
 | 离线与重启恢复 | 宿主边界验证 | Thread 卸载、桌面退出、Daemon 重启后的保存、补投、重复处理与实际唤醒分别核对 | 暂缓 |
 | 旧 Worker 升级兼容 | 扩展验收 | 真实旧状态下的查询、未绑定收件箱降级、Resume 保留绑定、显式接管仅改变未来事件 | 暂缓 |

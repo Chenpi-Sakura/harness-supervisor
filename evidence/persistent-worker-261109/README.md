@@ -3,7 +3,7 @@
 - 机器：Windows 10.0.26300 x64，Node v24.22.1
 - 代码：`feat-261109-hs-09`，验收时版本 0.8.0（发布版本 0.9.0，仅版本号变更）
 - 范围：真实 Harness 3 轮连续协作；真实 0.8.0 Daemon 状态由 0.9 RC Daemon 打开
-- 未包含：Codex Desktop Stage 1/2（另行记录于 `evidence/desktop-stage1-2-261110/`）、331 MB 生产状态目录（未访问）
+- 未包含：Codex Desktop Stage 1/2（另行记录于 `evidence/desktop-stage1-2-261110/`）、331 MB 生产状态目录（本证据未访问；后续 2026-11-10 已在目标生产环境补验，见 `docs/2026-11-10-0.9.0-production-deployment.md`）
 
 ## 1. 四个 Runtime 的真实 3 轮协作
 
@@ -53,5 +53,5 @@ node scripts/e2e-persistent-pi.mjs --runtime dsh
 ## 3. 未覆盖
 
 - Codex Desktop Stage 3 的 Thread 卸载/退出行为（Stage 1/2 已另行验证：`evidence/desktop-stage1-2-261110/`）。
-- 331 MB 生产状态目录的启动与分页性能。
+- 331 MB 生产状态目录的启动与分页性能（后续 2026-11-10 已在目标生产环境补验，见 `docs/2026-11-10-0.9.0-production-deployment.md`）。
 - 新状态回滚到旧 Daemon（降级）未测试；使用过 `compact` 的状态在旧 Daemon 下可能被报告为历史断档。

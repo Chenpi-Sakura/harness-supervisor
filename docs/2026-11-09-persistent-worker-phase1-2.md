@@ -9,6 +9,8 @@
 > 机器：Windows 10.0.26300 / Node v24.22.1（本机开发环境，非 331 MB 生产实例）
 >
 > 依据：`HS-0.9-Persistent-Worker-Architecture-Proposal.md`
+>
+> 后续更新（2026-11-10）：0.9.0 已发布并部署；331 MB 生产状态已在目标生产环境补验，见 [2026-11-10-0.9.0-production-deployment.md](2026-11-10-0.9.0-production-deployment.md)。本文其余内容保留 2026-11-09 阶段记录。
 
 ## 1. 范围与结论
 

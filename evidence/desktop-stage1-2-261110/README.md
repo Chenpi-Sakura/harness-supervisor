@@ -2,7 +2,7 @@
 
 - 环境：Windows 10.0.26300 x64，Node v24.22.1，真实 Codex Desktop Thread
 - RC 状态目录：`D:/tmp/hs-09-rc-state`，验收时 Daemon 版本 `0.8.0`（发布版本 `0.9.0`，仅版本号变更）
-- 生产 Daemon：`C:\Users\Lenovo\.harness-supervisor`（PID 55532），未升级、未停止、未修改
+- 生产 Daemon：Stage 1/2 验收时为 `C:\Users\Lenovo\.harness-supervisor`（PID 55532），未升级、未停止、未修改；后续 2026-11-10 生产部署见 `docs/2026-11-10-0.9.0-production-deployment.md`
 - 方法：真实 Codex Desktop Thread；未使用 app-server / `codex exec` 冒充桌面端
 - 范围：Stage 1 / Stage 2 通过；Stage 3（Thread 切换、卸载、完整退出）本轮未复验
 

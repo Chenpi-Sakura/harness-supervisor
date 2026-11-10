@@ -1,6 +1,6 @@
 # Test evidence
 
-All artifacts here were produced by actual runs on 2026-10-21, 2026-10-22, 2026-10-25 and 2026-10-27 (Windows, Node v24.21.0, Pi 1.3.0, codex-cli 0.161.0; qodercli 1.1.75 for the protocol probe, 1.1.76/1.1.78 for real worker runs).
+All artifacts here were produced by actual runs between 2026-10-21 and 2026-11-10 (Windows; Node, Pi, Codex, Qoder and other runtime versions are recorded in each section).
 
 ## 1. Real Pi worker
 
@@ -177,15 +177,24 @@ The added regression coverage:
 - Worker ids: Pi `w-mw996096-57b21ada`, Qoder `w-mw99699n-93f73f35`, MiniMax Code `w-mw9974la-a819cf5c`, DSH `w-mw997q5i-26bce24a`.
 - Real 0.8.0 state compatibility: a daemon built from `main@7649b34` wrote worker `w-mw98z9yv-6408f3dc` and its inbox record; the 0.9 RC daemon opened the same state directory, read it as `oneshot`, rejected `continue` with `UNSUPPORTED`, resumed the same session to `RESUMED FAKE_PI_OK`, and used the persisted checkpoint (`checkpointed=1, scanned=0`) on the next start without duplicating notifications.
 - See [persistent-worker-261109/README.md](persistent-worker-261109/README.md), the four [run-*.json](persistent-worker-261109/) files and [legacy-state-probe.json](persistent-worker-261109/legacy-state-probe.json).
-- Not covered: Stage 3 thread switch/unload/full exit (Stage 1/2 are recorded in section 18), 331 MB production-state startup, and downgrade to an older daemon after compaction. The desktop acceptance steps are in `docs/2026-11-09-desktop-e2e-runbook.md`.
+- Not covered: Stage 3 thread switch/unload/full exit (Stage 1/2 are recorded in section 18) and downgrade to an older daemon after compaction. The 331 MB production startup is recorded in section 19. The desktop acceptance steps are in `docs/2026-11-09-desktop-e2e-runbook.md`.
 
 ## 18. Codex Desktop Stage 1/2 (executed 2026-11-10)
 
-- Real Codex Desktop threads; acceptance build `0.8.0` in `D:/tmp/hs-09-rc-state`; release version `0.9.0` differs only in the version number; production daemon and state directory untouched.
+- Real Codex Desktop threads; acceptance build `0.8.0` in `D:/tmp/hs-09-rc-state`; release version `0.9.0` differs only in the version number; the production daemon and state directory were untouched during Stage 1/2 (the target production deployment is in section 19).
 - Stage 1: two Pi persistent Workers were spawned by two threads with spawn-only turns. Both threads auto-started new turns without user input, each notification stayed on its own thread, and Thread A's `worker_continue` kept the same worker/session (`resumeCount=1`, both tokens recalled).
 - Stage 2: one DSH persistent Worker. Its `needs_input` wake arrived after the continue turn ended; the first run exercised the Reject path. A retry answered `Allow once` (`value`, not `confirmed`), wrote `C:\Users\Lenovo\hs-09-rc-outside.txt` with `RC_DSH_OK`, completed, and woke the thread again on the same session (`resumeCount=2`).
 - All 8 notifications had `attempts=1`, were `delivered` to the correct thread, and were acknowledged. S3 was verified by automatic new turns; S4 by `worker_status` / `worker_events` plus ACK. `delivered` alone was not treated as wake evidence.
 - Stage 3 (thread switch/unload/full exit) was not re-run this round; it follows the earlier verification and has no new 0.9 evidence.
 - See [desktop-stage1-2-261110/README.md](desktop-stage1-2-261110/README.md) and the RC report section 16.
+
+## 19. HS 0.9.0 production deployment and 331 MB cold start (2026-11-10, maintainer report)
+
+- Code `cd8d5b4` / tag `v0.9.0`; target production environment: 82 workers, 0 active, daemon 0.9.0 PID 32948, `warnings=0`; backup `state-20261110-123310.zip` 37.6 MB retained.
+- Cold start: 0.8.0 baseline 27s; 0.9.0 first 16.7s (`0/82`, one-time checkpoint, still above 15s); 0.9.0 again 0.48s (`82/0`; `storeInit` 433 ms, `reconcile` 10/16 ms).
+- Post-upgrade checks: `list` 82/0 active; legacy records read as `oneshot` / `idle` / `restorable`; `events` `nextSeq` continuous; `inbox` 16 pending / 265 delivered / 1 superseded / 22 unacked; persistent E2E kept the same worker/session, recalled `K7QM-5652`, `resumeCount=1`, 2 closed run segments.
+- Pending: `compact --dry-run` reports 2,123,215 events / 321,291,500 bytes; backup retained; not executed.
+- Evidence source: maintainer deployment record for the target environment. The default state directory on this development machine is a separate 15-worker / 5.2 MB instance (0.9.0 PID 72752); it was not used for the 331 MB conclusion, and the backup was not found locally.
+- See [docs/2026-11-10-0.9.0-production-deployment.md](../docs/2026-11-10-0.9.0-production-deployment.md).
 
 > Note: the original temp state/work directories may be cleaned up; the artifacts relevant to each run are copied into these evidence folders.

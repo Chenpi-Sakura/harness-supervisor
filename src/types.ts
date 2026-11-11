@@ -135,11 +135,12 @@ export interface WorkerStats {
 }
 
 export interface PendingInput {
+  /** Opaque HS request ID; return it unchanged when answering. */
   requestId: string;
   /**
    * Seq of the `run.needs_input` event that produced this request.
-   * Harnesses may reuse a requestId across resumed runs, so the seq (not the id)
-   * is what proves a notification still describes the *current* request.
+   * Provenance for notification freshness. Older records can contain a reusable
+   * native request ID, so consumers must also correlate the producing event.
    * Missing on legacy records; consumers then fall back to a weaker check.
    */
   seq?: number;
@@ -546,6 +547,9 @@ export type NotificationKind =
 export type NotificationDeliveryState = "pending" | "delivered" | "failed" | "superseded";
 
 export interface NotificationRecord {
+  /** Read-time freshness projection; never persisted as delivery or ACK state. */
+  actionable?: boolean;
+  staleReason?: string;
   /** Immutable destination for this event; missing legacy routes are inbox-only. */
   target?: NotifyTarget;
   /** Stable identity derived from worker + event seq, so one event yields one record. */

@@ -2,10 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { SupervisorError } from "../../src/errors.js";
+import type { WorkerSummary } from "../../src/types.js";
 import {
   TestDaemon,
   makeWorkspace,
   spawnWorker,
+  waitForStatus,
   waitTerminalLong,
 } from "../integration/helpers.js";
 
@@ -67,5 +71,72 @@ test(
     console.log(
       `REAL_PI result=${JSON.stringify(final.worker.result?.text.slice(0, 500))} file=${path.join(cwd, "worker-output.txt")}`,
     );
+  },
+);
+
+test(
+  "REAL Pi answers HS input IDs and rejects a previous Turn's answer",
+  {
+    skip: RUN_REAL_PI ? false : "Set RUN_REAL_PI=1 to run the paid native-Pi input roundtrip.",
+    timeout: 240_000,
+  },
+  async (t) => {
+    const daemon = await TestDaemon.create("hs-real-input-");
+    const cwd = await makeWorkspace("hs-real-input-work-");
+    t.after(async () => {
+      await daemon.stop().catch(() => undefined);
+    });
+    const client = await daemon.start({
+      fakeHarness: false,
+      env: { HARNESS_SUPERVISOR_NOTIFY_CHANNEL: "none", HARNESS_SUPERVISOR_CODEX_WAKE_THREAD: "" },
+    });
+    const extension = fileURLToPath(
+      new URL("../../../test/fixtures/real-pi-input-extension.mjs", import.meta.url),
+    );
+    const prompt = (turn: number) =>
+      `Use the write tool now to create input-proof.txt containing exactly HS_INPUT_TURN_${turn}_OK in the current directory. Only operate in this directory. Then reply INPUT_DONE.`;
+    const worker = await spawnWorker(client, cwd, prompt(1), {
+      persistence: "persistent",
+      model: MODEL,
+      provider: PROVIDER,
+      thinking: "off",
+      tools: ["write"],
+      maxDurationMs: 100_000,
+      extraArgs: [
+        "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
+        "--extension", extension,
+      ],
+    });
+    let oldRequestId: string | undefined;
+    let sessionId: string | undefined;
+    for (const turn of [1, 2]) {
+      if (turn === 2) {
+        const continued = await client.request<WorkerSummary>("continue", {
+          workerId: worker.id, prompt: prompt(turn),
+        }, { timeoutMs: 60_000 });
+        assert.equal(continued.id, worker.id);
+      }
+      const waiting = await waitForStatus(client, worker.id, ["awaiting_input"], 30_000);
+      assert.ok(waiting.pendingInput);
+      const requestId = waiting.pendingInput.requestId;
+      if (oldRequestId) {
+        assert.notEqual(requestId, oldRequestId);
+        await assert.rejects(client.request("answer", {
+          workerId: worker.id, requestId: oldRequestId, response: { value: "HS_INPUT_OK" },
+        }), (error: unknown) => error instanceof SupervisorError && error.code === "INVALID_STATE");
+      }
+      await client.request("answer", {
+        workerId: worker.id, requestId, response: { value: "HS_INPUT_OK" },
+      });
+      const final = await waitTerminalLong(client, worker.id, 110_000);
+      assert.equal(final.worker.status, "completed", final.worker.error);
+      assert.equal((await readFile(path.join(cwd, "input-proof.txt"), "utf8")).trim(), `HS_INPUT_TURN_${turn}_OK`);
+      assert.equal(final.worker.pidAlive, false);
+      if (sessionId) assert.equal(final.worker.sessionId, sessionId);
+      sessionId = final.worker.sessionId;
+      assert.ok(sessionId);
+      oldRequestId = requestId;
+    }
+    console.log(`REAL_PI_INPUT turns=2 sameWorker=true sameSession=true oldAnswerRejected=true`);
   },
 );

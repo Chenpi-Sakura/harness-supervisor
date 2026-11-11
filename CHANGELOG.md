@@ -2,6 +2,22 @@
 
 本项目从 0.9.1 起维护变更记录。历史版本摘要来自仓库 tag 与 `docs/` 交付报告。
 
+## [0.9.2] - 2026-11-11
+
+### 修复
+
+- 每个输入或审批请求由 HS 分配不透明、唯一的 `requestId`，仅在内部映射回原生 ID，避免原生 ID 复用时迟到答案误批新请求。客户端继续原样回传当前 `pendingInput.requestId`；无需修改 CLI/MCP/IPC 参数。
+- Production 增量事件按最早未交付的位置装包，预算未容纳的生命周期事件留给后续页；游标不再跳过这些事件，尾部快照行为不变。
+- `worker_wait` 的类型过滤跨历史分页扫描，不再因目标事件位于前 500 条之后而误超时；交付游标仍保持原有分页语义。
+- 完成通知指向 `worker_wait` 全文读取，输入通知明确使用 `includeInput=true`；已投递但失效的请求动态显示 `actionable=false` 和失效原因，保留真实投递与 ACK 历史。
+- 默认 `worker_status` 的预算覆盖长标题和选项；无法容纳的选项整项省略并标明完整读取方式，不改写原生答案值。显式 `includeInput=true` 保留全文。
+- 锁定 `body-parser` 至 2.4.0，修复 GHSA-27r3-jxmh-p828。
+
+### 升级说明
+
+- 修复生效需要升级并重启 daemon 和 MCP server；状态目录和 Worker 记录无需迁移。重启前应处理活动 Worker，HS 不接管旧进程。
+- `requestId` 必须视为不透明值，不得使用旧请求 ID 或自行构造原生 ID。当前请求的 ID 可从 `worker_wait` 或 `worker_status(includeInput=true)` 获取。
+
 ## [0.9.1] - 2026-11-10
 
 MCP 返回契约版本：Production 只返回决策与操作所需字段，Development 返回扩展诊断白名单。Worker 生命周期、事件落盘格式、CLI 与 IPC 状态语义不变。

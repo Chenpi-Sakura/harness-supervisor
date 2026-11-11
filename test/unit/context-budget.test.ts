@@ -443,7 +443,76 @@ test("readCompactEvents budgets the whole response, not just the event array", a
   });
   assert.ok(jsonBytes(read) <= EVENTS_BUDGET_BYTES, `serialized response ${jsonBytes(read)} exceeds 4 KiB`);
   assert.ok(read.events.length > 0);
-  assert.ok((read.eventsOmitted ?? 0) > 0, "trimmed events are counted, not hidden");
+  assert.equal(read.events[0]?.seq, 1, "strict history starts with the earliest unread event");
+  assert.equal(read.nextSeq, read.events.at(-1)?.seq);
+  assert.equal(read.hasMore, true, "events outside the byte budget remain available on the next page");
+  assert.equal(read.eventsOmitted, 0, "deferred lifecycle events are not discarded");
+});
+
+test("incremental event budgets never skip lifecycle events between pages", async () => {
+  const events = Array.from({ length: 200 }, (_, index) =>
+    event(index + 1, "run.needs_input", { message: `question ${index + 1}` }),
+  );
+  const received: number[] = [];
+  let cursor = 0;
+  let pages = 0;
+  for (;;) {
+    const page = await readCompactEvents(fakeReader(events, 200), {
+      sinceSeq: cursor,
+      limit: 200,
+      budgetBytes: EVENTS_BUDGET_BYTES,
+      eventFilter: (item) => isProductionEventType(item.type),
+    });
+    assert.ok(jsonBytes(page) <= EVENTS_BUDGET_BYTES);
+    received.push(...page.events.map((item) => item.seq));
+    assert.ok(page.nextSeq > cursor, "every nonempty history page must advance");
+    cursor = page.nextSeq;
+    pages += 1;
+    if (!page.hasMore) break;
+    assert.ok(pages <= events.length, "pagination must eventually finish");
+  }
+  assert.ok(pages > 1, "the byte budget must split the original window");
+  assert.deepEqual(received, events.map((item) => item.seq));
+  assert.equal(cursor, 200);
+});
+
+test("incremental event cursors consume hidden events only before the first deferred lifecycle", async () => {
+  const events = Array.from({ length: 240 }, (_, index) => {
+    const seq = index + 1;
+    return seq % 3 === 0
+      ? event(seq, "run.progress", { kind: "tool_start" })
+      : seq % 5 === 0
+        ? event(seq, "run.usage", { totalTokens: 1 })
+        : event(seq, "run.needs_input", { message: `question ${seq}` });
+  });
+  const received: number[] = [];
+  let cursor = 0;
+  let progressOmitted = 0;
+  let policyOmitted = 0;
+  for (let pages = 0; pages < events.length; pages += 1) {
+    const page = await readCompactEvents(fakeReader(events, 240), {
+      sinceSeq: cursor,
+      limit: 200,
+      budgetBytes: 1000,
+      eventFilter: (item) => isProductionEventType(item.type),
+    });
+    assert.ok(jsonBytes(page) <= 1000);
+    const lastDelivered = page.events.at(-1)?.seq ?? cursor;
+    const firstDeferred = events.find(
+      (item) => item.seq > lastDelivered && isProductionEventType(item.type),
+    );
+    if (firstDeferred) assert.ok(page.nextSeq < firstDeferred.seq);
+    received.push(...page.events.map((item) => item.seq));
+    progressOmitted += page.progressOmitted;
+    policyOmitted += page.eventsOmitted;
+    assert.ok(page.nextSeq > cursor);
+    cursor = page.nextSeq;
+    if (!page.hasMore) break;
+  }
+  assert.equal(cursor, 240);
+  assert.deepEqual(received, events.filter((item) => isProductionEventType(item.type)).map((item) => item.seq));
+  assert.equal(progressOmitted, events.filter((item) => item.type === "run.progress").length);
+  assert.equal(policyOmitted, events.filter((item) => item.type === "run.usage").length);
 });
 
 test("readCompactEvents finds the lifecycle tail after 100k progress events", async () => {

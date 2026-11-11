@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.9.1-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.9.2-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -153,7 +153,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up
-node dist/src/cli.js info        # 核对 version=0.9.1 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.9.2 与 stateDir
 ```
 
 若 `npm ci` 因网络镜像失败，改用 `npm install`，再用 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -304,7 +304,7 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 
 ### Persistent Worker（开发分支能力）
 
-> 状态：0.9.1。MCP 返回契约变更与真实 Qoder / MiniMax Code 验收见 [0.9.1 交付报告](docs/2026-11-10-hs-0.9.1-report.md)。
+> 状态：0.9.2。审批、事件交接与通知修复见 [CHANGELOG](CHANGELOG.md)；MCP 返回契约变更与真实 Qoder / MiniMax Code 验收见 [0.9.1 交付报告](docs/2026-11-10-hs-0.9.1-report.md)。
 
 `worker_spawn` 传入 `persistence="persistent"`（CLI 为 `spawn --persistence persistent`）后，Worker 的身份和 native session 会跨 Turn 保留。每轮结束后 Activation 进程退出，`status` 仍记录本轮终态（通常为 `completed`），派生字段 `lifecycle` 变为 `idle`；下一轮通过 `worker_continue` 在同一个 `workerId` 和同一个 session 上启动新的 Activation。
 

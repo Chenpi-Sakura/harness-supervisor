@@ -223,7 +223,7 @@ test("delivery renders a short pointer, never the event payload", async () => {
   );
   assert.ok(record);
   const message = renderMessage(record);
-  assert.equal(message, `[harness-supervisor] ${worker.id} completed seq=${record.seq} | read worker_status for result`);
+  assert.equal(message, `[harness-supervisor] ${worker.id} completed seq=${record.seq} | read worker_wait for full result`);
   assert.ok(!message.includes("\n"));
   // The summary stays in the structured inbox; it must not be re-injected.
   assert.ok(!message.includes("line one"));
@@ -239,7 +239,7 @@ test("a needs_input pointer tells the agent to read the current pendingInput", a
   const message = renderMessage(record);
   assert.equal(
     message,
-    `[harness-supervisor] ${worker.id} needs_input seq=${record.seq} | read worker_status; answer current pendingInput`,
+    `[harness-supervisor] ${worker.id} needs_input seq=${record.seq} | read worker_status includeInput=true; answer current pendingInput`,
   );
   assert.ok(!message.includes("req-old"), "the old requestId must not invite a stale answer");
 });
@@ -794,6 +794,69 @@ test("a delivered record is never rewritten as superseded", async () => {
       notifier.stop();
     }
   });
+});
+
+test("delivered input freshness is read-time metadata, independent of delivery and acknowledgement", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-notify-stale-input-"));
+  const file = path.join(dir, "notifications.jsonl");
+  const event = makeEvent(32, "run.needs_input", { requestId: "req-old", method: "confirm" });
+  const record: NotificationRecord = {
+    id: notificationId(worker.id, event.seq),
+    workerId: worker.id,
+    runtime: worker.runtime,
+    seq: event.seq,
+    eventType: event.type,
+    kind: "needs_input",
+    createdAt: event.ts,
+    summary: { status: "awaiting_input", requestId: "req-old", method: "confirm" },
+    target: { channel: "codex-queue", codexThreadId: "thread-original" },
+    delivery: {
+      state: "delivered",
+      channel: "codex-queue",
+      attempts: 1,
+      messageId: "already-enqueued",
+      enqueuedAt: event.ts,
+    },
+  };
+  await writeFile(file, JSON.stringify(record) + "\n");
+  const subject: NotifyFreshnessSubject = {
+    status: "awaiting_input",
+    pendingInput: { requestId: "req-old", seq: event.seq, createdAt: event.ts },
+  };
+  const notifier = new Notifier({
+    stateDir: dir,
+    logger: silentLogger,
+    staleReason: (notification) => staleNotificationReason(subject, notification),
+  });
+  await notifier.init();
+  try {
+    const current = notifier.list({ state: "all", unacknowledgedOnly: true });
+    assert.equal(current[0]!.actionable, true);
+    assert.equal(current[0]!.staleReason, undefined);
+
+    subject.status = "running";
+    subject.pendingInput = undefined;
+    const stale = notifier.list({ state: "all", unacknowledgedOnly: true });
+    assert.equal(stale.length, 1, "stale delivered records still require acknowledgement");
+    assert.equal(stale[0]!.actionable, false);
+    assert.match(stale[0]!.staleReason ?? "", /no longer pending/);
+    assert.deepEqual(stale[0]!.delivery, record.delivery, "delivery history is immutable");
+    assert.equal(stale[0]!.ackAt, undefined);
+    assert.equal(notifier.counts().unacked, 1);
+    assert.equal(notifier.counts().delivered, 1);
+    assert.equal(await readFile(file, "utf8"), JSON.stringify(record) + "\n", "reading freshness does not persist metadata");
+
+    await notifier.ack([record.id]);
+    const acknowledged = notifier.list({ state: "all" })[0]!;
+    assert.equal(acknowledged.actionable, false);
+    assert.equal(acknowledged.delivery.state, "delivered");
+    assert.equal(notifier.counts().unacked, 0);
+    const persisted = await readFile(file, "utf8");
+    assert.ok(!persisted.includes('"actionable"'));
+    assert.ok(!persisted.includes('"staleReason"'));
+  } finally {
+    notifier.stop();
+  }
 });
 
 test("inbox-only records are re-checked on read so answered requests leave the default inbox", async () => {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
@@ -156,6 +157,8 @@ interface Runtime {
   runAccepted: boolean;
   maxDurationTimer?: NodeJS.Timeout;
   pendingUiTimer?: NodeJS.Timeout;
+  /** Native IDs may be reused; callers only see the unique HS request ID. */
+  pendingNativeInput?: { requestId: string; nativeRequestId: string };
   answeringRequestId?: string;
   lastAssistantText?: string;
   lastError?: string;
@@ -1734,6 +1737,9 @@ export class Supervisor {
       let dirty = false;
       let timer: NodeJS.Timeout | undefined;
       let unsubscribe: (() => void) | undefined;
+      // Matching can scan past a response page without advancing the caller's
+      // delivery cursor. Keep this cursor so each progress event is scanned once.
+      let scannedThroughSeq = sinceSeq;
 
       const fail = (error: unknown) => {
         finished = true;
@@ -1771,12 +1777,21 @@ export class Supervisor {
         try {
           while (dirty && !finished) {
             dirty = false;
-            const data = await this.store.readEvents(workerId, sinceSeq, 500);
-            if (finished) return;
             const current = this.requireWorker(workerId);
-            const hasMatchingEvent = typeFilter
-              ? data.events.some((event) => typeFilter.has(event.type))
-              : data.events.length > 0;
+            let hasMatchingEvent = false;
+            if (until === "event" && !isTerminal(current.status) && current.status !== "awaiting_input") {
+              const scanThroughSeq = current.lastSeq;
+              while (scannedThroughSeq < scanThroughSeq && !finished) {
+                const data = await this.store.readEvents(workerId, scannedThroughSeq, 500);
+                if (finished) return;
+                hasMatchingEvent = typeFilter
+                  ? data.events.some((event) => typeFilter.has(event.type))
+                  : data.events.length > 0;
+                const previousSeq = scannedThroughSeq;
+                scannedThroughSeq = Math.max(scannedThroughSeq, data.nextSeq);
+                if (hasMatchingEvent || !data.hasMore || scannedThroughSeq <= previousSeq) break;
+              }
+            }
             // A run that needs input cannot finish without a consumer response.
             if (isTerminal(current.status) || current.status === "awaiting_input" ||
                 (until === "event" && hasMatchingEvent)) {
@@ -1928,9 +1943,16 @@ export class Supervisor {
       });
     }
     validateUiResponse(pending, response);
+    const nativeInput = runtime.pendingNativeInput;
+    if (!nativeInput || nativeInput.requestId !== pending.requestId) {
+      throw new SupervisorError("INVALID_STATE", "The input request is no longer attached to this harness", {
+        reason: "request_mismatch",
+        nextActions: ["worker_status"],
+      });
+    }
     runtime.answeringRequestId = requestId;
     try {
-      await runtime.session.answer(requestId, response);
+      await runtime.session.answer(nativeInput.nativeRequestId, response);
     } catch (error) {
       throw new SupervisorError("HARNESS_ERROR", safeText(errorMessage(error), 2000), {
         workerId,
@@ -1953,6 +1975,7 @@ export class Supervisor {
         runtime.pendingUiTimer = undefined;
       }
       record.pendingInput = undefined;
+      runtime.pendingNativeInput = undefined;
       if (!isTerminal(record.status)) {
         record.status = "running";
         record.statusReason = undefined;
@@ -2575,13 +2598,21 @@ export class Supervisor {
         if (event.kind === "assistant_message" && event.preview) {
           runtime.lastAssistantText = event.preview;
         }
+        const nativeInput = runtime.pendingNativeInput;
+        const withdrawalId = INPUT_WITHDRAWAL_KINDS.has(event.kind) && nativeInput &&
+          nativeInput.nativeRequestId === event.detail?.trim()
+          ? nativeInput.requestId
+          : event.detail;
+        if (INPUT_WITHDRAWAL_KINDS.has(event.kind) && withdrawalId !== undefined) {
+          data.detail = safeText(withdrawalId, MAX_STORED_PROGRESS_DETAIL_CHARS);
+        }
         // A withdrawal is a decision, not progress: the harness no longer needs
         // an answer, so the worker must stop reporting awaiting_input. Without
         // this the request would stay "current" for the notification gate and a
         // reminder would be delivered for something nobody can answer.
         if (
           INPUT_WITHDRAWAL_KINDS.has(event.kind) &&
-          this.applyInputWithdrawal(runtime, event.kind, event.detail)
+          this.applyInputWithdrawal(runtime, event.kind, withdrawalId)
         ) {
           data.pendingInputCleared = true;
         }
@@ -2611,8 +2642,9 @@ export class Supervisor {
         break;
       }
       case "needs_input": {
+        const requestId = `input-${randomUUID()}`;
         const pending: PendingInput = {
-          requestId: event.requestId,
+          requestId,
           method: event.method,
           title: event.title,
           message: event.message,
@@ -2625,12 +2657,13 @@ export class Supervisor {
               ? new Date(Date.now() + event.timeoutMs).toISOString()
               : undefined,
         };
+        runtime.pendingNativeInput = { requestId, nativeRequestId: event.requestId };
         record.pendingInput = pending;
         if (!isTerminal(record.status)) {
           record.status = "awaiting_input";
           record.statusReason = "harness requested input";
         }
-        this.schedulePendingInputExpiry(runtime, pending);
+        this.schedulePendingInputExpiry(runtime, pending, event.requestId);
         const needsInputEvent = this.store.appendEvent(record.id, "run.needs_input", {
           requestId: pending.requestId,
           method: pending.method,
@@ -2895,6 +2928,7 @@ export class Supervisor {
       return false;
     }
     record.pendingInput = undefined;
+    runtime.pendingNativeInput = undefined;
     if (runtime.pendingUiTimer) {
       clearTimeout(runtime.pendingUiTimer);
       runtime.pendingUiTimer = undefined;
@@ -2904,7 +2938,7 @@ export class Supervisor {
     return true;
   }
 
-  private schedulePendingInputExpiry(runtime: Runtime, pending: PendingInput): void {
+  private schedulePendingInputExpiry(runtime: Runtime, pending: PendingInput, nativeRequestId: string): void {
     if (runtime.pendingUiTimer) clearTimeout(runtime.pendingUiTimer);
     const timeoutMs = pending.expiresAt
       ? Math.max(0, Date.parse(pending.expiresAt) - Date.now())
@@ -2912,9 +2946,10 @@ export class Supervisor {
     if (timeoutMs === undefined) return;
     runtime.pendingUiTimer = setTimeout(() => {
       const record = runtime.record;
-      if (record.pendingInput?.requestId !== pending.requestId || isTerminal(record.status)) return;
+      if (record.pendingInput !== pending || isTerminal(record.status)) return;
       if (runtime.cancelRequested || runtime.finalizing) return;
       record.pendingInput = undefined;
+      runtime.pendingNativeInput = undefined;
       record.status = "running";
       record.statusReason = undefined;
       this.store.appendEvent(record.id, "run.progress", {
@@ -2927,7 +2962,7 @@ export class Supervisor {
       // forever. Cancel the dialog explicitly; runtimes that already timed out
       // simply report that no such request exists, which is harmless here.
       void runtime.session
-        ?.answer(pending.requestId, { cancelled: true })
+        ?.answer(nativeRequestId, { cancelled: true })
         .catch((error: unknown) => {
           this.logger.debug(`Input expiry could not cancel ${pending.requestId}`, {
             workerId: record.id,

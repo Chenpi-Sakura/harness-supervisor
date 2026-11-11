@@ -252,7 +252,7 @@ async function runPrompt(prompt) {
     if (token !== runToken || aborted) return;
   }
   if (scenario === "ask") {
-    const uiId = `ui-${randomBytes(4).toString("hex")}`;
+    const uiId = process.env.FAKE_PI_UI_REQUEST_ID ?? `ui-${randomBytes(4).toString("hex")}`;
     lastUiRequest = { id: uiId, answer: undefined };
     const answerPromise = new Promise((resolve) => {
       uiResolver = resolve;
@@ -288,9 +288,10 @@ async function runPrompt(prompt) {
     durationMs: step,
   });
 
-  if (scenario === "busy") {
+  if (scenario === "busy" || scenario === "busy-running") {
     // Stress the event log with many progress events (no notification must be created).
-    for (let index = 0; index < 150; index += 1) {
+    const toolCalls = scenario === "busy-running" ? 350 : 150;
+    for (let index = 0; index < toolCalls; index += 1) {
       emit({
         type: "tool_execution_start",
         toolCallId: `call_busy_${index}`,
@@ -305,6 +306,12 @@ async function runPrompt(prompt) {
         isError: false,
         durationMs: 0,
       });
+    }
+    if (scenario === "busy-running") {
+      // Keep the worker non-terminal while a client tests a historical event
+      // beyond the first 500-event page. Cancellation still uses normal RPC.
+      await sleep(30_000);
+      if (token !== runToken || aborted) return;
     }
   }
 

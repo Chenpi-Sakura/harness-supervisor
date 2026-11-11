@@ -92,6 +92,33 @@ test("explicit history marks superseded input as non-actionable in production", 
   assert.equal(debug.notifications[0]?.createdAt, result.notifications[0]?.createdAt);
 });
 
+test("notification presentation preserves read-time freshness and old-daemon compatibility", () => {
+  const notification = {
+    id: "w#4", workerId: "w", runtime: "pi", seq: 4,
+    eventType: "run.needs_input", kind: "needs_input" as const,
+    createdAt: "2026-11-11T00:00:00Z", summary: { requestId: "old" },
+    delivery: { state: "delivered" as const, channel: "codex-queue", attempts: 1 },
+  };
+  const result: NotificationsResult = {
+    notifications: [notification],
+    counts: { pending: 0, delivered: 1, failed: 0, unacked: 1 },
+    target: { channel: "none" },
+  };
+  for (const mode of ["production", "development"] as const) {
+    const legacy = presentNotifications(result, mode) as { notifications: Record<string, unknown>[] };
+    assert.equal(legacy.notifications[0]?.actionable, true);
+    const current = presentNotifications({
+      ...result,
+      notifications: [{ ...notification, actionable: false, staleReason: "request already answered" }],
+    }, mode) as { notifications: Record<string, unknown>[] };
+    assert.equal(current.notifications[0]?.actionable, false);
+    assert.equal(current.notifications[0]?.staleReason, "request already answered");
+    assert.equal(current.notifications[0]?.acked, false, "freshness must never act as an acknowledgement");
+    if (mode === "production") assert.equal(current.notifications[0]?.deliveryState, "delivered");
+    else assert.equal((current.notifications[0]?.delivery as { state: string }).state, "delivered");
+  }
+});
+
 test("notification presentation labels global counts and never relabels them as filtered", () => {
   const base: NotificationsResult = {
     notifications: [],
@@ -506,6 +533,76 @@ END`;
   assert.equal(development.recentEvents.length, 2);
   assert.equal(development.stderrTail, "diagnostic only");
   assert.equal("promptPreview" in development.worker, false);
+});
+
+test("production status budgets long native input labels without changing answer values", () => {
+  const pendingInput = {
+    requestId: "request-1",
+    method: "select" as const,
+    title: "审批标题".repeat(250),
+    message: "请检查完整的操作说明后选择。".repeat(100),
+    options: Array.from({ length: 20 }, (_, index) => `${index}:` + "选项".repeat(500)),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    expiresAt: "2026-01-01T00:30:00.000Z",
+  };
+  const original = structuredClone(pendingInput);
+  const worker = {
+    id: "w-long-input",
+    runtime: "pi",
+    cwd: `D:/${"目录".repeat(1000)}`,
+    name: "任务".repeat(100),
+    taskId: "t".repeat(120),
+    status: "awaiting_input",
+    persistence: "persistent",
+    lifecycle: "awaiting_input",
+    lastSeq: 10,
+    pendingInput,
+    resumeAvailable: false,
+    session: { available: true, restorable: false, reason: "process_may_be_running" },
+  } as unknown as WorkerSummary;
+  const status = { worker, recentEvents: [], stderrTail: "" };
+  const view = presentStatus(status, "production") as any;
+  assert.ok(Buffer.byteLength(JSON.stringify(view), "utf8") <= 2048);
+  assert.equal(view.budgetExceeded, undefined);
+  const input = view.worker.pendingInput;
+  assert.equal(input.truncated, true);
+  assert.equal(input.fullInputAvailable, true);
+  assert.equal(input.optionsTotal, pendingInput.options.length);
+  assert.ok(input.options.length < pendingInput.options.length);
+  for (const option of input.options) {
+    assert.ok(pendingInput.options.includes(option), "displayed choices must remain valid native answers");
+  }
+  assert.deepEqual(pendingInput, original, "budgeting cannot mutate the native input");
+  const explicit = presentStatus(status, "production", { includeInput: true }) as any;
+  assert.deepEqual(explicit.worker.pendingInput, original);
+});
+
+test("production status budgets oversized native request ids with an explicit full-read marker", () => {
+  const pendingInput = {
+    requestId: "native-request-" + "x".repeat(5000),
+    method: "confirm" as const,
+    title: "Allow?",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+  const worker = {
+    id: "w-long-request",
+    runtime: "pi",
+    cwd: "D:/workspace",
+    status: "awaiting_input",
+    lastSeq: 10,
+    pendingInput,
+    resumeAvailable: false,
+  } as unknown as WorkerSummary;
+  const status = { worker, recentEvents: [], stderrTail: "" };
+  const view = presentStatus(status, "production") as any;
+  assert.ok(Buffer.byteLength(JSON.stringify(view), "utf8") <= 2048);
+  assert.equal(view.worker.pendingInput.requestId, undefined, "a partial request id cannot be used as an answer id");
+  assert.equal(view.worker.pendingInput.truncated, true);
+  assert.equal(view.worker.pendingInput.fullInputAvailable, true);
+  assert.deepEqual(
+    (presentStatus(status, "production", { includeInput: true }) as any).worker.pendingInput,
+    pendingInput,
+  );
 });
 
 test("production info is a minimal availability snapshot; development keeps diagnostics", () => {

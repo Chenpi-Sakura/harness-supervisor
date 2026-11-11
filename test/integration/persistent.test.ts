@@ -483,6 +483,63 @@ test("needs_input on a persistent worker can be answered and the session continu
   );
 });
 
+test("a retried answer cannot reach a later Turn that reuses the native request id", async (t) => {
+  const daemon = await TestDaemon.create("hs-persistent-answer-identity-");
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+  const cwd = await makeWorkspace();
+  const nativeRequestId = "reused-native-request";
+  const client = await daemon.start({ env: { FAKE_PI_UI_REQUEST_ID: nativeRequestId } });
+  const worker = await spawnWorker(client, cwd, "[scenario:ask] first authorization", {
+    persistence: "persistent",
+  });
+  const turn1Input = (await waitForStatus(client, worker.id, ["awaiting_input"])).pendingInput!;
+  const oldAnswer = {
+    workerId: worker.id,
+    requestId: turn1Input.requestId,
+    response: { confirmed: true },
+  };
+  await client.request("answer", oldAnswer);
+  const turn1 = await waitTerminal(client, worker.id);
+  assert.match(turn1.worker.result?.text ?? "", /ANSWER:true/);
+
+  await client.request("continue", {
+    workerId: worker.id,
+    prompt: "[scenario:ask] unrelated second authorization",
+  });
+  const turn2 = await waitForStatus(client, worker.id, ["awaiting_input"]);
+  const turn2Input = turn2.pendingInput!;
+  assert.equal(turn2.sessionId, turn1.worker.sessionId);
+  assert.equal(turn2.resumeCount, 1);
+  assert.ok(turn2Input.seq! > turn1Input.seq!);
+
+  await assert.rejects(
+    () => client.request("answer", oldAnswer),
+    (error: unknown) => rejectionCode(error) === "INVALID_STATE",
+    "retrying the identical first-Turn answer must not approve the second Turn",
+  );
+  await assert.rejects(
+    () => client.request("answer", { ...oldAnswer, requestId: nativeRequestId }),
+    (error: unknown) => rejectionCode(error) === "INVALID_STATE",
+    "the raw native request id must not bypass the HS request identity",
+  );
+  const stillWaiting = await statusOf(client, worker.id);
+  assert.equal(stillWaiting.worker.status, "awaiting_input");
+  assert.equal(stillWaiting.worker.pendingInput?.requestId, turn2Input.requestId);
+  assert.notEqual(turn2Input.requestId, turn1Input.requestId);
+  assert.notEqual(turn2Input.requestId, nativeRequestId);
+
+  await client.request("answer", {
+    workerId: worker.id,
+    requestId: turn2Input.requestId,
+    response: { confirmed: false },
+  });
+  const final = await waitTerminal(client, worker.id);
+  assert.equal(final.worker.status, "completed");
+  assert.match(final.worker.result?.text ?? "", /ANSWER:false/);
+});
+
 test("supervisor info reports storage and active/idle worker counts", async (t) => {
   const daemon = await TestDaemon.create("hs-persistent-storage-");
   t.after(async () => {

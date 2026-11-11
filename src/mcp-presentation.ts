@@ -286,6 +286,7 @@ export function presentStatus(
       includeLastProgress: false,
       includeTimeline: false,
       includeInputState: false,
+      includeCwd: false,
       includeInput: options.includeInput === true,
     });
     const worker = compacted.worker as Record<string, unknown>;
@@ -535,7 +536,8 @@ function notificationForProduction(record: NotificationRecord) {
     summary: summaryOf(record),
     deliveryState: record.delivery.state,
     acked: Boolean(record.ackAt),
-    actionable: !record.ackAt && record.delivery.state !== "superseded",
+    actionable: record.actionable ?? (!record.ackAt && record.delivery.state !== "superseded"),
+    ...(record.staleReason !== undefined ? { staleReason: record.staleReason } : {}),
   };
 }
 
@@ -554,7 +556,8 @@ function notificationForDevelopment(record: NotificationRecord) {
     acked: Boolean(record.ackAt),
     ...(record.ackAt ? { ackAt: record.ackAt } : {}),
     ...(record.ackBy ? { ackBy: record.ackBy } : {}),
-    actionable: !record.ackAt && record.delivery.state !== "superseded",
+    actionable: record.actionable ?? (!record.ackAt && record.delivery.state !== "superseded"),
+    ...(record.staleReason !== undefined ? { staleReason: record.staleReason } : {}),
   };
 }
 

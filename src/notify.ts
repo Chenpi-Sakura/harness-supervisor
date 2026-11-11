@@ -411,7 +411,17 @@ export class Notifier {
       .filter((record) => (filter.workerId ? record.workerId === filter.workerId : true))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
       .slice(0, limit)
-      .map((record) => structuredClone(record));
+      .map((record) => {
+        const view = structuredClone(record);
+        const unresolved = !record.ackAt && record.delivery.state !== "superseded";
+        const staleReason = unresolved ? this.checkStale(record) : undefined;
+        // Delivery and acknowledgement are historical facts. Freshness is a
+        // read-time projection: even an already delivered input can stop being
+        // actionable without rewriting delivery or acknowledging it for a client.
+        view.actionable = unresolved && !staleReason;
+        if (staleReason) view.staleReason = safeText(oneLine(staleReason), 400);
+        return view;
+      });
   }
 
   /**
@@ -926,7 +936,7 @@ function pickText(value: unknown): string | undefined {
  * It carries only the worker id, the event and its seq plus what to read next:
  * re-injecting the command or the report duplicated the inbox in the main agent
  * context, and echoing the old requestId invited answers to a request that may
- * already be gone. The agent must read the live status/pendingInput first.
+ * already be gone. The agent must read the current result or pendingInput first.
  *
  * This only shrinks the wake message: the inbox record keeps its existing summary
  * (MAX_SUMMARY_CHARS) and worker results keep their existing maxResultBytes.
@@ -935,8 +945,8 @@ function pickText(value: unknown): string | undefined {
 export function renderMessage(record: NotificationRecord): string {
   const next =
     record.kind === "needs_input"
-      ? "read worker_status; answer current pendingInput"
-      : "read worker_status for result";
+      ? "read worker_status includeInput=true; answer current pendingInput"
+      : "read worker_wait for full result";
   return `[harness-supervisor] ${record.workerId} ${record.kind} seq=${record.seq} | ${next}`;
 }
 

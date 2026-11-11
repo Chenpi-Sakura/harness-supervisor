@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { SupervisorError } from "../../src/errors.js";
+import type { WaitResult } from "../../src/types.js";
 import { isPidAlive, sleep } from "../../src/util/async.js";
 import {
   TestDaemon,
@@ -90,6 +91,75 @@ test("event cursors are incremental and bounded waits do not replay history", as
   const after = await eventsOf(client, worker.id, cursor);
   assert.equal(after.events.length, 0);
   assert.equal(after.nextSeq, cursor);
+});
+
+test("wait finds a filtered historical event after 500 progress events without skipping delivery", async (t) => {
+  const daemon = await TestDaemon.create("hs-wait-history-");
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+  const cwd = await makeWorkspace();
+  const client = await daemon.start();
+  const worker = await spawnWorker(client, cwd, "[scenario:busy-running] retain progress history");
+  const deadline = Date.now() + 10_000;
+  let running = await statusOf(client, worker.id);
+  while (running.worker.lastSeq < 700 && Date.now() < deadline) {
+    await sleep(25);
+    running = await statusOf(client, worker.id);
+  }
+  assert.equal(running.worker.status, "running");
+  assert.ok(running.worker.lastSeq >= 700, "the target must follow more than one history page");
+  const pendingWait = client.request<WaitResult>(
+    "wait",
+    {
+      workerId: worker.id,
+      sinceSeq: 0,
+      timeoutMs: 3000,
+      until: "event",
+      types: ["run.message_sent"],
+    },
+    { timeoutMs: 10_000 },
+  );
+  await sleep(100);
+  const sent = await client.request<{ lastSeq: number }>("send", {
+    workerId: worker.id,
+    message: "a historical target after the progress pages",
+    mode: "steer",
+  });
+  const awakened = await pendingWait;
+  assert.equal(awakened.timedOut, false, "a later matching event must wake the filtered wait");
+  assert.equal(awakened.events[0]?.seq, 1);
+
+  const waited = await client.request<WaitResult>("wait", {
+    workerId: worker.id,
+    sinceSeq: 0,
+    timeoutMs: 0,
+    until: "event",
+    types: ["run.message_sent"],
+  });
+  assert.equal(waited.timedOut, false, "an already stored matching event must not time out");
+  assert.equal(waited.terminal, false);
+  assert.equal(waited.worker.status, "running");
+  assert.equal(waited.events[0]?.seq, 1, "finding a later target must preserve the delivery cursor");
+  assert.equal(waited.nextSeq, waited.events.at(-1)?.seq);
+
+  const delivered = [...waited.events];
+  let cursor = waited.nextSeq;
+  let hasMore = waited.hasMore;
+  while (hasMore) {
+    const page = await eventsOf(client, worker.id, cursor);
+    assert.ok(page.nextSeq > cursor, "a history page must advance the delivery cursor");
+    delivered.push(...page.events);
+    cursor = page.nextSeq;
+    hasMore = page.hasMore;
+  }
+  const target = delivered.find((event) => event.type === "run.message_sent");
+  assert.equal(target?.seq, sent.lastSeq);
+  assert.deepEqual(
+    delivered.map((event) => event.seq),
+    Array.from({ length: cursor }, (_, index) => index + 1),
+    "scanning to a target and then paging must neither omit nor duplicate events",
+  );
 });
 
 test("a steering message reaches a running worker", async (t) => {

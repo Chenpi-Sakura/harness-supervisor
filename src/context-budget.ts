@@ -186,8 +186,8 @@ export interface PackedEvents {
 }
 
 /**
- * Pack the newest `limit` events into `budgetBytes`, shrinking summaries first
- * and dropping the oldest event only when even empty summaries do not fit.
+ * Pack a bounded event window, shrinking summaries before dropping events.
+ * Snapshots keep the newest events; incremental reads keep the oldest prefix.
  *
  * `wrap` lets the caller measure the *complete* response (worker, counters,
  * cursor) instead of the event array alone; budgeting only the array can leave
@@ -199,10 +199,13 @@ export function packCompactEvents(
   options: {
     limit: number;
     budgetBytes: number;
+    order?: "oldest" | "newest";
     wrap?: (events: CompactEvent[], omitted: number) => unknown;
   },
 ): PackedEvents {
-  const window = events.slice(Math.max(0, events.length - Math.max(0, options.limit)));
+  const oldest = options.order === "oldest";
+  const limit = Math.max(0, options.limit);
+  const window = oldest ? events.slice(0, limit) : events.slice(Math.max(0, events.length - limit));
   const dropped = events.length - window.length;
   let kept = window;
   let omitted = dropped;
@@ -223,7 +226,7 @@ export function packCompactEvents(
       };
     }
     if (kept.length === 0) return { events: [], omitted, overflow: true };
-    kept = kept.slice(1);
+    kept = oldest ? kept.slice(0, -1) : kept.slice(1);
     omitted += 1;
   }
 }
@@ -252,17 +255,30 @@ export function fullPendingInput(input: PendingInput | undefined) {
 
 export function compactPendingInput(input: PendingInput | undefined, messageChars: number) {
   if (!input) return undefined;
-  const options = input.options?.slice(0, MAX_PENDING_OPTIONS);
+  const chars = Math.max(0, messageChars);
+  const title = input.title !== undefined ? textPreview(input.title, chars) : undefined;
+  const message = input.message !== undefined ? textPreview(input.message, chars) : undefined;
+  const requestIdOmitted = input.requestId.length > chars;
+  let optionChars = chars;
+  const options: string[] | undefined = input.options ? [] : undefined;
+  for (const option of input.options?.slice(0, MAX_PENDING_OPTIONS) ?? []) {
+    // A partial choice is not a valid native answer. Omit choices that do not
+    // fit instead of shortening their values; the explicit full read keeps all.
+    if (option.length > optionChars) break;
+    optionChars -= option.length;
+    options!.push(option);
+  }
+  const optionsOmitted = options !== undefined && options.length < input.options!.length;
+  const truncated = requestIdOmitted || title?.truncated || message?.truncated || optionsOmitted;
   return {
-    requestId: input.requestId,
+    ...(!requestIdOmitted ? { requestId: input.requestId } : {}),
     ...(input.seq !== undefined ? { seq: input.seq } : {}),
     method: input.method,
-    ...(input.title !== undefined ? { title: input.title } : {}),
-    ...(input.message !== undefined ? { message: textPreview(input.message, messageChars) } : {}),
+    ...(title ? { title: title.preview, ...(title.truncated ? { titleTruncated: true } : {}) } : {}),
+    ...(message ? { message } : {}),
     ...(options !== undefined ? { options } : {}),
-    ...(options !== undefined && (input.options?.length ?? 0) > options.length
-      ? { optionsTotal: input.options!.length }
-      : {}),
+    ...(optionsOmitted ? { optionsTotal: input.options!.length } : {}),
+    ...(truncated ? { truncated: true, fullInputAvailable: true } : {}),
     ...(input.createdAt !== undefined ? { createdAt: input.createdAt } : {}),
     ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
   };
@@ -339,6 +355,7 @@ interface CompactStatusOptions {
   includeLastProgress?: boolean;
   includeTimeline?: boolean;
   includeInputState?: boolean;
+  includeCwd?: boolean;
   /** Full pending input instead of the bounded preview. */
   includeInput?: boolean;
 }
@@ -373,9 +390,14 @@ export function compactStatus(
         runtime: worker.runtime,
         status: worker.status,
         lastSeq: worker.lastSeq,
-        ...(worker.name !== undefined ? { name: worker.name } : {}),
+        ...(worker.name !== undefined
+          ? {
+              name: worker.name.slice(0, chars),
+              ...(worker.name.length > chars ? { nameTruncated: true } : {}),
+            }
+          : {}),
         ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
-        cwd: worker.cwd,
+        ...(options.includeCwd !== false ? { cwd: worker.cwd } : {}),
         ...(worker.persistence !== undefined ? { persistence: worker.persistence } : {}),
         ...(worker.lifecycle !== undefined ? { lifecycle: worker.lifecycle } : {}),
         ...(worker.session
@@ -399,7 +421,7 @@ export function compactStatus(
           ? {
               pendingInput: options.includeInput
                 ? fullPendingInput(worker.pendingInput)
-                : compactPendingInput(worker.pendingInput, MAX_PENDING_MESSAGE_CHARS),
+                : compactPendingInput(worker.pendingInput, Math.min(chars, MAX_PENDING_MESSAGE_CHARS)),
             }
           : {}),
         resumeAvailable: worker.resumeAvailable,
@@ -441,7 +463,7 @@ export function compactStatus(
 
   // When there is no result/error body the knob still has to cover the reason
   // and event summaries; starting at body.length (0) blanked both.
-  const upper = Math.max(body.length, MAX_STATUS_REASON_CHARS);
+  const upper = Math.max(body.length, MAX_STATUS_REASON_CHARS, MAX_PENDING_MESSAGE_CHARS, worker.name?.length ?? 0);
   const fitted = fitByChars(upper, (chars) => build(chars, events), options.budgetBytes);
   const value = fitted.value as Record<string, unknown>;
   if (!fitted.overflow) return value;
@@ -557,26 +579,34 @@ export async function readCompactEvents(
   if (!scanned) scanned = await read({ sinceSeq: 0, limit: 1 });
   const page = scanned;
 
-  const envelope = (
-    events: CompactEvent[],
-    omitted: number,
-    policyOmitted = filteredOmitted,
-  ): CompactEventsResult => ({
-    worker: {
-      id: page.worker.id,
-      status: page.worker.status,
-      lastSeq: page.worker.lastSeq,
-    },
-    events,
-    eventsOmitted: omitted + policyOmitted,
-    progressOmitted,
-    nextSeq: page.nextSeq,
-    hasMore: page.hasMore,
-  });
+  const envelope = (events: CompactEvent[], omitted: number): CompactEventsResult => {
+    // Incremental packing preserves a prefix. A visible event that did not fit
+    // belongs to the next page, unlike progress/policy-hidden events that can
+    // be consumed now. Never advance the cursor past that deferred event.
+    const deferred = !snapshot ? collected[events.length] : undefined;
+    const consumed = deferred
+      ? page.events.filter((event) => event.seq < deferred.seq)
+      : page.events;
+    const hidden = !snapshot ? consumed.filter((event) => !visible(event)) : [];
+    const consumedProgress = !snapshot ? hidden.filter(isProgressEvent).length : progressOmitted;
+    return {
+      worker: {
+        id: page.worker.id,
+        status: page.worker.status,
+        lastSeq: page.worker.lastSeq,
+      },
+      events,
+      eventsOmitted: snapshot ? omitted + filteredOmitted : hidden.length - consumedProgress,
+      progressOmitted: consumedProgress,
+      nextSeq: deferred ? consumed.at(-1)?.seq ?? options.sinceSeq! : page.nextSeq,
+      hasMore: page.hasMore || deferred !== undefined,
+    };
+  };
 
   const packed = packCompactEvents(collected, scanned.worker, {
     limit,
     budgetBytes: options.budgetBytes,
+    order: snapshot ? "newest" : "oldest",
     // Measure the whole response, not just the event array.
     wrap: (events, omitted) => envelope(events, omitted),
   });

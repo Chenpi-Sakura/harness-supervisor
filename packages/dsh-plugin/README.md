@@ -1,6 +1,6 @@
 # DSH Harness Supervisor
 
-将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护，支持 DSH `0.2.2-rc.1`，配套 HS `0.10.3`；其他 DSH 版本尚需验收。
+将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护，支持 DSH `0.2.2-rc.1`，配套 HS `0.10.4`；其他 DSH 版本尚需验收。
 
 [项目仓库](https://github.com/Chenpi-Sakura/harness-supervisor) · [完整项目 README](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/README.md) · [npm](https://www.npmjs.com/package/dsh-harness-supervisor)
 
@@ -14,7 +14,7 @@ dsh plugin --profile desktop add dsh-harness-supervisor@latest
 
 插件包含固定配套的 HS 核心、生产依赖和 WebUI，无需 Clone、编译或额外全局安装 HS。Worker 对应的原生 Harness CLI 仍需安装并配置账号。
 
-启用后，直接让 DSH 委派 Worker；插件会自动配置原生 MCP 连接。从左侧导航、对话顶部标签或设置中的 **Harness Supervisor** 打开 WebUI，或使用 `/hs` 在右侧浏览器打开。界面支持 DSH Desktop 和本机 DSH Web。
+启用后，直接让 DSH 委派 Worker；插件会自动配置原生 MCP 连接。从右侧栏入口、对话顶部标签或设置中的 **Harness Supervisor** 打开 WebUI，或使用 `/hs` 在右侧浏览器打开。界面支持 DSH Desktop 和本机 DSH Web。
 
 人工界面可查看本机当前 HS 实例的全部 Worker，按“工作目录 → 会话 → Worker”分组，默认展开当前对话。可读取状态、结果、轨迹与用量，回答输入或取消任务；创建与续接任务由 Master 完成。禁用或卸载插件不会停止已有 Worker。
 
@@ -55,7 +55,7 @@ dsh plugin --profile desktop add dsh-harness-supervisor@latest
 npm run build:plugin
 npm run test:plugin
 npm run pack:core
-npm --prefix packages/dsh-plugin run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.3.tgz
+npm --prefix packages/dsh-plugin run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.4.tgz
 ```
 
 核心必须先完成当前版本的 `npm run build`。插件打包解包固定核心 `.tgz`，对照 `production-lock.json` 验证生产依赖，再用 `bundleDependencies` 生成独立安装包；安装时不重新编译。DSH SDK、React 等宿主能力不重复打包。

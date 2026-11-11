@@ -95,12 +95,26 @@ exports.apply = function apply(ctx) {
     return h("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
       h("path", { d: "M3 5v14M9 5v14M3 12h6M21 7c-1-1-2-2-4-2s-4 1-4 3.5S15 12 17 12s4 1 4 3.5-2 3.5-4 3.5-3-1-4-2" }));
   }
-  ctx.effect(() => ctx.slots.inject("main", () => ctx.slots.register({
-    name: "main", key: "harness-supervisor",
-  }, MainView)), "HS main panel");
-  ctx.effect(() => ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({
-    name: "sidebar.panellist", id: "harness-supervisor", order: 20, label: () => "Harness Supervisor",
-  }, SidebarIcon)), "HS sidebar entry");
+  ctx.effect(() => {
+    const tabs = ctx.get?.("sidebarRightTabs");
+    if (!tabs || typeof tabs.register !== "function") {
+      console.warn("[harness-supervisor] 右侧栏不可用：没有 sidebarRightTabs 服务，右侧栏入口未注册");
+      return;
+    }
+    // The pane slot is scoped to this effect; only the tab type needs manual disposal.
+    ctx.slots.inject("sidebar.right.pane.tab", function* () {
+      yield ctx.slots.register({ name: "sidebar.right.pane.tab", key: "harness-supervisor", order: 100 }, MainView);
+    });
+    return tabs.register({
+      id: "harness-supervisor", kind: "harness-supervisor", priority: "extension",
+      title: () => "Harness Supervisor",
+      guide: [{
+        id: "harness-supervisor", order: 450, title: () => "Harness Supervisor",
+        description: () => "全局 Worker 面板，默认展开当前对话",
+        icon: SidebarIcon,
+      }],
+    });
+  }, "HS right sidebar entry");
 
   function Settings() {
     const [data, setData] = React.useState();
@@ -145,7 +159,7 @@ exports.apply = function apply(ctx) {
         button("在右侧栏打开全局面板", () => open(sessionId), !sessionId),
         button("刷新状态", refresh)),
       h("h3", null, "配套 HS 核心"),
-      h("p", null, `插件 ${data?.pluginVersion || "0.1.3"} · 配套核心 ${data?.pairedCoreVersion || "0.10.3"} · 运行核心 ${data?.supervisor?.version || "正在读取"}`),
+      h("p", null, `插件 ${data?.pluginVersion || "0.1.4"} · 配套核心 ${data?.pairedCoreVersion || "0.10.4"} · 运行核心 ${data?.supervisor?.version || "正在读取"}`),
       h("p", null, "等待已有任务结束后切换，期间仍可审批和取消任务。"),
       h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
         button("应用配套 HS 核心", async () => { const result = await call("apply-core"); if (active.current) setNotice(result.alreadyActive ? "当前已是配套 HS 核心。" : "已登记更新；排空完成后由 HS 自动切换。"); await refresh(); }, draining || ["switching", "verifying"].includes(intent?.phase)),
@@ -154,7 +168,7 @@ exports.apply = function apply(ctx) {
       error && h("p", { role: "alert", style: { color: "var(--dsw-alias-state-error-primary, #c33)", overflowWrap: "anywhere" } }, error),
       data?.update && h("p", { role: "status" }, phaseText, draining ? `，剩余 ${remaining} 个 Worker。` : "。"),
       data && h("details", null, h("summary", null, "诊断详情"), h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12 } }, JSON.stringify({ update: data.update, sessions: data.sessions }, null, 2))),
-      h("p", { style: { fontSize: 12, opacity: 0.75 } }, "顶部标签、左侧导航、设置页和 /hs 均为人工全局视图，默认展开当前对话分组。核心重启后重新打开面板。")));
+      h("p", { style: { fontSize: 12, opacity: 0.75 } }, "顶部标签、右侧栏入口、设置页和 /hs 均为人工全局视图，默认展开当前对话分组。核心重启后重新打开面板。")));
   }
   ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({
     name: "settings.section", id: "harness-supervisor", order: 80,

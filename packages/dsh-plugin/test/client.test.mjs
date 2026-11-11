@@ -11,11 +11,12 @@ for (const [carrier, location] of [["Web", { origin: "http://127.0.0.1:3080" }],
     sidebarRight: { openTab: (...args) => opened.push(args) },
     commandUi: { register: (value) => { registered.push(value); return () => {}; } },
     slots: { inject: (_, fn) => fn(), register: () => () => {} },
+    get: () => undefined,
     effect: (fn) => { const cleanup = fn(); if (cleanup) cleanups.push(cleanup); },
   };
   const exports = {};
   const sandbox = { exports, require: (name) => { assert.equal(name, "react"); return { createElement() {} }; },
-    window: { location, alert() {} }, crypto: webcrypto, AbortController, URL };
+    window: { location, alert() {} }, crypto: webcrypto, AbortController, URL, console: { warn() {} } };
   vm.runInNewContext(await readFile(new URL("../src/client.cjs", import.meta.url), "utf8"), sandbox);
   exports.apply(ctx);
   registered[0].ui.run({ sessionId: "session-a" });
@@ -80,12 +81,13 @@ test("conversation tab captures the preferred session and aborts stale replies w
   const ctx = {
     connection: { rpc: { call: (...args) => new Promise((resolve) => calls.push({ args, resolve })) } },
     commandUi: { register: () => () => {} }, sidebarRight: { openTab() { assert.fail("tab must not open the sidebar"); } },
+    get: () => undefined,
     slots: { inject: (_, fn) => fn(), register: (entry, Component) => { slots.push({ entry, Component }); return () => {}; } },
     effect: (fn) => { const cleanup = fn(); if (cleanup) cleanups.push(cleanup); },
   };
   const exports = {};
   vm.runInNewContext(await readFile(new URL("../src/client.cjs", import.meta.url), "utf8"), {
-    exports, require: () => React, window: { location: { origin: "null", protocol: "dsh-app:", host: "app" } }, crypto: webcrypto, URL, AbortController,
+    exports, require: () => React, window: { location: { origin: "null", protocol: "dsh-app:", host: "app" } }, crypto: webcrypto, URL, AbortController, console: { warn() {} },
   });
   exports.apply(ctx);
   const { entry, Component } = slots.find(({ entry }) => entry.name === "conversation.view");
@@ -123,8 +125,9 @@ test("conversation tab captures the preferred session and aborts stale replies w
   assert.equal(calls[2].args[3].aborted, true);
 });
 
-test("left navigation and embedded settings open the human global UI with separate leases", async () => {
-  const slots = [], calls = [], cleanups = [];
+test("right sidebar entry and embedded settings open the human global UI with separate leases", async () => {
+  const slots = [], calls = [], cleanups = [], tabTypes = [], disposedTypes = [];
+  const tabs = { register: (definition) => { tabTypes.push(definition); return () => disposedTypes.push(definition.id); } };
   let binding = {};
   const current = { subscribe: () => () => {}, getSnapshot: () => binding };
   const React = {
@@ -137,9 +140,21 @@ test("left navigation and embedded settings open the human global UI with separa
   };
   const ctx = {
     connection: { rpc: { call: (...args) => new Promise((resolve) => calls.push({ args, resolve })) } },
-    commandUi: { register: () => () => {} }, sidebarRight: { openTab() { assert.fail("main panel must not open the browser sidebar"); } },
+    commandUi: { register: () => () => {} }, sidebarRight: { openTab() { assert.fail("right pane must not open the browser sidebar"); } },
     uiSession: { current },
-    slots: { inject: (_, fn) => fn(), register: (entry, Component) => { slots.push({ entry, Component }); return () => {}; } },
+    get: (name) => (name === "sidebarRightTabs" ? tabs : undefined),
+    slots: {
+      inject: (_, fn) => {
+        const result = fn();
+        if (result && typeof result.next === "function") {
+          const yielded = [];
+          for (let step = result.next(); !step.done; step = result.next()) yielded.push(step.value);
+          return () => yielded.forEach((dispose) => dispose?.());
+        }
+        return result;
+      },
+      register: (entry, Component) => { slots.push({ entry, Component }); return () => {}; },
+    },
     effect: (fn) => { const cleanup = fn(); if (cleanup) cleanups.push(cleanup); },
   };
   const exports = {};
@@ -148,22 +163,26 @@ test("left navigation and embedded settings open the human global UI with separa
     window: { location: { origin: "null", protocol: "dsh-app:", host: "app" } }, crypto: webcrypto, URL, AbortController,
   });
   exports.apply(ctx);
-  const navigation = slots.find(({ entry }) => entry.name === "sidebar.panellist");
-  const main = slots.find(({ entry }) => entry.name === "main");
+  assert.equal(slots.some(({ entry }) => entry.name === "sidebar.panellist" || entry.name === "main"), false, "the left navigation entry is removed");
+  const pane = slots.find(({ entry }) => entry.name === "sidebar.right.pane.tab");
   const conversation = slots.find(({ entry }) => entry.name === "conversation.view");
   const settings = slots.find(({ entry }) => entry.name === "settings.section");
-  assert.equal(navigation.entry.id, "harness-supervisor");
-  assert.equal(main.entry.key, navigation.entry.id, "the native navigation id must address the main keyed entry");
-  assert.equal(navigation.entry.label(), "Harness Supervisor");
+  assert.equal(tabTypes.length, 1);
+  assert.equal(tabTypes[0].id, "harness-supervisor");
+  assert.equal(tabTypes[0].kind, "harness-supervisor");
+  assert.equal(tabTypes[0].priority, "extension");
+  assert.equal(tabTypes[0].title(), "Harness Supervisor");
+  assert.equal(pane.entry.key, tabTypes[0].id, "the pane slot key must address the tab type id");
+  assert.equal(tabTypes[0].guide[0].title(), "Harness Supervisor");
   for (const size of [16, 18]) {
-    const icon = navigation.Component({ size });
+    const icon = tabTypes[0].guide[0].icon({ size });
     assert.equal(icon.type, "svg");
     assert.equal(icon.props.width, size);
     assert.equal(icon.props.height, size);
     assert.equal(icon.props["aria-hidden"], true);
     assert.equal(descendants(icon).some(({ type }) => type === "button"), false, "DSH owns the entry button and selection");
   }
-  const empty = main.Component({});
+  const empty = pane.Component({});
   const globalPanel = mountComponent(empty.type, empty.props, React);
   assert.equal(calls[0].args[1], "harness-supervisor/open-ui");
   assert.equal(Object.hasOwn(calls[0].args[2], "sessionId"), false, "without a conversation the human entry remains usable");
@@ -171,13 +190,13 @@ test("left navigation and embedded settings open the human global UI with separa
   globalPanel.unmount();
 
   binding = { key: "session-from-current-binding" };
-  const selected = main.Component({});
+  const selected = pane.Component({});
   assert.equal(selected.props.sessionId, binding.key);
   assert.equal(selected.props.key, binding.key);
   const panel = mountComponent(selected.type, selected.props, React);
   const panelTree = panel.render();
   assert.equal(panelTree.props["data-conversation-composer-overlay"], undefined);
-  assert.equal(panelTree.props.style.paddingBottom, undefined, "a global main panel has no conversation composer to reserve");
+  assert.equal(panelTree.props.style.paddingBottom, undefined, "a global right pane has no conversation composer to reserve");
   assert.equal(calls[1].args[2].sessionId, binding.key);
   assert.match(calls[1].args[2].viewKey, /:sidebar$/);
   assert.equal(calls[1].args[2].viewKey, calls[0].args[2].viewKey);
@@ -191,7 +210,7 @@ test("left navigation and embedded settings open the human global UI with separa
   const tabPanel = mountComponent(tab.type, tab.props, React);
   assert.match(calls[2].args[2].viewKey, /:conversation$/);
   assert.equal(calls[2].args[2].viewGeneration, 1, "another surface begins its own generation sequence");
-  assert.notEqual(calls[2].args[2].viewKey, calls[1].args[2].viewKey, "left main and conversation panels must not revoke each other's credentials");
+  assert.notEqual(calls[2].args[2].viewKey, calls[1].args[2].viewKey, "right pane and conversation panels must not revoke each other's credentials");
   assert.equal(tabPanel.render().props["data-conversation-composer-overlay"], "");
   assert.match(tabPanel.render().props.style.paddingBottom, /--dsh-composer-height/);
   tabPanel.unmount();
@@ -226,4 +245,5 @@ test("left navigation and embedded settings open the human global UI with separa
   unboundPanel.unmount();
   settingsPanel.unmount();
   cleanups.forEach((cleanup) => cleanup());
+  assert.deepEqual(disposedTypes, ["harness-supervisor"], "plugin unload disposes the right tab type");
 });

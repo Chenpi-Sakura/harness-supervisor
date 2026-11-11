@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.10.3-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.10.4-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -64,7 +64,7 @@ harness-sup wait <workerId> --timeout-ms 60000
 
 ### 在 DSH 中使用
 
-插件启用后，可直接让 DSH 委派原生 Worker。左侧导航、对话顶部标签和设置中的 **Harness Supervisor** 都能打开共用 WebUI；`/hs` 可在右侧浏览器中打开。
+插件启用后，可直接让 DSH 委派原生 Worker。右侧栏入口、对话顶部标签和设置中的 **Harness Supervisor** 都能打开共用 WebUI；`/hs` 可在右侧浏览器中打开。
 
 人工界面可查看本机当前 HS 实例的全部 Worker，默认展开当前对话；模型的查询、操作和通知 ACK 仍受会话归属约束。
 

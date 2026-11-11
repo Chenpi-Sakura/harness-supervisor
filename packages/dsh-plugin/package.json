@@ -5,7 +5,7 @@
   "homepage": "https://gitcode.com/chenpi_1/harness-supervisor",
   "repository": {
     "type": "git",
-    "url": "git+https://gitcode.com/chenpi_1/harness-supervisor.git",
+    "url": "git+https://github.com/Chenpi-Sakura/harness-supervisor.git",
     "directory": "packages/dsh-plugin"
   },
   "type": "module",

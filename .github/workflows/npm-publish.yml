@@ -1,0 +1,81 @@
+name: Publish DSH plugin
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      plugin_tarball: ${{ steps.release.outputs.plugin_tarball }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm install --global npm@12.0.2 --ignore-scripts --registry=https://registry.npmjs.org
+      - name: Validate release versions and tag
+        id: release
+        run: node .github/scripts/npm-release.mjs metadata
+      - run: npm ci --registry=https://registry.npmjs.org
+      - run: node --test .github/scripts/npm-release.test.mjs
+      - run: npm run typecheck
+      - run: npm run test:web
+      - run: npm run test:plugin
+      - run: npm run build
+      - name: Pack fixed core and plugin
+        env:
+          CORE_VERSION: ${{ steps.release.outputs.core_version }}
+        run: |
+          npm run pack:core
+          npm --prefix packages/dsh-plugin run pack:release -- --core-tarball "$GITHUB_WORKSPACE/.artifacts/harness-supervisor-$CORE_VERSION.tgz"
+          node .github/scripts/npm-release.mjs stage
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-release
+          path: release/npm/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm install --global npm@12.0.2 --ignore-scripts --registry=https://registry.npmjs.org
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-release
+          path: release/npm/
+      - name: Verify the built artifacts and published version
+        id: registry
+        run: node .github/scripts/npm-release.mjs published
+      - name: Publish the prebuilt plugin using OIDC
+        if: steps.registry.outputs.published != 'true'
+        env:
+          PLUGIN_TARBALL: ${{ needs.build.outputs.plugin_tarball }}
+        run: npm publish "./release/npm/$PLUGIN_TARBALL" --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org

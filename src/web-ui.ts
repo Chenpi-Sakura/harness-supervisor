@@ -28,6 +28,7 @@ const AnswerSchema = z.object({
 interface Credential {
   viewId: string;
   ownerRef?: string;
+  preferredOwnerRef?: string;
   frameOrigin?: string;
   expires: number;
 }
@@ -35,14 +36,21 @@ interface Credential {
 export interface WebUiLaunchOptions {
   /** Omitted only for the global human-operator entry point. */
   ownerRef?: string;
-  /** Exact trusted DSH Web origin. No wildcard, path or opaque origin. */
+  /** Presentation preference only; it never grants or restricts Worker access. */
+  preferredOwnerRef?: string;
+  /** Exact trusted embedding origin, including DSH Desktop's application scheme. */
   frameOrigin?: string;
+  /** Stable per-host-panel key. Reopening revokes only this panel's old view. */
+  viewKey?: string;
+  /** Monotonic within a host panel; stale requests cannot revoke a newer view. */
+  viewGeneration?: number;
 }
 
 export interface WebUiLaunch {
   url: string;
   origin: string;
   ownerRef?: string;
+  preferredOwnerRef?: string;
   expiresAt: string;
 }
 
@@ -63,6 +71,9 @@ function digest(value: string): string {
 
 function frameOrigin(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
+  // DSH Desktop's registered application origin is opaque to URL.origin. Only
+  // this exact host is accepted; it grants framing, never cross-origin API use.
+  if (value === "dsh-app://app") return value;
   let url: URL;
   try {
     url = new URL(value);
@@ -120,6 +131,8 @@ export class WebUiServer {
   private readonly launches = new Map<string, Credential>();
   private readonly sessions = new Map<string, Credential>();
   private readonly views = new Map<string, Credential>();
+  private readonly panelViews = new Map<string, string>();
+  private readonly panelGenerations = new Map<string, number>();
 
   constructor(options: WebUiOptions) {
     this.options = options;
@@ -132,8 +145,30 @@ export class WebUiServer {
   launch(options: WebUiLaunchOptions = {}): Promise<WebUiLaunch> {
     return this.exclusive(async () => {
       const ownerRef = options.ownerRef === undefined ? undefined : parse(OwnerRefSchema, options.ownerRef);
+      const preferredOwnerRef = options.preferredOwnerRef === undefined ? ownerRef : parse(OwnerRefSchema, options.preferredOwnerRef);
+      if (ownerRef !== undefined && preferredOwnerRef !== ownerRef) {
+        throw new SupervisorError("BAD_REQUEST", "A scoped WebUI preference must match its authorized owner");
+      }
       const embeddingOrigin = frameOrigin(options.frameOrigin);
+      const viewKey = options.viewKey === undefined ? undefined : parse(IdSchema, options.viewKey);
+      const generation = options.viewGeneration === undefined ? undefined : parse(z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), options.viewGeneration);
+      if (generation !== undefined && viewKey === undefined) throw new SupervisorError("BAD_REQUEST", "viewGeneration requires a viewKey");
+      const panelKey = viewKey === undefined ? undefined : JSON.stringify([ownerRef ?? null, viewKey]);
       this.prune();
+      const latestGeneration = panelKey === undefined ? undefined : this.panelGenerations.get(panelKey);
+      if (latestGeneration !== undefined && (generation === undefined || generation <= latestGeneration)) {
+        throw new SupervisorError("CONFLICT", "A newer WebUI panel request has already been accepted");
+      }
+      const previousView = panelKey === undefined ? undefined : this.panelViews.get(panelKey);
+      if (previousView) {
+        // A conversation tab is mounted again when selected. Replace its own
+        // credentials instead of consuming another eight-hour session slot.
+        for (const map of [this.launches, this.sessions]) {
+          for (const [key, credential] of map) if (credential.viewId === previousView) map.delete(key);
+        }
+        this.views.delete(previousView);
+        this.panelViews.delete(panelKey!);
+      }
       if (this.launches.size + this.sessions.size >= MAX_CREDENTIALS) {
         throw new SupervisorError("LIMIT_EXCEEDED", "Too many open WebUI sessions; close or reopen later");
       }
@@ -143,15 +178,19 @@ export class WebUiServer {
       const credential: Credential = {
         viewId,
         ownerRef,
+        preferredOwnerRef,
         frameOrigin: embeddingOrigin,
         expires: Date.now() + LAUNCH_TTL_MS,
       };
       this.launches.set(digest(launchToken), credential);
       this.views.set(viewId, credential);
+      if (panelKey !== undefined) this.panelViews.set(panelKey, viewId);
+      if (panelKey !== undefined && generation !== undefined) this.panelGenerations.set(panelKey, generation);
       return {
         url: `${this.origin}/view/${viewId}/#launch=${launchToken}`,
         origin: this.origin!,
         ...(ownerRef ? { ownerRef } : {}),
+        ...(preferredOwnerRef ? { preferredOwnerRef } : {}),
         expiresAt: new Date(credential.expires).toISOString(),
       };
     });
@@ -165,6 +204,8 @@ export class WebUiServer {
       this.launches.clear();
       this.sessions.clear();
       this.views.clear();
+      this.panelViews.clear();
+      this.panelGenerations.clear();
       if (!server) return;
       await new Promise<void>((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());
@@ -184,6 +225,8 @@ export class WebUiServer {
     for (const map of [this.launches, this.sessions, this.views]) {
       for (const [key, credential] of map) if (credential.expires <= now) map.delete(key);
     }
+    for (const [key, viewId] of this.panelViews) if (!this.views.has(viewId)) this.panelViews.delete(key);
+    for (const key of this.panelGenerations.keys()) if (!this.panelViews.has(key)) this.panelGenerations.delete(key);
   }
 
   private async start(): Promise<void> {
@@ -268,7 +311,7 @@ export class WebUiServer {
       const credential = { ...launch, expires: Date.now() + SESSION_TTL_MS };
       this.sessions.set(digest(token), credential);
       this.views.set(credential.viewId, credential);
-      this.json(res, { token, ownerRef: credential.ownerRef ?? null, expiresAt: new Date(credential.expires).toISOString() });
+      this.json(res, { token, ownerRef: credential.ownerRef ?? null, preferredOwnerRef: credential.preferredOwnerRef ?? null, expiresAt: new Date(credential.expires).toISOString() });
       return;
     }
     if (url.pathname.startsWith("/api/")) {
@@ -323,7 +366,7 @@ export class WebUiServer {
   private async api(req: IncomingMessage, res: ServerResponse, url: URL, credential: Credential): Promise<void> {
     const supervisor = this.options.supervisor;
     if (url.pathname === "/api/session" && req.method === "GET") {
-      this.json(res, { version: VERSION, ownerRef: credential.ownerRef ?? null, expiresAt: new Date(credential.expires).toISOString() });
+      this.json(res, { version: VERSION, ownerRef: credential.ownerRef ?? null, preferredOwnerRef: credential.preferredOwnerRef ?? null, expiresAt: new Date(credential.expires).toISOString() });
       return;
     }
     if (url.pathname === "/api/workers" && req.method === "GET") {
@@ -336,10 +379,16 @@ export class WebUiServer {
         id: parse(IdSchema, afterId), createdAt: parse(z.string().min(1).max(100), afterCreatedAt),
       } : undefined;
       const workers = supervisor.list({ limit, ownerRef: credential.ownerRef, after });
+      const summarize = (records: WorkerSummary[]) => records.map(({ id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence }) => ({
+        id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence,
+      }));
+      // Keep the global createdAt cursor intact while making the current
+      // conversation visible even when its workers are older than page one.
+      const preferred = credential.ownerRef === undefined && credential.preferredOwnerRef !== undefined && after === undefined
+        ? supervisor.list({ limit, ownerRef: credential.preferredOwnerRef }) : undefined;
       this.json(res, {
-        workers: workers.map(({ id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence }) => ({
-          id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence,
-        })),
+        workers: summarize(workers),
+        ...(preferred === undefined ? {} : { preferredWorkers: summarize(preferred) }),
         hasMore: workers.length === limit,
         scope: credential.ownerRef ?? null,
       });

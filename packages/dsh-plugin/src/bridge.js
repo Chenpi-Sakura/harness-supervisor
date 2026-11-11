@@ -96,9 +96,9 @@ export function createFetchRoutes(handler) {
 
 export function localApplicationOrigin(value) {
   if (typeof value !== "string") throw new Error("A DSH application origin is required");
-  // Desktop's registered application scheme hosts a top-level webview, not an
-  // iframe. Its opaque URL.origin must not become an HTTP frame ancestor.
-  if (value === "dsh-app://app") return undefined;
+  // Desktop has an opaque URL.origin. Preserve only its exact registered
+  // application origin so the shared UI can be framed in a conversation view.
+  if (value === "dsh-app://app") return value;
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
     || url.username || url.password || url.origin !== value) {
@@ -117,12 +117,26 @@ export function createRpcHandler({ agents, namespace, request, status, applyCore
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Invalid HS request");
       let value;
       if (method === "open-ui") {
-        if (Object.keys(payload).some((key) => !["sessionId", "applicationOrigin"].includes(key))) throw new Error("Unexpected open-ui field");
-        const agent = typeof payload.sessionId === "string" ? agents.get(payload.sessionId) : undefined;
-        if (!agent || agent.session?.id !== agent.id) throw new Error("Open a live DSH session before opening its HS view");
-        const ownerRef = ownerRefFor(namespace, agent.id);
+        if (Object.keys(payload).some((key) => !["sessionId", "applicationOrigin", "viewKey", "viewGeneration"].includes(key))) throw new Error("Unexpected open-ui field");
+        if (payload.viewKey !== undefined && (typeof payload.viewKey !== "string" || !payload.viewKey || payload.viewKey.length > 200)) throw new Error("Invalid panel view key");
+        if (payload.viewGeneration !== undefined && (!Number.isSafeInteger(payload.viewGeneration) || payload.viewGeneration < 1 || payload.viewKey === undefined)) throw new Error("Invalid panel generation");
+        let preferredOwnerRef;
+        if (payload.sessionId !== undefined) {
+          const agent = typeof payload.sessionId === "string" ? agents.get(payload.sessionId) : undefined;
+          if (!agent || agent.session?.id !== agent.id) throw new Error("Open a live DSH session before choosing its default Worker group");
+          preferredOwnerRef = ownerRefFor(namespace, agent.id);
+        }
         const frameOrigin = localApplicationOrigin(payload.applicationOrigin);
-        value = await request("ui_start", { ownerRef, ...(frameOrigin === undefined ? {} : { frameOrigin }) });
+        try {
+          // This route is authenticated owner UI, not a model tool. Its access
+          // is global; the live session is only a default expansion preference.
+          value = await request("ui_start", { ...(preferredOwnerRef === undefined ? {} : { preferredOwnerRef }), frameOrigin, ...(payload.viewKey === undefined ? {} : { viewKey: payload.viewKey }), ...(payload.viewGeneration === undefined ? {} : { viewGeneration: payload.viewGeneration }) });
+        } catch (error) {
+          if (["BAD_REQUEST", "UNSUPPORTED"].includes(error?.code)) {
+            throw new Error("当前运行的 HS 核心尚不支持顶部面板。请在设置 → Harness Supervisor → 应用配套 HS 核心后，重新打开标签页。");
+          }
+          throw error;
+        }
       } else if (method === "status") {
         if (Object.keys(payload).length) throw new Error("Unexpected status field");
         value = await status();

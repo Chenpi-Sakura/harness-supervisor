@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.10.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.10.1-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -142,30 +142,53 @@ node dist/src/cli.js down                    # 优雅关闭（会取消活动 Wo
 
 默认状态目录为 `~/.harness-supervisor`，可用 `--state-dir <dir>` 或 `HARNESS_SUPERVISOR_HOME` 隔离实例。完整命令见 `node dist/src/cli.js help`，示例见 [`examples/cli-walkthrough.sh`](examples/cli-walkthrough.sh)。
 
-### DSH Master 与可选 WebUI
+### DSH 插件
 
-DSH 插件和核心在同一仓库维护，插件源码位于 [`packages/dsh-plugin`](packages/dsh-plugin/README.md)，安装包独立发布。插件为每个真实 DSH Agent 绑定独立的 `ownerRef` 和 MCP 连接；模型只能操作本会话 Worker 与收件箱 ACK，不继承共享 daemon 的 Codex 通知目标。其他 Master 可使用同一进程配置：
+让 DSH 委派和管理 Pi、Qoder、MiniMax Code 等原生 Worker，并在会话中查看任务、结果和审批。插件已包含 HS 核心与 WebUI，无需额外安装或编译。
+
+[项目仓库](https://gitcode.com/chenpi_1/harness-supervisor) · [插件安装与配置](packages/dsh-plugin/README.md)
+
+### 在浏览器中使用 WebUI
+
+WebUI 是可选功能，默认不开端口。已安装独立 HS 时，运行：
 
 ```bash
-node dist/src/mcp.js --owner-ref <stable-session-reference> --notify-none
+harness-sup ui          # 启用并在系统浏览器中打开
+harness-sup ui --stop   # 关闭 WebUI，Worker 继续运行
 ```
 
-旧 Worker 无归属字段，仍可通过全局 CLI 查询，不自动被任何会话认领。归属是协作路由护栏，不是同一操作系统用户之间的安全沙箱。
+源码运行方式为 `node dist/src/cli.js ui`。浏览器和 DSH 使用同一套界面：可按工作目录分组查看 Worker，读取结果、事件和用量，回答请求或取消任务；创建与续接任务仍交给 Master。
+
+界面仅供本机使用，监听 `127.0.0.1`。CLI 和 DSH 的人工界面均可查看当前 HS 实例的全部 Worker；DSH 默认展开当前对话分组，模型工具仍保持会话隔离。daemon 或 WebUI 重启后，需从对应入口重新打开。
+
+### 更新 HS
+
+**更新不需要拉取源码。** 可以选择下面任一方式：
+
+| 使用方式 | 更新步骤 |
+| --- | --- |
+| DSH 插件 | 安装新版插件 `.tgz`，再到设置中点击 **Harness Supervisor → 应用配套 HS 核心**。 |
+| 独立 HS | 安装预构建核心 `.tgz`，再将运行中的核心切换到该版本；受控切换命令见下面的高级说明。 |
+
+更新插件只准备新核心，**不会立即替换运行实例**。点击应用后，HS 暂停接收新任务，等待已有任务与队列结束再切换；等待期间仍可回答请求、取消任务，也可取消此次更新。切换完成后，使用同一状态目录、支持托管更新的 CLI、MCP 和插件共用新核心，源码目录与全局安装文件不会被覆盖。
+
+目前按 `.tgz` 安装包分发，尚未提供在线检查新版功能。从旧 `0.9.2` 首次迁入时，需要先安排维护窗口、处理活动 Worker 并停止旧 daemon；之后兼容版本可使用上述受控更新。
+
+<details>
+<summary>独立 HS 的核心切换命令</summary>
+
+独立核心包可用 `npm install -g <核心包.tgz>` 安装。**安装客户端不等于切换正在运行的核心**；对支持受控更新的 daemon，使用新核心的安装目录准备候选版本，再应用返回的 runtime ID：
 
 ```bash
-harness-sup ui                         # 打开全局人工管理界面
-harness-sup ui --owner-ref <reference> # 固定一个会话的界面
-harness-sup ui --no-open --json        # 获取一次性浏览器入口
-harness-sup ui --stop                  # 关闭 HTTP 与浏览器授权，Worker 继续运行
+harness-sup runtime prepare --source <新核心的安装目录>
+harness-sup runtime apply --runtime-id <返回的id> --intent-id <本次更新的唯一标识>
+harness-sup runtime status
+harness-sup runtime cancel --intent-id <同一标识>  # 仅等待任务结束期间可取消
 ```
 
-WebUI 默认不开端口，启用时只监听 `127.0.0.1`；同一前端用于系统浏览器、DSH Desktop Browser 页签和本机 DSH Web iframe。支持按工作目录分组、折叠与平铺切换，以及状态、结果、增量事件、Worker 用量、完整输入审批与取消；任务创建与续接仍由 Master 完成。每个 Worker 会话有稳定色块与对应 Harness 的本地图标，资源及许可见 `web/src/assets/harness/`。入口在 60 秒内兑换一次，浏览器 API 使用独立 Bearer 凭证，不接触 IPC Token。页面刷新保留当前页授权，daemon/UI 重启后需重新从可信入口打开。页面不唤醒模型，也不自动 ACK。
+这些命令应使用与现有实例相同的 `--state-dir`。首次升级旧 `0.9.2` 须走前述维护窗口，不能使用这些命令热切换。无法确认进程退出时，自动更新会停止；不要删除锁或并行启动旧核心强行恢复。状态目录中的 `runtime-update.json`、`runtime-update.log` 和 `runtime-backups/` 保留恢复线索。
 
-插件升级提供固定的配套核心候选；在 DSH 设置中点击“应用配套 HS 核心”后，daemon 暂停新任务准入，既有任务、审批和队列继续执行。排空阶段可取消更新；真正切换时会短暂拒绝写操作，并使旧 UI 授权失效。候选核心、生产依赖和静态页面复制到经过哈希校验的不可变缓存，插件关闭或卸载不停止共享 Worker。
-
-CLI 同样支持 `runtime prepare --source <package-root>`、`runtime apply --runtime-id <id> --intent-id <key>`、`runtime status` 与 `runtime cancel --intent-id <key>`。无法确认进程退出时停止自动切换；不要通过删除锁或并行拉起旧核心强行恢复。`runtime-update.json` 和 `runtime-update.log` 保留恢复线索，`runtime-backups/` 保留交接前备份。首版只支持兼容状态格式；从 `0.9.2` 首次升级须先安排维护窗口，处理活动 Worker 后手动停止旧 daemon，再启动新版本。开发与发布不会自动升级生产实例。
-
-构建安装包：`npm run build`、`npm run pack:core`，再在插件目录运行 `npm run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.0.tgz`。发布包携带锁定的生产依赖，安装不需要源码构建或全局 HS。
+</details>
 
 ### 全新 clone / 另一台机器
 
@@ -178,7 +201,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（核心 + 共用 WebUI）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up
-node dist/src/cli.js info        # 核对 version=0.10.0 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.10.1 与 stateDir
 ```
 
 若 `npm ci` 因网络镜像失败，改用 `npm install`，再用 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -209,6 +232,14 @@ node <clone>/dist/src/cli.js up
 MCP 协议本身不规定客户端配置字段。常见的 `mcpServers` 写法通常只有 `command`、`args`、`env`，工具超时与审批由各客户端自行定义：Codex 使用 `tool_timeout_sec` / `default_tools_approval_mode`，Claude Code 使用每服务器 `timeout` / `MCP_TOOL_TIMEOUT`，Qoder 使用 `timeout` / `trust`，Cursor 主要通过 UI 与 Run Modes 控制审批。请以所用客户端文档为准，JSON 形式可参考 [`examples/mcp.json`](examples/mcp.json)。
 
 这些宿主侧设置只影响宿主如何审批、超时调用 **HS 的 MCP 工具**（`worker_spawn`、`worker_wait` 等），不会改变 Worker 内部的权限；Pi、Qoder、MiniMax Code、DSH 的权限由各自的运行时配置或 HS 环境变量决定。无论使用哪个客户端，工具调用超时都应大于 `worker_wait` 的等待时间。若 daemon 使用 `--state-dir`，MCP 的 args 也要指向同一目录。
+
+需要将多个 Master 会话分开时，为各 MCP 进程固定不同的会话标识：
+
+```bash
+node dist/src/mcp.js --owner-ref <stable-session-reference> --notify-none
+```
+
+该连接只能操作本会话的 Worker 和通知 ACK，不继承共享 daemon 的 Codex 通知目标。旧 Worker 不自动归入新会话，仍可通过全局 CLI 查询。归属检查是路由护栏，不是操作系统安全沙箱。DSH 插件会自动配置这些参数。
 
 ### 推荐权限
 

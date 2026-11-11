@@ -58,7 +58,7 @@ async function exchange(launch: WebUiLaunch) {
     headers: { Origin: url.origin, "Content-Type": "application/json" },
     body: JSON.stringify({ launchToken: new URLSearchParams(url.hash.slice(1)).get("launch"), viewId: url.pathname.split("/")[2] }),
   });
-  return { response, data: await response.json() as { token: string; ownerRef: string | null } };
+  return { response, data: await response.json() as { token: string; ownerRef: string | null; preferredOwnerRef: string | null } };
 }
 
 test("WebUI starts only on launch, binds loopback and invalidates one-use links and sessions on stop", async (t) => {
@@ -121,6 +121,62 @@ test("WebUI enforces owner scope on list, status, events, usage, answer and canc
   assert.equal(globalList.workers.length, 3);
 });
 
+test("global human views prefer the current conversation without hiding other or legacy Workers", async (t) => {
+  const { ui, counts } = setup();
+  t.after(() => ui.stop());
+  const launch = await ui.launch({ preferredOwnerRef: "dsh:session-b" });
+  const auth = (await exchange(launch)).data;
+  assert.equal(auth.ownerRef, null);
+  assert.equal(auth.preferredOwnerRef, "dsh:session-b");
+  const headers = { Authorization: `Bearer ${auth.token}` };
+  const identity = await fetch(`${launch.origin}/api/session`, { headers }).then(r => r.json()) as { ownerRef: string | null; preferredOwnerRef: string | null };
+  assert.equal(identity.ownerRef, null);
+  assert.equal(identity.preferredOwnerRef, "dsh:session-b");
+  const first = await fetch(`${launch.origin}/api/workers?limit=1`, { headers }).then(r => r.json()) as { workers: WorkerSummary[]; preferredWorkers: WorkerSummary[]; hasMore: boolean };
+  assert.deepEqual(first.workers.map((worker: WorkerSummary) => worker.id), ["worker-a"]);
+  assert.deepEqual(first.preferredWorkers.map((worker: WorkerSummary) => worker.id), ["worker-b"], "current-session Workers are returned even beyond global page one");
+  assert.equal(first.hasMore, true);
+  const all = await fetch(`${launch.origin}/api/workers`, { headers }).then(r => r.json()) as { workers: WorkerSummary[] };
+  assert.deepEqual(all.workers.map((worker: WorkerSummary) => worker.id), ["worker-a", "worker-b", "worker-legacy"]);
+  for (const id of ["worker-a", "worker-b", "worker-legacy"]) {
+    assert.equal((await fetch(`${launch.origin}/api/workers/${id}/status`, { headers })).status, 200);
+  }
+  const postHeaders = { ...headers, Origin: launch.origin, "Content-Type": "application/json" };
+  assert.equal((await fetch(`${launch.origin}/api/workers/worker-a/answer`, { method: "POST", headers: postHeaders, body: JSON.stringify({ requestId: "input-current", response: { confirmed: true } }) })).status, 200);
+  assert.equal((await fetch(`${launch.origin}/api/workers/worker-b/cancel`, { method: "POST", headers: postHeaders, body: "{}" })).status, 200);
+  assert.deepEqual(counts(), { answers: 1, cancels: 1 });
+  await assert.rejects(() => ui.launch({ ownerRef: "dsh:session-a", preferredOwnerRef: "dsh:session-b" }), /authorized owner/);
+  const scoped = await ui.launch({ ownerRef: "dsh:session-a" });
+  const scopedAuth = (await exchange(scoped)).data;
+  assert.equal(scopedAuth.preferredOwnerRef, "dsh:session-a");
+  assert.equal((await fetch(`${scoped.origin}/api/workers/worker-b/status`, { headers: { Authorization: `Bearer ${scopedAuth.token}` } })).status, 404);
+});
+
+test("late panel generations cannot revoke a newer global view or change its preference", async (t) => {
+  const { ui } = setup();
+  t.after(() => ui.stop());
+  const latest = await ui.launch({ preferredOwnerRef: "dsh:session-b", viewKey: "same-panel", viewGeneration: 2 });
+  const token = (await exchange(latest)).data.token;
+  const headers = { Authorization: `Bearer ${token}` };
+  const read = () => fetch(`${latest.origin}/api/session`, { headers });
+  for (const viewGeneration of [1, 2, undefined]) {
+    await assert.rejects(() => ui.launch({ preferredOwnerRef: "dsh:session-a", viewKey: "same-panel", viewGeneration }), (error: unknown) => error instanceof SupervisorError && error.code === "CONFLICT");
+    assert.equal((await read()).status, 200);
+  }
+  const identity = await (await read()).json() as { preferredOwnerRef: string | null };
+  assert.equal(identity.preferredOwnerRef, "dsh:session-b");
+  for (const viewGeneration of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(() => ui.launch({ viewKey: "same-panel", viewGeneration }));
+    assert.equal((await read()).status, 200);
+  }
+  await assert.rejects(() => ui.launch({ viewGeneration: 3 }));
+  const next = await ui.launch({ preferredOwnerRef: "dsh:session-a", viewKey: "same-panel", viewGeneration: 3 });
+  assert.equal((await read()).status, 401);
+  const nextAuth = (await exchange(next)).data;
+  assert.equal(nextAuth.preferredOwnerRef, "dsh:session-a");
+  assert.equal(nextAuth.ownerRef, null);
+});
+
 test("WebUI rejects cross-origin, unauthenticated, generic proxy, malformed and DNS rebinding requests", async (t) => {
   const { ui, counts } = setup();
   t.after(() => ui.stop());
@@ -153,7 +209,7 @@ test("WebUI rejects cross-origin, unauthenticated, generic proxy, malformed and 
 test("WebUI pins distinct launch scopes and exact iframe origins without wildcard CORS", async (t) => {
   const { ui } = setup();
   t.after(() => ui.stop());
-  for (const frameOrigin of ["*", "null", "https://example.com/", "https://example.com/path", "file://", "https://example.com;script-src *"]) {
+  for (const frameOrigin of ["*", "null", "https://example.com/", "https://example.com/path", "file://", "https://example.com;script-src *", "dsh-app://evil", "dsh-app://app/", "dsh-app://app.evil", "dsh-app://app;script-src *"]) {
     await assert.rejects(() => ui.launch({ frameOrigin }));
   }
   assert.equal(ui.status().running, false, "invalid launch must not open an HTTP listener");
@@ -172,6 +228,48 @@ test("WebUI pins distinct launch scopes and exact iframe origins without wildcar
   assert.equal(authB.ownerRef, "dsh:session-b");
   const aSession = await fetch(`${a.origin}/api/session`, { headers: { Authorization: `Bearer ${authA.token}` } }).then(r => r.json()) as { ownerRef: string };
   assert.equal(aSession.ownerRef, "dsh:session-a", "opening another scope must not retarget old credentials");
+});
+
+test("WebUI permits only the exact DSH Desktop frame ancestor without relaxing API origins", async (t) => {
+  const { ui, counts } = setup();
+  t.after(() => ui.stop());
+  const launch = await ui.launch({ ownerRef: "dsh:session-a", frameOrigin: "dsh-app://app" });
+  const page = await fetch(launch.url);
+  assert.match(page.headers.get("content-security-policy")!, /frame-ancestors 'self' dsh-app:\/\/app(?:;|$)/);
+  assert.equal(page.headers.get("access-control-allow-origin"), null);
+  const auth = (await exchange(launch)).data;
+  for (const Origin of ["dsh-app://app", "null"]) {
+    const response = await fetch(`${launch.origin}/api/workers/worker-a/cancel`, {
+      method: "POST", headers: { Origin, Authorization: `Bearer ${auth.token}`, "Content-Type": "application/json" }, body: "{}",
+    });
+    assert.equal(response.status, 401);
+  }
+  assert.deepEqual(counts(), { answers: 0, cancels: 0 });
+});
+
+test("reopening a host panel replaces its credentials without exhausting capacity or revoking other views", async (t) => {
+  const { ui } = setup();
+  t.after(() => ui.stop());
+  const anotherWindow = await ui.launch({ ownerRef: "dsh:session-a", viewKey: "other-window" });
+  const anotherOwner = await ui.launch({ ownerRef: "dsh:session-b", viewKey: "main-panel" });
+  const otherTokens = [(await exchange(anotherWindow)).data.token, (await exchange(anotherOwner)).data.token];
+  let firstToken = "", firstUrl = "", lastToken = "";
+  for (let i = 0; i < 260; i++) {
+    const launch = await ui.launch({ ownerRef: "dsh:session-a", viewKey: "main-panel" });
+    const token = (await exchange(launch)).data.token;
+    if (i === 0) { firstToken = token; firstUrl = launch.url; }
+    lastToken = token;
+  }
+  const session = (token: string) => fetch(`${anotherWindow.origin}/api/session`, { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal((await session(firstToken)).status, 401);
+  assert.equal((await fetch(firstUrl)).status, 404);
+  assert.equal((await session(lastToken)).status, 200);
+  for (const token of otherTokens) assert.equal((await session(token)).status, 200);
+  const unused = await ui.launch({ ownerRef: "dsh:session-a", viewKey: "main-panel" });
+  const replacement = await ui.launch({ ownerRef: "dsh:session-a", viewKey: "main-panel" });
+  assert.equal((await exchange(unused)).response.status, 401);
+  assert.equal((await exchange(replacement)).response.status, 200);
+  await assert.rejects(() => ui.launch({ viewKey: "x".repeat(201) }));
 });
 
 test("WebUI expires unused launch links and session credentials and serializes launch/stop races", async (t) => {

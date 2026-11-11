@@ -189,7 +189,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     },
     handlers: {
       ui_start: (params) => {
-        const input = params as { ownerRef?: string; frameOrigin?: string };
+        const input = params as { ownerRef?: string; preferredOwnerRef?: string; frameOrigin?: string; viewKey?: string; viewGeneration?: number };
         return webUi.launch(input);
       },
       ui_stop: async () => { await webUi.stop(); return { stopped: true }; },

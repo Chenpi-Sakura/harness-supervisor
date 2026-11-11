@@ -37,9 +37,10 @@ test("fixed IPC owner scope isolates operations, retries, inbox and ACK batches"
     await assert.rejects(a.request("resume", { workerId, prompt: "cross session" }), { code: "UNAUTHORIZED" });
     await assert.rejects(a.request("send", { workerId, message: "cross session" }), { code: "UNAUTHORIZED" });
   }
-  for (const method of ["shutdown", "notification_target_get", "ui_stop", "runtime_update_status", "prune"] as const) {
+  for (const method of ["shutdown", "notification_target_get", "ui_start", "ui_stop", "runtime_update_status", "prune"] as const) {
     await assert.rejects(a.request(method, {}), { code: "UNAUTHORIZED" });
   }
+  await assert.rejects(a.request("ui_start", { preferredOwnerRef: "dsh:b", viewKey: "model-must-not-open-global", viewGeneration: 1 }), { code: "UNAUTHORIZED" });
   const inboxA = await a.request<NotificationsResult>("notifications", { state: "all" });
   const inboxB = await b.request<NotificationsResult>("notifications", { state: "all" });
   assert.equal(inboxA.notifications.length, 1);

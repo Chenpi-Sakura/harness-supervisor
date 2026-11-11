@@ -56,7 +56,7 @@ test("correlation scopes separate DSH homes without disclosing local paths", () 
   assert.throws(() => ownerRefFor("p", ""));
 });
 
-test("Host RPC requires owner peer, resolves the live Agent and derives fixed scope", async () => {
+test("Host RPC gives only the human owner a global view and derives its preferred group from a live Agent", async () => {
   const current = agent("session-a"), calls = [];
   const handler = createRpcHandler({ agents: { get: (id) => id === current.id ? current : undefined }, namespace: "p",
     request: async (method, params) => { calls.push({ method, params }); return { url: "local" }; }, status: async () => ({}), applyCore: async () => ({}), cancelUpdate: async () => ({}) });
@@ -69,12 +69,25 @@ test("Host RPC requires owner peer, resolves the live Agent and derives fixed sc
   assert.equal((await handler("open-ui", { ...payload, applicationOrigin: "https://evil.example" }, signal, owner)).ok, false);
   assert.equal(calls.length, 0);
   assert.equal((await handler("open-ui", payload, signal, owner)).ok, true);
-  assert.deepEqual(calls, [{ method: "ui_start", params: { ownerRef: ownerRefFor("p", current.id), frameOrigin: payload.applicationOrigin } }]);
+  assert.deepEqual(calls, [{ method: "ui_start", params: { preferredOwnerRef: ownerRefFor("p", current.id), frameOrigin: payload.applicationOrigin } }]);
   assert.equal((await handler("open-ui", { ...payload, applicationOrigin: "dsh-app://app" }, signal, owner)).ok, true);
-  assert.deepEqual(calls[1], { method: "ui_start", params: { ownerRef: ownerRefFor("p", current.id) } });
+  assert.deepEqual(calls[1], { method: "ui_start", params: { preferredOwnerRef: ownerRefFor("p", current.id), frameOrigin: "dsh-app://app" } });
   assert.throws(() => localApplicationOrigin("dsh-app://evil"));
   assert.throws(() => localApplicationOrigin("dsh-app://app/"));
   assert.throws(() => localApplicationOrigin("null"));
+  assert.equal((await handler("open-ui", { ...payload, viewKey: "panel-one" }, signal, owner)).ok, true);
+  assert.deepEqual(calls[2], { method: "ui_start", params: { preferredOwnerRef: ownerRefFor("p", current.id), frameOrigin: payload.applicationOrigin, viewKey: "panel-one" } });
+  assert.equal((await handler("open-ui", { ...payload, viewKey: {} }, signal, owner)).ok, false);
+  assert.equal((await handler("open-ui", { ...payload, preferredOwnerRef: "victim" }, signal, owner)).ok, false);
+  assert.equal((await handler("open-ui", { applicationOrigin: payload.applicationOrigin }, signal, { principal: { kind: "agent" } })).ok, false);
+  assert.equal((await handler("open-ui", { applicationOrigin: payload.applicationOrigin }, signal, owner)).ok, true);
+  assert.deepEqual(calls[3], { method: "ui_start", params: { frameOrigin: payload.applicationOrigin } });
+  assert.equal((await handler("open-ui", { ...payload, viewKey: "panel-one", viewGeneration: 2 }, signal, owner)).ok, true);
+  assert.deepEqual(calls[4], { method: "ui_start", params: { preferredOwnerRef: ownerRefFor("p", current.id), frameOrigin: payload.applicationOrigin, viewKey: "panel-one", viewGeneration: 2 } });
+  for (const viewGeneration of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "2"]) {
+    assert.equal((await handler("open-ui", { ...payload, viewKey: "panel-one", viewGeneration }, signal, owner)).ok, false);
+  }
+  assert.equal((await handler("open-ui", { ...payload, viewGeneration: 1 }, signal, owner)).ok, false);
 });
 
 test("update RPC only exposes fixed paired candidate and explicit drain cancellation", async () => {
@@ -89,6 +102,15 @@ test("update RPC only exposes fixed paired candidate and explicit drain cancella
   assert.deepEqual(cancelled, ["intent-a"]);
   assert.throws(() => localApplicationOrigin("http://127.0.0.1:3080/"));
   assert.throws(() => localApplicationOrigin("http://localhost.attacker:3080"));
+});
+
+test("an older compatible core reports how to enable the new conversation view", async () => {
+  const current = agent("session-a");
+  const handler = createRpcHandler({ agents: { get: () => current }, namespace: "p",
+    request: async () => { throw Object.assign(new Error("Invalid params for method ui_start"), { code: "BAD_REQUEST" }); } });
+  const reply = await handler("open-ui", { sessionId: current.id, applicationOrigin: "dsh-app://app", viewKey: "main-panel" }, new AbortController().signal, { principal: { kind: "owner" } });
+  assert.equal(reply.ok, false);
+  assert.match(reply.error.message, /应用配套 HS 核心/);
 });
 
 test("exact owner-only Fetch routes preserve native RPC correlation and reject mismatched methods", async () => {

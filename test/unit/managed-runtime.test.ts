@@ -15,6 +15,8 @@ import { silentLogger } from "../../src/util/logger.js";
 import { VERSION } from "../../src/version.js";
 import { isPidAlive, sleep } from "../../src/util/async.js";
 
+const CANDIDATE_VERSION = `${VERSION}-test-candidate`;
+
 async function fixture(version = VERSION, script = "process.exit(0)"): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), "hs-runtime-package-"));
   await mkdir(path.join(root, "dist", "src"), { recursive: true });
@@ -90,7 +92,7 @@ test("clients never auto-start an old runtime during handoff or uncertain recove
 });
 
 test("update requests are idempotent, conflicting targets fail, draining is cancellable", async (t) => {
-  const dir = await state(), source = await fixture(), candidate = await fixture("0.10.1");
+  const dir = await state(), source = await fixture(), candidate = await fixture(CANDIDATE_VERSION);
   const store = new Store(dir, silentLogger);
   const supervisor = new Supervisor({ store, stateDir: dir, supervisorId: "update-test", logger: silentLogger, adapters: new Map() });
   await supervisor.init();
@@ -127,7 +129,7 @@ test("a persisted drain resumes with closed admission after daemon restart", asy
 });
 
 test("failure before a helper can start safely reopens the still-running source", async (t) => {
-  const dir = await state(), source = await fixture(), candidate = await fixture("0.10.1");
+  const dir = await state(), source = await fixture(), candidate = await fixture(CANDIDATE_VERSION);
   const supervisor = new Supervisor({ store: new Store(dir, silentLogger), stateDir: dir, supervisorId: "helper-failure", logger: silentLogger, adapters: new Map() });
   await supervisor.init();
   const updater = new RuntimeUpdater({ stateDir: dir, supervisor, packageRoot: source, logger: silentLogger, shutdown: async () => { throw Error("source must stay alive"); }, spawnHelper: () => { throw Error("simulated helper spawn failure"); } });
@@ -155,7 +157,7 @@ test("a confirmed pre-activation candidate exit restores the previous verified c
   const dir = await state();
   const rollbackScript = `import fs from 'node:fs';import path from 'node:path';const d=process.argv[process.argv.indexOf('--state-dir')+1];const f=path.join(d,'runtime-update.json');const v=JSON.parse(fs.readFileSync(f));if(!process.env.HARNESS_SUPERVISOR_ROLLBACK_INTENT_ID)process.exit(3);v.phase='failed';fs.writeFileSync(f,JSON.stringify(v));`;
   const source = await prepareManagedRuntime(dir, await fixture(VERSION, rollbackScript));
-  const target = await prepareManagedRuntime(dir, await fixture("0.10.1", "process.exit(42)"));
+  const target = await prepareManagedRuntime(dir, await fixture(CANDIDATE_VERSION, "process.exit(42)"));
   await writeUpdateIntent(dir, intent(source.id, target.id));
   await runRuntimeHandoff({ stateDir: dir, intentId: "update-test", targetReadyTimeoutMs: 3000 });
   const result = await readUpdateIntent(dir);
@@ -167,7 +169,7 @@ test("a live unconfirmed candidate prevents rollback and remains recoverable", a
   const dir = await state();
   const source = await prepareManagedRuntime(dir, await fixture(VERSION, `import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(path.join(dir, "wrong-rollback"))},'bad');`));
   const liveScript = `import fs from 'node:fs';import path from 'node:path';const d=process.argv[process.argv.indexOf('--state-dir')+1];const f=path.join(d,'runtime-update.json');const v=JSON.parse(fs.readFileSync(f));v.targetPid=process.pid;fs.writeFileSync(f,JSON.stringify(v));setInterval(()=>{},1000);`;
-  const target = await prepareManagedRuntime(dir, await fixture("0.10.1", liveScript));
+  const target = await prepareManagedRuntime(dir, await fixture(CANDIDATE_VERSION, liveScript));
   await writeUpdateIntent(dir, intent(source.id, target.id));
   t.after(async () => {
     const pid = (await readUpdateIntent(dir))?.targetPid;

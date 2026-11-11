@@ -1,6 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { HarnessIcon } from "./harness-icons";
+import { EventTimeline } from "./EventTimeline";
+import { WorkerNavigation } from "./WorkerNavigation";
+import { chooseWorkerSelection, mergeWorkerLists, mergeWorkerPages, workerPageCursor, type WorkerListCursor, type WorkerListPage } from "./worker-pages";
 import "./style.css";
 
 interface PendingInput {
@@ -46,7 +49,7 @@ interface Usage {
   confidence: string;
   modelId?: string;
 }
-interface Session { version: string; ownerRef: string | null; expiresAt: string }
+interface Session { version: string; ownerRef: string | null; preferredOwnerRef?: string | null; expiresAt: string }
 type Answer = { value: string } | { confirmed: boolean } | { cancelled: true };
 
 const ACTIVE = new Set(["starting", "running", "awaiting_input"]);
@@ -60,9 +63,6 @@ function persistToken(token: string | null) {
     if (token) sessionStorage.setItem(STORAGE_KEY, token);
     else sessionStorage.removeItem(STORAGE_KEY);
   } catch { /* Restricted iframe storage: keep the credential in memory. */ }
-}
-function time(value: string) {
-  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 function label(status: string) {
   return ({ starting: "启动中", running: "执行中", awaiting_input: "等待输入", completed: "已完成", failed: "失败", cancelled: "已取消", crashed: "进程异常", orphaned: "失去控制", interrupted: "已中断" } as Record<string, string>)[status] ?? status;
@@ -89,14 +89,18 @@ function App() {
   const [hasMoreWorkers, setHasMoreWorkers] = useState(false);
   const [error, setError] = useState("");
   const [connecting, setConnecting] = useState(true);
-  const [lastRefreshed, setLastRefreshed] = useState("");
   const [busy, setBusy] = useState(false);
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [panel, setPanel] = useState<"result" | "events">("result");
+  const [navigationCollapsed, setNavigationCollapsed] = useState(() => window.matchMedia("(max-width: 620px)").matches);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const cursor = useRef(0);
   const listPages = useRef(1);
+  const globalCursor = useRef<WorkerListCursor | undefined>(undefined);
+  const listRevision = useRef(0);
+  const paging = useRef(false);
   const detailRef = useRef<Worker | null>(null);
+  const preferredOwnerRef = session?.preferredOwnerRef ?? session?.ownerRef ?? undefined;
 
   function expire(message: string) {
     persistToken(null);
@@ -104,6 +108,10 @@ function App() {
     setSession(null);
     setWorkers([]);
     setDetail(null);
+    detailRef.current = null;
+    globalCursor.current = undefined;
+    listPages.current = 1;
+    listRevision.current += 1;
     setError(message);
   }
 
@@ -174,23 +182,27 @@ function App() {
       if (document.hidden || running || disposed) return;
       running = true;
       try {
-        const fresh: Worker[] = [];
-        let hasMore = false;
+        const revision = listRevision.current;
+        const pageCount = listPages.current;
+        const pages: WorkerListPage<Worker>[] = [];
         let after = "";
-        for (let index = 0; index < listPages.current; index++) {
-          const list = await request<{ workers: Worker[]; hasMore: boolean }>(`/workers?limit=100${after}`, auth, undefined, controller.signal);
-          fresh.push(...list.workers);
-          hasMore = list.hasMore;
-          const last = list.workers.at(-1);
-          if (!hasMore || !last) break;
+        for (let index = 0; index < pageCount; index++) {
+          const list = await request<WorkerListPage<Worker>>(`/workers?limit=100${after}`, auth, undefined, controller.signal);
+          pages.push(list);
+          const last = workerPageCursor(list);
+          if (!list.hasMore || !last) break;
           after = `&afterId=${encodeURIComponent(last.id)}&afterCreatedAt=${encodeURIComponent(last.createdAt)}`;
         }
         if (disposed) return;
-        setWorkers(fresh);
-        setHasMoreWorkers(hasMore);
-        if (!selected || !fresh.some(worker => worker.id === selected)) {
-          setSelected(fresh[0]?.id ?? null);
-        } else {
+        const fresh = mergeWorkerPages(pages);
+        // A slow refresh must not discard a page the user loaded meanwhile.
+        if (revision === listRevision.current && !paging.current) {
+          globalCursor.current = fresh.cursor;
+          setWorkers(fresh.workers);
+          setHasMoreWorkers(fresh.hasMore);
+          setSelected(previous => chooseWorkerSelection(fresh.workers, previous, preferredOwnerRef));
+        }
+        if (selected && fresh.workers.some(worker => worker.id === selected)) {
           const id = encodeURIComponent(selected);
           const [status, page, metered] = await Promise.all([
             request<{ worker: Worker }>(`/workers/${id}/status`, auth, undefined, controller.signal),
@@ -206,7 +218,6 @@ function App() {
           setUsage(metered.usage);
           setUsageAvailable(metered.available);
         }
-        setLastRefreshed(new Date().toISOString());
         setError("");
       } catch (failure) {
         if (disposed) return;
@@ -224,7 +235,7 @@ function App() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [token, selected]);
+  }, [token, selected, preferredOwnerRef]);
 
   async function act(action: "answer" | "cancel", body: unknown) {
     if (!token || !detail || busy) return;
@@ -243,36 +254,57 @@ function App() {
   }
 
   async function olderWorkers() {
-    if (!token || !workers.length || busy) return;
-    const last = workers[workers.length - 1];
+    const last = globalCursor.current;
+    if (!token || !last || busy || paging.current) return;
+    paging.current = true;
+    listRevision.current += 1;
     setBusy(true);
     try {
-      const page = await request<{ workers: Worker[]; hasMore: boolean }>(`/workers?limit=100&afterId=${encodeURIComponent(last.id)}&afterCreatedAt=${encodeURIComponent(last.createdAt)}`, token);
+      const page = await request<WorkerListPage<Worker>>(`/workers?limit=100&afterId=${encodeURIComponent(last.id)}&afterCreatedAt=${encodeURIComponent(last.createdAt)}`, token);
       listPages.current += 1;
-      setWorkers(previous => [...previous, ...page.workers.filter(worker => !previous.some(item => item.id === worker.id))]);
+      listRevision.current += 1;
+      globalCursor.current = workerPageCursor(page);
+      setWorkers(previous => mergeWorkerLists(page.workers, previous));
       setHasMoreWorkers(page.hasMore);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "读取失败"); }
-    finally { setBusy(false); }
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401) expire(failure.message);
+      else setError(failure instanceof Error ? failure.message : "读取失败");
+    } finally { paging.current = false; setBusy(false); }
   }
 
   return <div className="app" data-theme={theme}>
-    <header className="masthead">
-      <div className="brand"><span className="brand-mark" aria-hidden="true">hs</span><h1>Harness Supervisor</h1></div>
-      <div className="header-actions"><span className={`connection ${token ? "connected" : ""}`}><span aria-hidden="true" />{connecting ? "连接中" : token ? "本机已连接" : "未连接"}</span><button className="theme-toggle" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label={theme === "light" ? "切换深色外观" : "切换浅色外观"}>{theme === "light" ? "深色" : "浅色"}<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{theme === "dark" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />}</svg></button></div>
-    </header>
-    <div className="scope"><span>当前范围</span><strong>{session?.ownerRef ?? (session ? "本机全部 Worker" : "等待认证")}</strong>{session && <small>v{session.version}<span aria-hidden="true"> / </span>页面固定绑定此范围</small>}</div>
-    {error && <div className="notice error" role="alert">{error}</div>}
-    {!token ? <main className="empty welcome"><span className="empty-icon" aria-hidden="true">◇</span><h2>{connecting ? "正在连接 Supervisor" : "从可信入口连接"}</h2><p>通过命令行 <code>harness-sup ui</code> 或 DSH 的 HS 入口打开。连接仅限本机。</p><p className="muted">服务重启后需要重新打开入口。关闭页面不会取消 Worker。</p></main> : <main className="workspace">
+    <main className={`workspace${navigationCollapsed ? " navigation-collapsed" : ""}`}>
       <aside className="workers" aria-label="Worker 列表">
-        <div className="section-title"><h2>Workers <span>{workers.length}</span></h2><small>{lastRefreshed ? time(lastRefreshed) : "正在同步"}</small></div>
-        {workers.length === 0 ? <div className="empty small"><h3>暂无 Worker</h3><p>由 Master 发起任务后，会出现在这里。</p></div> : <WorkerNavigation workers={workers} selected={selected} onSelect={setSelected} />}
-        {hasMoreWorkers && <button className="load-more" disabled={busy} onClick={() => { void olderWorkers(); }}>读取更早的 Worker</button>}
+        <div className="section-title">
+          <button className="navigation-toggle" onClick={() => setNavigationCollapsed(value => !value)} aria-label={navigationCollapsed ? "展开 Worker 列表" : "收起 Worker 列表"} title={navigationCollapsed ? "展开 Worker 列表" : "收起 Worker 列表"} aria-expanded={!navigationCollapsed} aria-controls="worker-navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg></button>
+          <h2 className="sidebar-copy" aria-hidden={navigationCollapsed}>Workers <span>{workers.length}{hasMoreWorkers ? "+" : ""}</span></h2>
+        </div>
+        <div id="worker-navigation" className="worker-scroll sidebar-copy" inert={navigationCollapsed} aria-hidden={navigationCollapsed}>
+          <div className="navigation-inner">
+            {!token ? <p className="navigation-empty">连接后查看 Worker。</p> : workers.length === 0 && !preferredOwnerRef ? <div className="empty small"><h3>暂无 Worker</h3><p>由 Master 发起任务后，会出现在这里。</p></div> : <WorkerNavigation key={JSON.stringify([preferredOwnerRef ?? null])} workers={workers} selected={selected} onSelect={setSelected} preferredOwnerRef={preferredOwnerRef} />}
+            {token && hasMoreWorkers && <button className="load-more" disabled={busy} onClick={() => { void olderWorkers(); }}>读取更早的 Worker</button>}
+          </div>
+        </div>
+        <header className="page-heading" aria-label="Harness Supervisor">
+          <div className="brand"><span className="brand-mark" aria-hidden="true">HS</span><h1 className="sidebar-copy" aria-hidden={navigationCollapsed}>Harness Supervisor</h1></div>
+          <div className="header-actions"><span className={`connection sidebar-copy ${token ? "connected" : ""}`} aria-hidden={navigationCollapsed}><span aria-hidden="true" />{connecting ? "连接中" : token ? "本机已连接" : "未连接"}</span><button className="theme-toggle" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label={theme === "light" ? "切换深色外观" : "切换浅色外观"}><span className="theme-label">{theme === "light" ? "深色" : "浅色"}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{theme === "dark" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />}</svg></button></div>
+          <div className="scope sidebar-copy" inert={navigationCollapsed} aria-hidden={navigationCollapsed}>
+            <strong>{session ? session.ownerRef ? "当前会话 Worker" : "本机全部 Worker" : "等待认证"}</strong>
+            {session?.ownerRef ? <span className="scope-reference" title={session.ownerRef}>{session.ownerRef}</span> : preferredOwnerRef && <span title={preferredOwnerRef}>默认展开当前会话</span>}
+            {session && <small>v{session.version} · {session.ownerRef ? "仅此会话" : "全局管理"}</small>}
+          </div>
+        </header>
       </aside>
       <section className="detail" aria-label="Worker 详情">
-        {!detail ? <div className="empty"><h2>{selected ? "读取 Worker…" : "选择一个 Worker"}</h2><p>查看运行状态、结果与需要你处理的输入。</p></div> : <>
-          <div className="detail-heading"><div className="eyebrow harness-caption"><HarnessIcon runtime={detail.runtime} />{harnessName(detail.runtime)}<span aria-hidden="true"> / </span>{detail.persistence === "persistent" ? "持续会话" : "单次任务"}</div><h2>{detail.name ?? detail.id}</h2><div className="detail-subline"><span className={`badge ${detail.status}`}><span className={`status-dot ${detail.status}`} aria-hidden="true" />{label(detail.status)}</span><time>{new Date(detail.updatedAt).toLocaleString()}</time></div></div>
-          <p className="task-description">{detail.promptPreview}</p>
-          <details className="metadata"><summary>运行信息<span aria-hidden="true"> ↗</span></summary><dl><div><dt>Worker ID</dt><dd>{detail.id}</dd></div><div><dt>工作目录</dt><dd>{detail.cwd}</dd></div><div><dt>生命周期</dt><dd>{detail.lifecycle}</dd></div>{detail.statusReason && <div><dt>状态说明</dt><dd>{detail.statusReason}</dd></div>}</dl></details>
+        {error && <div className="notice error" role="alert">{error}</div>}
+        {!token ? <div className="empty welcome"><span className="empty-icon" aria-hidden="true">◇</span><h2>{connecting ? "正在连接 Supervisor" : "从可信入口连接"}</h2><p>通过命令行 <code>harness-sup ui</code> 或 DSH 的 Harness Supervisor 入口打开。连接仅限本机。</p><p className="muted">服务重启后需要重新打开入口。关闭页面不会取消 Worker。</p></div> : !detail ? <div className="empty"><h2>{selected ? "读取 Worker…" : preferredOwnerRef ? "当前会话暂无 Worker" : "选择一个 Worker"}</h2><p>{preferredOwnerRef && !selected ? "可以展开左侧其它会话，查看已有 Worker。" : "查看运行状态、结果与需要你处理的输入。"}</p></div> : <>
+          <div className="detail-overview">
+            <div className="detail-heading"><div className="worker-identity"><div className="eyebrow harness-caption"><HarnessIcon runtime={detail.runtime} />{harnessName(detail.runtime)}<span aria-hidden="true"> / </span>{detail.persistence === "persistent" ? "持续会话" : "单次任务"}</div><h2>{detail.name ?? detail.id}</h2></div><div className="detail-subline"><span className={`badge ${detail.status}`}><span className={`status-dot ${detail.status}`} aria-hidden="true" />{label(detail.status)}</span><time>{new Date(detail.updatedAt).toLocaleString()}</time></div></div>
+            <div className="task-context">
+              <p className="task-description">{detail.promptPreview}</p>
+              <RuntimeInformation worker={detail} />
+            </div>
+          </div>
           {detail.pendingInput && <Approval key={detail.pendingInput.requestId} input={detail.pendingInput} busy={busy} onAnswer={response => { void act("answer", { requestId: detail.pendingInput!.requestId, response }); }} />}
           <UsageDisplay usage={usage} available={usageAvailable} />
           <div className="tabs" role="tablist" aria-label="详情内容" onKeyDown={event => {
@@ -283,53 +315,25 @@ function App() {
             document.getElementById(`tab-${next}`)?.focus();
           }}>
             <button id="tab-result" role="tab" aria-controls="panel-result" aria-selected={panel === "result"} tabIndex={panel === "result" ? 0 : -1} onClick={() => setPanel("result")}>结果</button>
-            <button id="tab-events" role="tab" aria-controls="panel-events" aria-selected={panel === "events"} tabIndex={panel === "events" ? 0 : -1} onClick={() => setPanel("events")}>事件 <span>{events.length}{hasMoreEvents ? "+" : ""}</span></button>
+            <button id="tab-events" role="tab" aria-controls="panel-events" aria-selected={panel === "events"} tabIndex={panel === "events" ? 0 : -1} onClick={() => setPanel("events")}>轨迹 <span>{events.length}{hasMoreEvents ? "+" : ""}</span></button>
           </div>
-          {panel === "result" ? <div className="result-panel" id="panel-result" role="tabpanel" aria-labelledby="tab-result" tabIndex={0}>{detail.result ? <><pre>{detail.result.text}</pre>{detail.result.truncated && <p className="muted">结果已被存储上限截断，完整内容请查阅原生 Harness Session。</p>}</> : <div className="empty small"><h3>{ACTIVE.has(detail.status) ? "任务正在执行" : detail.status === "cancelled" ? "任务已取消" : "暂无最终结果"}</h3><p>{ACTIVE.has(detail.status) ? "最终答复会显示在这里。运行过程可在事件中查看。" : "可在事件中查看已记录的执行过程。"}</p></div>}{detail.error && detail.status !== "cancelled" && <p className="notice error" role="alert">{detail.error}</p>}</div> : <div className="events-panel" id="panel-events" role="tabpanel" aria-labelledby="tab-events" tabIndex={0}><p className="muted event-note">按游标增量读取，仅展示最近 300 条已读事件。{hasMoreEvents ? "正在继续读取历史…" : ""}</p>{events.map(event => <article className="event" key={event.seq}><div><span className="event-seq">#{event.seq}</span><strong>{event.type}</strong><time>{time(event.ts)}</time></div>{event.data && <pre>{JSON.stringify(event.data, null, 2)}</pre>}</article>)}</div>}
+          {panel === "result" ? <div className="result-panel" id="panel-result" role="tabpanel" aria-labelledby="tab-result" tabIndex={0}>{detail.result ? <><pre>{detail.result.text}</pre>{detail.result.truncated && <p className="muted">结果已被存储上限截断，完整内容请查阅原生 Harness Session。</p>}</> : <div className="empty small"><h3>{ACTIVE.has(detail.status) ? "任务正在执行" : detail.status === "cancelled" ? "任务已取消" : "暂无最终结果"}</h3><p>{ACTIVE.has(detail.status) ? "最终答复会显示在这里。运行过程可在轨迹中查看。" : "可在轨迹中查看已记录的执行过程。"}</p></div>}{detail.error && detail.status !== "cancelled" && <p className="notice error" role="alert">{detail.error}</p>}</div> : <div className="events-panel" id="panel-events" role="tabpanel" aria-labelledby="tab-events" tabIndex={0}><EventTimeline key={detail.id} events={events} hasMore={hasMoreEvents} /></div>}
           {ACTIVE.has(detail.status) && <div className="danger-zone">{cancelConfirm ? <><p>取消此 Worker 的当前任务？此操作会请求终止执行。</p><div className="actions"><button className="danger" disabled={busy} onClick={() => { void act("cancel", {}); }}>{busy ? "正在处理…" : "确认取消任务"}</button><button disabled={busy} onClick={() => setCancelConfirm(false)}>继续运行</button></div></> : <button className="subtle-danger" disabled={busy} onClick={() => setCancelConfirm(true)}>取消当前任务</button>}</div>}
         </>}
       </section>
-    </main>}
-    <footer><span>Harness Supervisor</span><p>仅限本机。页面隐藏时暂停刷新，关闭页面不会取消任务。</p></footer>
+    </main>
   </div>;
 }
 
-function WorkerNavigation({ workers, selected, onSelect }: { workers: Worker[]; selected: string | null; onSelect: (id: string) => void }) {
-  const [grouped, setGrouped] = useState(true);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const groups = new Map<string, { cwd: string; workers: Worker[] }>();
-  for (const worker of workers) {
-    const cwd = worker.cwd;
-    // Windows drive/UNC paths are case insensitive; POSIX paths retain case.
-    const key = /^[A-Za-z]:[\\/]/.test(cwd) || cwd.startsWith("\\\\") ? cwd.replaceAll("/", "\\").toLowerCase() : cwd;
-    const group = groups.get(key) ?? { cwd, workers: [] };
-    group.workers.push(worker);
-    groups.set(key, group);
-  }
-  const card = (worker: Worker) => {
-    let hash = 0;
-    for (const character of worker.id) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) | 0;
-    return <button key={worker.id} className={`worker-card worker-tone-${(hash >>> 0) % 6} ${selected === worker.id ? "selected" : ""}`} onClick={() => onSelect(worker.id)} aria-pressed={selected === worker.id}>
-    <div className="worker-top"><span className="runtime"><HarnessIcon runtime={worker.runtime} />{harnessName(worker.runtime)}</span><span className={`status-dot ${worker.status}`} aria-label={label(worker.status)} title={label(worker.status)} /></div>
-    <strong>{worker.name ?? worker.id}</strong><p>{worker.promptPreview}</p><small>{label(worker.status)}<span aria-hidden="true"> · </span>{time(worker.updatedAt)}</small>
-    </button>;
-  };
-  return <>
-    <div className="list-controls" aria-label="任务列表视图"><button aria-pressed={grouped} onClick={() => setGrouped(true)}>按目录</button><button aria-pressed={!grouped} onClick={() => setGrouped(false)}>平铺</button></div>
-    {grouped ? [...groups].map(([key, group], index) => {
-      const open = !collapsed.has(key);
-      const name = group.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? group.cwd;
-      return <section className="directory-group" key={key}>
-        <button className="directory-toggle" aria-expanded={open} aria-controls={`directory-workers-${index}`} title={group.cwd} onClick={() => setCollapsed(previous => {
-          const next = new Set(previous);
-          if (next.has(key)) next.delete(key); else next.add(key);
-          return next;
-        })}><svg aria-hidden="true" className={open ? "expanded" : ""} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m6 4 4 4-4 4" /></svg><strong>{name}</strong><span>{group.workers.length}</span></button>
-        <p className="directory-path" title={group.cwd}>{group.cwd}</p>
-        <div id={`directory-workers-${index}`} className="worker-list" hidden={!open}>{group.workers.map(card)}</div>
-      </section>;
-    }) : <div className="worker-list">{workers.map(card)}</div>}
-  </>;
+function RuntimeInformation({ worker }: { worker: Worker }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  return <section className={`metadata${open ? " is-open" : ""}`}>
+    <button className="metadata-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(value => !value)}>运行信息<svg className="metadata-chevron" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m4 6 4 4 4-4" /></svg></button>
+    <div className="metadata-content" id={panelId} inert={!open} aria-hidden={!open}><div className="metadata-inner">
+      <dl><div><dt>Worker ID</dt><dd>{worker.id}</dd></div><div><dt>工作目录</dt><dd>{worker.cwd}</dd></div><div><dt>生命周期</dt><dd>{worker.lifecycle}</dd></div>{worker.statusReason && <div><dt>状态说明</dt><dd>{worker.statusReason}</dd></div>}</dl>
+    </div></div>
+  </section>;
 }
 
 function Approval({ input, busy, onAnswer }: { input: PendingInput; busy: boolean; onAnswer: (response: Answer) => void }) {
@@ -344,11 +348,11 @@ function Approval({ input, busy, onAnswer }: { input: PendingInput; busy: boolea
 function UsageDisplay({ usage, available }: { usage: Usage[]; available: boolean }) {
   function total(field: "inputTokens" | "outputTokens" | "cacheReadTokens") {
     const known = usage.map(record => record[field]).filter((value): value is number => value !== null);
-    if (!known.length) return "—";
+    if (!known.length) return "0";
     const value = known.reduce((sum, number) => sum + number, 0).toLocaleString();
     return `${value}${known.length < usage.length ? " + ?" : ""}`;
   }
-  return <section className="usage" aria-label="Worker 用量"><div><small>输入 Token</small><strong>{total("inputTokens")}</strong></div><div><small>输出 Token</small><strong>{total("outputTokens")}</strong></div><div><small>缓存读取</small><strong>{total("cacheReadTokens")}</strong></div><p>{!available ? "用量服务不可用" : usage.length ? `${usage.length} 条 Worker 用量记录 · ${usage.some(record => record.attribution === "session_level") ? "含会话级数据" : "按运行时上报"}` : "尚未上报用量，未知值保留为空"}</p></section>;
+  return <section className="usage" aria-label="Worker 用量"><div><small>输入 Token</small><strong>{total("inputTokens")}</strong></div><div><small>输出 Token</small><strong>{total("outputTokens")}</strong></div><div><small>缓存读取</small><strong>{total("cacheReadTokens")}</strong></div><p>{!available ? "用量服务不可用，暂显示 0" : usage.length ? `${usage.length} 条 Worker 用量记录 · ${usage.some(record => record.attribution === "session_level") ? "含会话级数据" : "按运行时上报"}` : "尚未上报用量，暂显示 0"}</p></section>;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

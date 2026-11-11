@@ -216,7 +216,10 @@ export const METHOD_SCHEMAS = {
   notification_target_get: z.object({}).strict(),
   ui_start: z.object({
     ownerRef: OwnerRefSchema.optional(),
+    preferredOwnerRef: OwnerRefSchema.optional(),
     frameOrigin: z.string().min(1).max(2048).optional(),
+    viewKey: z.string().min(1).max(200).optional(),
+    viewGeneration: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict(),
   ui_stop: z.object({}).strict(),
   ui_status: z.object({}).strict(),

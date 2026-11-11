@@ -6,5 +6,8 @@ export { McodeAdapter } from "./adapters/mcode/adapter.js";
 export { DshAdapter } from "./adapters/dsh/adapter.js";
 export { SupervisorClient } from "./ipc/client.js";
 export { runDaemon } from "./daemon.js";
+export { WebUiServer } from "./web-ui.js";
+export { prepareManagedRuntime, readManagedRuntime, readActiveRuntime, resolveManagedDaemonEntry } from "./managed-runtime.js";
+export { RuntimeUpdater } from "./runtime-updater.js";
 export { VERSION, TOOL_NAME } from "./version.js";
 export * from "./types.js";

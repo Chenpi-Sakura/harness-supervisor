@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
+import { spawn } from "node:child_process";
 import { runDaemon } from "./daemon.js";
 import { SupervisorError, errorMessage } from "./errors.js";
 import { SupervisorClient } from "./ipc/client.js";
@@ -55,6 +56,13 @@ Daemon:
   down                       Gracefully stop the daemon (cancels active workers)
   daemon [--foreground]      Run the daemon in the foreground
   info                       Show daemon and runtime capabilities
+  ui [--owner-ref <session>] [--no-open] [--json]
+                             Open optional local WebUI (global operator view by default)
+  ui --stop                  Stop HTTP UI and invalidate browser credentials
+  runtime prepare --source <package-root>
+  runtime apply --runtime-id <id> --intent-id <unique-key>
+  runtime status | runtime cancel --intent-id <key>
+                             Stage, drain and switch a compatible managed core
 
 Workers:
   spawn --prompt <text> [--cwd <dir>] [--name <n>] [--model <m>] [--provider <p>]
@@ -557,6 +565,12 @@ async function main(): Promise<void> {
       strict: true,
       options: {
         "state-dir": { type: "string" },
+        "owner-ref": { type: "string" },
+        stop: { type: "boolean" },
+        "no-open": { type: "boolean" },
+        source: { type: "string" },
+        "runtime-id": { type: "string" },
+        "intent-id": { type: "string" },
         json: { type: "boolean", short: "j" },
         help: { type: "boolean", short: "h" },
         cwd: { type: "string" },
@@ -661,9 +675,62 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Stopping an optional interface must not create a daemon as a side effect.
+  if (command === "ui" && boolArg(values.stop)) {
+    let existing: SupervisorClient;
+    try { existing = await makeClient(stateDir, false); }
+    catch (error) {
+      if (error instanceof SupervisorError && /not running|no IPC token/i.test(error.message)) {
+        if (json) printJson({ stopped: true });
+        else process.stdout.write("WebUI is not running.\n");
+        return;
+      }
+      throw error;
+    }
+    try {
+      const stopped = await existing.request("ui_stop", {});
+      if (json) printJson(stopped);
+      else process.stdout.write("WebUI stopped.\n");
+    } finally { existing.close(); }
+    return;
+  }
   const client = await makeClient(stateDir, true);
   try {
     switch (command) {
+      case "ui": {
+        const launch = await client.request<{ url: string }>("ui_start", { ownerRef: stringArg(values["owner-ref"], "owner-ref") });
+        if (json) printJson(launch);
+        else process.stdout.write(`${launch.url}\n`);
+        if (!boolArg(values["no-open"]) && !json) {
+          const [bin, args] = process.platform === "win32"
+            ? ["rundll32.exe", ["url.dll,FileProtocolHandler", launch.url]] as const
+            : process.platform === "darwin" ? ["open", [launch.url]] as const : ["xdg-open", [launch.url]] as const;
+          const child = spawn(bin, [...args], { detached: true, windowsHide: true, stdio: "ignore" });
+          child.on("error", (error) => process.stderr.write(`Open the printed URL manually: ${error.message}\n`));
+          child.unref();
+        }
+        return;
+      }
+      case "runtime": {
+        const action = positionals[1] ?? "status";
+        const intentId = stringArg(values["intent-id"], "intent-id");
+        let result: unknown;
+        if (action === "status") result = await client.request("runtime_update_status", {});
+        else if (action === "prepare") {
+          const sourceRoot = stringArg(values.source, "source");
+          if (!sourceRoot) throw new SupervisorError("BAD_REQUEST", "runtime prepare requires --source");
+          result = await client.request("runtime_prepare", { sourceRoot }, { timeoutMs: 120_000 });
+        } else if (action === "apply") {
+          const runtimeId = stringArg(values["runtime-id"], "runtime-id");
+          if (!intentId || !runtimeId) throw new SupervisorError("BAD_REQUEST", "runtime apply requires --runtime-id and --intent-id");
+          result = await client.request("runtime_update", { intentId, runtimeId }, { timeoutMs: 120_000 });
+        } else if (action === "cancel") {
+          if (!intentId) throw new SupervisorError("BAD_REQUEST", "runtime cancel requires --intent-id");
+          result = await client.request("runtime_update_cancel", { intentId });
+        } else throw new SupervisorError("BAD_REQUEST", "runtime requires prepare, apply, status or cancel");
+        printJson(result);
+        return;
+      }
       case "up":
       case "info": {
         const info = await client.request("info", {});
@@ -715,6 +782,7 @@ async function main(): Promise<void> {
           "spawn",
           {
             runtime: stringArg(values.runtime, "runtime") ?? "pi",
+            ownerRef: stringArg(values["owner-ref"], "owner-ref"),
             cwd: stringArg(values.cwd, "cwd") ?? process.cwd(),
             prompt,
             name: stringArg(values.name, "name"),
@@ -765,6 +833,7 @@ async function main(): Promise<void> {
           .map((s) => s.trim())
           .filter(Boolean) as WorkerStatus[] | undefined;
         const workers = await client.request<WorkerSummary[]>("list", {
+          ownerRef: stringArg(values["owner-ref"], "owner-ref"),
           statuses,
           limit: intArg(values.limit, "limit", 50),
           ...(boolArg(values["include-archived"]) ? { includeArchived: true } : {}),
@@ -1099,6 +1168,7 @@ async function main(): Promise<void> {
           throw new SupervisorError("BAD_REQUEST", "--state must be pending, delivered, failed or all");
         }
         const result = await client.request("notifications", {
+          ownerRef: stringArg(values["owner-ref"], "owner-ref"),
           state,
           workerId: stringArg(values.worker, "worker"),
           limit: intArg(values.limit, "limit", 50),

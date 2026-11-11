@@ -1,0 +1,42 @@
+import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { verifyProductionTree } from "./verify-production-tree.mjs";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const value = (name, fallback) => { const i = process.argv.indexOf(name); return i < 0 ? fallback : process.argv[i + 1]; };
+const build = path.resolve(root, value("--build-dir", "dist"));
+const output = path.resolve(root, value("--output", ".artifacts"));
+const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const lock = JSON.parse(await readFile(path.join(root, "package-lock.json"), "utf8"));
+if (lock.version !== manifest.version || lock.packages?.[""]?.version !== manifest.version) throw Error("Core manifest and verified lock disagree");
+const compiledVersion = await readFile(path.join(build, "src/version.js"), "utf8");
+if (!compiledVersion.includes(`VERSION = "${manifest.version}"`)) throw Error("Build the requested core version before packing");
+await readFile(path.join(build, "web/index.html"));
+await mkdir(output, { recursive: true });
+const stage = await mkdtemp(path.join(output, "core-"));
+await mkdir(path.join(stage, "dist"));
+await cp(path.join(build, "src"), path.join(stage, "dist/src"), { recursive: true });
+await cp(path.join(build, "web"), path.join(stage, "dist/web"), { recursive: true });
+const releaseManifest = { ...manifest, bundleDependencies: Object.keys(manifest.dependencies), files: [...manifest.files, "production-lock.json"] };
+await writeFile(path.join(stage, "package.json"), JSON.stringify(releaseManifest, null, 2));
+// npm12 removed shrinkwrap support. Ship the verified production dependency
+// tree itself and a lock snapshot for verification, without install scripts.
+await writeFile(path.join(stage, "production-lock.json"), JSON.stringify(lock, null, 2));
+for (const file of ["README.md", "LICENSE"]) await cp(path.join(root, file), path.join(stage, file));
+const npmCli = [process.env.npm_execpath, process.env.NPM_CLI_PATH, path.join(path.dirname(process.execPath), "node_modules/npm/bin/npm-cli.js")].find((candidate) => candidate && candidate.endsWith(".js") && existsSync(candidate));
+if (!npmCli) throw Error("Run through npm run pack:core");
+const { prepareManagedRuntime } = await import(pathToFileURL(path.join(build, "src/managed-runtime.js")));
+const runtime = await prepareManagedRuntime(path.join(output, "build-cache"), stage);
+await cp(path.join(runtime.root, "node_modules"), path.join(stage, "node_modules"), { recursive: true });
+await verifyProductionTree(path.join(stage, "node_modules"), lock);
+const child = spawnSync(process.execPath, [npmCli, "--prefix", stage, "--workspaces=false", "pack", stage, "--ignore-scripts", "--json", "--pack-destination", output], { cwd: stage, encoding: "utf8", windowsHide: true });
+if (child.status !== 0) throw Error(child.stderr || child.stdout || "Core packing failed");
+const result = JSON.parse(child.stdout);
+const packed = Array.isArray(result) ? result[0] : Object.values(result)[0];
+if (!packed?.files.some((file) => file.path === "production-lock.json") || !packed.bundled?.length) throw Error("Published core must include its fixed production dependency tree");
+const release = { version: manifest.version, tarball: path.join(output, packed.filename), integrity: packed.integrity };
+await writeFile(path.join(output, "core-release.json"), JSON.stringify(release, null, 2));
+console.log(JSON.stringify(release, null, 2));

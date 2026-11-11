@@ -8,6 +8,7 @@ import type { Logger } from "../util/logger.js";
 import { ensureDir } from "../util/fsx.js";
 import { JsonlDecoder, serializeJsonLine } from "../util/jsonl.js";
 import { sleep } from "../util/async.js";
+import { resolveManagedDaemonEntry } from "../managed-runtime.js";
 import { readIpcToken } from "./daemon-state.js";
 import {
   IPC_VERSION,
@@ -16,6 +17,7 @@ import {
   type IpcMethod,
   type IpcRequest,
   type IpcResponse,
+  type ClientScope,
 } from "./protocol.js";
 
 interface PendingRequest {
@@ -26,9 +28,15 @@ interface PendingRequest {
 
 export interface ClientOptions {
   stateDir: string;
+  /** Immutable bundled core used only when no managed runtime is committed. */
+  daemonEntry?: string;
+  /** Host plugins may run inside Electron and must launch a real Node executable. */
+  nodeExecutable?: string;
   autoStart?: boolean;
   logger?: Logger;
   connectTimeoutMs?: number;
+  /** Fixed by the host/MCP process, never by a model tool argument. */
+  scope?: ClientScope;
 }
 
 export interface RequestOptions {
@@ -69,6 +77,7 @@ export class SupervisorClient {
       await this.openSocket(token);
     } catch (error) {
       if (this.options.autoStart === false) throw error;
+      if (error instanceof SupervisorError && (error.code === "UNAUTHORIZED" || error.code === "UNSUPPORTED")) throw error;
       this.teardownSocket();
       await this.startDaemon();
       const nextToken = await this.waitForToken();
@@ -209,6 +218,7 @@ export class SupervisorClient {
           v: IPC_VERSION,
           type: "hello",
           token,
+          ...(this.options.scope ? { scope: this.options.scope } : {}),
         }),
       );
       await helloDone;
@@ -223,9 +233,17 @@ export class SupervisorClient {
     if (record.type === "hello_response") {
       const hello = record as unknown as IpcHelloResponse;
       if (hello.ok) {
+        if (this.options.scope && hello.scopeAccepted !== true) {
+          this.handshake?.reject(new SupervisorError("UNSUPPORTED", "Scoped clients require HS 0.10.0 ownerScope support; upgrade the existing daemon in a maintenance window"));
+          return;
+        }
         this.handshake?.resolve();
       } else {
         const message = hello.error?.message ?? "Supervisor rejected IPC authentication";
+        if (this.options.scope && message === "Invalid hello") {
+          this.handshake?.reject(new SupervisorError("UNSUPPORTED", "Scoped clients require HS 0.10.0 ownerScope support. Upgrade the existing daemon in a maintenance window; this client will not replace it."));
+          return;
+        }
         this.handshake?.reject(new SupervisorError("UNAUTHORIZED", message));
       }
       return;
@@ -315,11 +333,11 @@ export class SupervisorClient {
 
   private async startDaemon(): Promise<void> {
     await ensureDir(this.stateDir);
-    const entry = resolveDaemonEntry();
+    const entry = await resolveManagedDaemonEntry(this.stateDir, () => this.options.daemonEntry ? path.resolve(this.options.daemonEntry) : resolveDaemonEntry());
     const logPath = path.join(this.stateDir, "daemon.out.log");
     const out = openSync(logPath, "a");
     try {
-      const child = spawn(process.execPath, [entry, "--state-dir", this.stateDir], {
+      const child = spawn(this.options.nodeExecutable ?? process.execPath, [entry, "--state-dir", this.stateDir], {
         detached: true,
         windowsHide: true,
         stdio: ["ignore", out, out],

@@ -1,5 +1,5 @@
 import net from "node:net";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { SupervisorError, serializeError } from "../errors.js";
 import type { Supervisor } from "../supervisor.js";
 import type { ExtensionUiResponse, SendMode } from "../types.js";
@@ -13,6 +13,7 @@ import {
   type IpcHelloResponse,
   type IpcMethod,
   type IpcResponse,
+  type ClientScope,
 } from "./protocol.js";
 
 interface SendParams {
@@ -38,6 +39,7 @@ export interface IpcServerOptions {
   supervisor: Supervisor;
   logger: Logger;
   onShutdown: () => void;
+  handlers?: Partial<Record<IpcMethod, (params: unknown) => unknown | Promise<unknown>>>;
 }
 
 export class IpcServer {
@@ -95,6 +97,7 @@ export class IpcServer {
   private handleConnection(socket: net.Socket): void {
     this.sockets.add(socket);
     let authorized = false;
+    let scope: ClientScope | undefined;
     let helloFailures = 0;
     const decoder = new JsonlDecoder(
       (record) => {
@@ -117,8 +120,9 @@ export class IpcServer {
             return;
           }
           authorized = true;
+          scope = hello.scope;
           clearTimeout(helloTimer);
-          this.writeHelloResponse(socket, true);
+          this.writeHelloResponse(socket, true, undefined, scope !== undefined);
           return;
         }
         const parsed = parseEnvelope(record);
@@ -134,7 +138,7 @@ export class IpcServer {
           });
           return;
         }
-        void this.handleRequest(socket, parsed.envelope.id, parsed.envelope.method, parsed.params);
+        void this.handleRequest(socket, parsed.envelope.id, parsed.envelope.method, parsed.params, scope);
       },
       (raw, error) => {
         this.options.logger.warn("Malformed IPC line", {
@@ -162,10 +166,12 @@ export class IpcServer {
     id: string,
     method: IpcMethod,
     params: unknown,
+    scope?: ClientScope,
   ): Promise<void> {
     let response: IpcResponse;
     try {
-      const result = await this.dispatch(method, params);
+      const scopedParams = this.scopeParams(method, params, scope);
+      const result = await this.dispatch(method, scopedParams, scope);
       response = { v: IPC_VERSION, type: "response", id, ok: true, result };
     } catch (error) {
       response = {
@@ -183,7 +189,32 @@ export class IpcServer {
     }
   }
 
-  private async dispatch(method: string, params: unknown): Promise<unknown> {
+  private scopeParams(method: IpcMethod, params: unknown, scope?: ClientScope): unknown {
+    if (!scope) return params;
+    const input = { ...(params as Record<string, unknown>) };
+    if (scope.ownerRef !== undefined) {
+      const allowed = new Set(["info", "ping", "spawn", "resume", "continue", "admin", "forget", "status", "list", "events", "wait", "send", "answer", "cancel", "notifications", "notification_ack"]);
+      if (!allowed.has(method)) throw new SupervisorError("UNAUTHORIZED", "Operation is unavailable to a scoped Master");
+      if (typeof input.workerId === "string") this.options.supervisor.assertOwner(input.workerId, scope.ownerRef);
+      if (method === "spawn") {
+        if (input.taskId !== undefined) throw new SupervisorError("UNSUPPORTED", "Scoped spawn creates its own task metrics");
+        input.ownerRef = scope.ownerRef;
+        delete input.callerThreadId;
+      }
+      if (method === "list" || method === "notifications") input.ownerRef = scope.ownerRef;
+      // Keys are process-independent yet disjoint across Master sessions.
+      if (["spawn", "resume", "continue", "send"].includes(method) && typeof input.requestId === "string") {
+        input.requestId = `owner-${createHash("sha256").update(scope.ownerRef).update("\0").update(input.requestId).digest("hex")}`;
+      }
+    }
+    if (scope.notifyNone && ["spawn", "resume", "continue"].includes(method)) {
+      input.notifyTarget = { channel: "none" };
+      delete input.callerThreadId;
+    }
+    return input;
+  }
+
+  private async dispatch(method: IpcMethod, params: unknown, scope?: ClientScope): Promise<unknown> {
     const supervisor = this.options.supervisor;
     switch (method) {
       case "spawn": {
@@ -258,20 +289,25 @@ export class IpcServer {
         const { workerId, timeoutMs } = params as CancelParams;
         return supervisor.cancel(workerId, { timeoutMs });
       }
-      case "info":
-        return supervisor.info();
+      case "info": {
+        const info = supervisor.info();
+        if (scope?.ownerRef === undefined) return info;
+        const { storage: _storage, ...view } = info;
+        return { ...view, wake: { proactive: false, channel: "none", note: "Scoped Master uses worker_wait and its own inbox." }, ownerRef: scope.ownerRef };
+      }
       case "notifications": {
-        const { state, workerId, limit, unacknowledgedOnly } = params as {
+        const { state, workerId, limit, unacknowledgedOnly, ownerRef } = params as {
+          ownerRef?: string;
           state?: "pending" | "delivered" | "failed" | "all";
           workerId?: string;
           limit?: number;
           unacknowledgedOnly?: boolean;
         };
-        return supervisor.notifications({ state, workerId, limit, unacknowledgedOnly });
+        return supervisor.notifications({ state, workerId, limit, unacknowledgedOnly, ownerRef });
       }
       case "notification_ack": {
         const { ids, by } = params as { ids: string[]; by?: string };
-        return supervisor.ackNotifications(ids, by);
+        return supervisor.ackNotifications(ids, by, scope?.ownerRef);
       }
       case "notification_target": {
         return supervisor.setNotifyTarget(
@@ -318,15 +354,17 @@ export class IpcServer {
         await supervisor.shutdown();
         return { stopped: true };
       default:
+        if (this.options.handlers?.[method]) return this.options.handlers[method]!(params);
         throw new SupervisorError("BAD_REQUEST", `Unknown IPC method: ${method}`);
     }
   }
 
-  private writeHelloResponse(socket: net.Socket, ok: boolean, error?: string): void {
+  private writeHelloResponse(socket: net.Socket, ok: boolean, error?: string, scopeAccepted?: boolean): void {
     const response: IpcHelloResponse = {
       v: IPC_VERSION,
       type: "hello_response",
       ok,
+      ...(scopeAccepted ? { scopeAccepted: true } : {}),
       ...(error ? { error: { code: "UNAUTHORIZED", message: error } } : {}),
     };
     this.writeRaw(socket, response);

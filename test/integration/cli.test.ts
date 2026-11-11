@@ -2,12 +2,21 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { CLI_ENTRY, FAKE_ENTRY, makeWorkspace } from "./helpers.js";
 
 const exec = promisify(execFile);
+
+test("CLI ui --stop does not create a daemon or HTTP listener", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-ui-stop-"));
+  const { stdout } = await cli(["ui", "--stop", "--json"], { env: { ...process.env, HARNESS_SUPERVISOR_HOME: stateDir } });
+  assert.deepEqual(JSON.parse(stdout), { stopped: true });
+  assert.equal(existsSync(path.join(stateDir, "daemon.lock")), false);
+  assert.equal(existsSync(path.join(stateDir, "ipc.token")), false);
+});
 
 interface CliOptions {
   env: NodeJS.ProcessEnv;

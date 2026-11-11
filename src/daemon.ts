@@ -21,6 +21,8 @@ import { ensureDir } from "./util/fsx.js";
 import { createLogger, type Logger } from "./util/logger.js";
 import { prepareWorkerGuard } from "./worker-guard.js";
 import { VERSION, TOOL_NAME } from "./version.js";
+import { WebUiServer } from "./web-ui.js";
+import { RuntimeUpdater } from "./runtime-updater.js";
 
 export interface DaemonOptions {
   stateDir?: string;
@@ -132,17 +134,25 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   await supervisor.init();
 
   let server: IpcServer;
+  const webUi = new WebUiServer({ supervisor });
+  let updater: RuntimeUpdater;
   let shuttingDown = false;
   let hardExitTimer: NodeJS.Timeout | undefined;
   const shutdown = async (reason: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    updater?.close();
     logger.info("Supervisor daemon shutting down", { reason });
     hardExitTimer = setTimeout(() => {
       logger.error("Graceful shutdown exceeded 30 seconds; forcing exit");
       process.exit(1);
     }, 30_000);
     hardExitTimer.unref?.();
+    try {
+      await webUi.stop();
+    } catch (error) {
+      logger.warn("WebUI close failed", { error: errorMessage(error) });
+    }
     try {
       await supervisor.shutdown();
     } catch (error) {
@@ -161,6 +171,14 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     done.resolve();
   };
 
+  updater = new RuntimeUpdater({ stateDir, supervisor, logger, shutdown: () => shutdown("managed_update") });
+  try {
+    await updater.initialize();
+  } catch (error) {
+    await shutdown("managed_startup_failed");
+    throw error;
+  }
+
   server = new IpcServer({
     endpoint,
     token,
@@ -168,6 +186,21 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     logger,
     onShutdown: () => {
       void shutdown("ipc_request");
+    },
+    handlers: {
+      ui_start: (params) => {
+        const input = params as { ownerRef?: string; frameOrigin?: string };
+        return webUi.launch(input);
+      },
+      ui_stop: async () => { await webUi.stop(); return { stopped: true }; },
+      ui_status: () => webUi.status(),
+      runtime_prepare: async (params) => {
+        const runtime = await updater.prepare((params as { sourceRoot: string }).sourceRoot);
+        return { id: runtime.id, runtimeId: runtime.id, version: runtime.version, root: runtime.root };
+      },
+      runtime_update: (params) => updater.apply(params as { intentId: string; runtimeId: string }),
+      runtime_update_status: () => updater.status(),
+      runtime_update_cancel: (params) => updater.cancel((params as { intentId: string }).intentId),
     },
   });
 
@@ -193,6 +226,12 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     startedAt: supervisor.startedAt,
     version: VERSION,
   });
+  try {
+    await updater.ready();
+  } catch (error) {
+    await shutdown("managed_verification_failed");
+    throw error;
+  }
   logger.info("Supervisor daemon started", {
     name: TOOL_NAME,
     version: VERSION,

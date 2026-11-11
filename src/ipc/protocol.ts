@@ -65,6 +65,12 @@ export const NotifyTargetSchema = z.discriminatedUnion("channel", [
 ]);
 
 const NotifyTargetField = { notifyTarget: NotifyTargetSchema.optional() };
+export const OwnerRefSchema = z.string().min(1).max(300).regex(/^[^\x00-\x1f\x7f]+$/);
+export const ClientScopeSchema = z.object({
+  ownerRef: OwnerRefSchema.optional(),
+  notifyNone: z.boolean().optional(),
+}).strict();
+export interface ClientScope { ownerRef?: string; notifyNone?: boolean }
 
 const SpawnSchema = z
   .object({
@@ -73,6 +79,7 @@ const SpawnSchema = z
     prompt: z.string().min(1).max(256 * 1024),
     name: z.string().min(1).max(200).optional(),
     taskId: z.string().min(1).max(120).optional(),
+    ownerRef: OwnerRefSchema.optional(),
     persistence: z.enum(["oneshot", "persistent"]).optional(),
     // Per-call Codex caller identity (MCP `_meta.threadId`). Only used for
     // auto-binding when no explicit notifyTarget is supplied.
@@ -128,6 +135,7 @@ export const METHOD_SCHEMAS = {
     .strict(),
   list: z
     .object({
+      ownerRef: OwnerRefSchema.optional(),
       statuses: z.array(WorkerStatusSchema).max(20).optional(),
       limit: z.number().int().min(1).max(500).optional(),
       includeArchived: z.boolean().optional(),
@@ -185,6 +193,7 @@ export const METHOD_SCHEMAS = {
   info: z.object({}).strict(),
   notifications: z
     .object({
+      ownerRef: OwnerRefSchema.optional(),
       state: z.enum(["pending", "delivered", "failed", "all"]).optional(),
       workerId: WorkerIdSchema.optional(),
       limit: z.number().int().min(1).max(500).optional(),
@@ -205,6 +214,16 @@ export const METHOD_SCHEMAS = {
     })
     .strict(),
   notification_target_get: z.object({}).strict(),
+  ui_start: z.object({
+    ownerRef: OwnerRefSchema.optional(),
+    frameOrigin: z.string().min(1).max(2048).optional(),
+  }).strict(),
+  ui_stop: z.object({}).strict(),
+  ui_status: z.object({}).strict(),
+  runtime_prepare: z.object({ sourceRoot: z.string().min(1).max(4096) }).strict(),
+  runtime_update: z.object({ intentId: z.string().min(1).max(200), runtimeId: z.string().min(1).max(200) }).strict(),
+  runtime_update_status: z.object({}).strict(),
+  runtime_update_cancel: z.object({ intentId: z.string().min(1).max(200) }).strict(),
   notification_retry: z
     .object({
       states: z.array(z.enum(["pending", "delivered", "failed"])).min(1).max(3).optional(),
@@ -266,12 +285,14 @@ export interface IpcHello {
   v: typeof IPC_VERSION;
   type: "hello";
   token: string;
+  scope?: ClientScope;
 }
 
 export interface IpcHelloResponse {
   v: typeof IPC_VERSION;
   type: "hello_response";
   ok: boolean;
+  scopeAccepted?: boolean;
   error?: { code: string; message: string };
 }
 
@@ -311,6 +332,7 @@ const HelloSchema = z
     v: z.literal(IPC_VERSION),
     type: z.literal("hello"),
     token: z.string().min(1).max(500),
+    scope: ClientScopeSchema.optional(),
   })
   .strict();
 
@@ -339,7 +361,7 @@ export function parseEnvelope(
     };
   }
   const method = parsed.data.method as IpcMethod;
-  if (!(method in METHOD_SCHEMAS)) {
+  if (!Object.hasOwn(METHOD_SCHEMAS, method)) {
     return { error: new SupervisorError("BAD_REQUEST", `Unknown IPC method: ${method}`) };
   }
   const paramsParsed = METHOD_SCHEMAS[method].safeParse(parsed.data.params ?? {});

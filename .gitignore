@@ -8,4 +8,5 @@ debug-*
 *.tmp
 .DS_Store
 .probe/
+.artifacts/
 .pi/

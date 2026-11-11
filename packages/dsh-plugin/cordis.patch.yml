@@ -1,0 +1,7 @@
+- insert:
+    - id: harness-supervisor
+      name: dsh-harness-supervisor
+
+# The plugin explicitly provides a browser entry on both Desktop and Web.
+- id: ui-sidebar-browser
+  disabled: false

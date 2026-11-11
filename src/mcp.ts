@@ -5,7 +5,7 @@ import { z } from "zod";
 import { callerMetaRejection, callerThreadFromMeta } from "./caller-thread.js";
 import { SupervisorError, errorMessage } from "./errors.js";
 import { SupervisorClient } from "./ipc/client.js";
-import { resolveStateDir, NotifyTargetSchema } from "./ipc/protocol.js";
+import { resolveStateDir, NotifyTargetSchema, OwnerRefSchema } from "./ipc/protocol.js";
 import {
   EVENTS_BUDGET_BYTES,
   MAX_COMPACT_EVENTS,
@@ -100,10 +100,17 @@ const modeInfo = resolveModeOrExit();
 const mode: McpPresentationMode = modeInfo.mode;
 
 const stateDir = resolveStateDir(argValue("--state-dir"));
+const ownerArg = process.argv.find((arg) => arg.startsWith("--owner-ref="))?.slice("--owner-ref=".length) ?? argValue("--owner-ref");
+if (process.argv.includes("--owner-ref") && (ownerArg === undefined || ownerArg.startsWith("--"))) {
+  throw new SupervisorError("BAD_REQUEST", "--owner-ref requires a Master session reference");
+}
+const ownerRef = ownerArg === undefined ? undefined : OwnerRefSchema.parse(ownerArg);
+const notifyNone = ownerRef !== undefined || process.argv.includes("--notify-none");
 const client = new SupervisorClient({
   stateDir,
   autoStart: true,
   connectTimeoutMs: 20_000,
+  ...(ownerRef !== undefined || notifyNone ? { scope: { ownerRef, notifyNone } } : {}),
 });
 
 const REQUIRED_DAEMON_VERSION = "0.4.0";
@@ -158,6 +165,9 @@ async function assessDaemonCompatibility(): Promise<void> {
   daemonSupportsMetrics = daemonAtLeast(info.version, METRICS_DAEMON_VERSION);
   daemonSupportsCallerBinding = daemonAtLeast(info.version, CALLER_BINDING_DAEMON_VERSION);
   daemonSupportsListCursor = daemonAtLeast(info.version, LIST_CURSOR_DAEMON_VERSION);
+  if ((ownerRef !== undefined || notifyNone) && info.capabilities?.ownerScope !== true) {
+    throw new SupervisorError("UNSUPPORTED", "Scoped MCP requires HS 0.10.0 ownerScope capability. The running daemon must be upgraded in a maintenance window; this MCP process will not replace it.");
+  }
   if (daemonSupportsNewIpc) return;
   if (mode === "production") {
     throw new SupervisorError("UNSUPPORTED", upgradeAdvice(daemonVersion));
@@ -398,7 +408,8 @@ const server = new McpServer(
     version: VERSION,
   },
   {
-    instructions: mode === "production" ? PRODUCTION_INSTRUCTIONS : DEVELOPMENT_INSTRUCTIONS,
+    instructions: (mode === "production" ? PRODUCTION_INSTRUCTIONS : DEVELOPMENT_INSTRUCTIONS) +
+      (ownerRef !== undefined ? "\nThis connection is fixed to its Master session. Workers and inbox ACKs outside that session are refused. Notification delivery is inbox-only; use worker_wait. Shared notification configuration, global metrics, maintenance and core upgrades are not exposed." : ""),
   },
 );
 
@@ -1089,7 +1100,7 @@ const MetricsTokenShape = {
   reportedTotalTokens: z.number().int().min(0).max(1_000_000_000_000_000).optional(),
 };
 
-server.registerTool(
+if (ownerRef === undefined) server.registerTool(
   "metrics_task_create",
   {
     title: "Create a delegated task for metrics",
@@ -1121,7 +1132,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+if (ownerRef === undefined) server.registerTool(
   "metrics_task_show",
   {
     title: "Show one task's metrics",
@@ -1143,7 +1154,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+if (ownerRef === undefined) server.registerTool(
   "metrics_report",
   {
     title: "Summarize task metrics over a time range",
@@ -1170,7 +1181,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+if (ownerRef === undefined) server.registerTool(
   "metrics_record_usage",
   {
     title: "Record task usage manually",
@@ -1280,7 +1291,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+if (ownerRef === undefined) server.registerTool(
   "supervisor_wake_target",
   {
     title: "Configure optional Codex thread notification delivery",

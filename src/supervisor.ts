@@ -219,6 +219,11 @@ export class Supervisor {
   private pendingSpawns = 0;
   /** One destructive maintenance operation at a time; blocks new activations. */
   private maintenance: string | null = null;
+  /** A managed update closes only new admission; accepted work and answers drain normally. */
+  private drainIntent: string | null = null;
+  private drainSealed = false;
+  private pendingDurableMutations = 0;
+  private pendingAdmissions = 0;
   private initialized = false;
   private shuttingDown = false;
   private metricsReady = false;
@@ -573,7 +578,8 @@ export class Supervisor {
 
   createMetricsTask(input: TaskCreateInput): Promise<TaskRecord> {
     this.assertInitialized();
-    return this.requireMetrics().createTask(input);
+    this.assertNewAdmission();
+    return this.withDurableMutation(() => this.requireMetrics().createTask(input));
   }
 
   metricsTask(taskId: string): TaskMetrics {
@@ -591,7 +597,8 @@ export class Supervisor {
 
   recordMetricsUsage(input: UsageRecordInput): Promise<UsageRecord> {
     this.assertInitialized();
-    return this.requireMetrics().recordUsage(input);
+    this.assertNewAdmission();
+    return this.withDurableMutation(() => this.requireMetrics().recordUsage(input));
   }
 
   private requireMetrics(): MetricsStore {
@@ -605,30 +612,37 @@ export class Supervisor {
   }
 
   notifications(filter: {
+    ownerRef?: string;
     state?: "pending" | "delivered" | "failed" | "all";
     workerId?: string;
     limit?: number;
     unacknowledgedOnly?: boolean;
   } = {}): NotificationsResult {
     this.assertInitialized();
-    const notifications = this.notifier.list(filter);
+    if (filter.ownerRef !== undefined && filter.workerId) this.assertOwner(filter.workerId, filter.ownerRef);
+    const workerIds = filter.ownerRef === undefined ? undefined : new Set(
+      this.store.listWorkers().filter((worker) => worker.ownerRef === filter.ownerRef).map((worker) => worker.id),
+    );
+    const scoped = { ...filter, workerIds };
+    const notifications = this.notifier.list(scoped);
     const state = filter.state ?? "pending";
     const limit = Math.max(1, Math.min(filter.limit ?? 100, 500));
     return {
       notifications,
       // Legacy field: always the whole inbox. Kept so older callers never read
       // a worker-filtered number as if it were global.
-      counts: this.notifier.counts({ state: "all" }),
-      filteredCounts: this.notifier.counts({ ...filter, state }),
-      globalCounts: this.notifier.counts({ state: "all" }),
+      counts: this.notifier.counts({ state: "all", workerIds }),
+      filteredCounts: this.notifier.counts({ ...scoped, state }),
+      globalCounts: this.notifier.counts({ state: "all", workerIds }),
       scope: {
+        ...(filter.ownerRef !== undefined ? { ownerRef: filter.ownerRef } : {}),
         state,
         ...(filter.workerId !== undefined ? { workerId: filter.workerId } : {}),
         unacknowledgedOnly: filter.unacknowledgedOnly === true,
         limit,
         returned: notifications.length,
       },
-      target: this.notifier.getTarget(),
+      target: filter.ownerRef === undefined ? this.notifier.getTarget() : { channel: "none" },
     };
   }
 
@@ -637,9 +651,23 @@ export class Supervisor {
     return this.notifier.getTarget();
   }
 
-  async ackNotifications(ids: string[], by?: string): Promise<{ acked: number; missing: string[] }> {
+  async ackNotifications(ids: string[], by?: string, ownerRef?: string): Promise<{ acked: number; missing: string[] }> {
     this.assertInitialized();
-    return this.notifier.ack(ids, by);
+    if (ownerRef !== undefined) {
+      for (const id of ids) {
+        const workerId = this.notifier.workerForNotification(id);
+        if (workerId !== undefined) this.assertOwner(workerId, ownerRef);
+      }
+    }
+    return this.withDurableMutation(() => this.notifier.ack(ids, by));
+  }
+
+  /** Correlation guard for cooperating clients; same-user processes can bypass it. */
+  assertOwner(workerId: string, ownerRef: string): void {
+    const worker = this.store.getWorker(workerId);
+    if (!worker || worker.ownerRef !== ownerRef) {
+      throw new SupervisorError("UNAUTHORIZED", "Worker is outside this Master session");
+    }
   }
 
   async setNotifyTarget(input: {
@@ -647,12 +675,14 @@ export class Supervisor {
     codexThreadId?: string | null;
   }): Promise<NotifyTarget> {
     this.assertInitialized();
-    return this.notifier.setTarget(input);
+    this.assertNewAdmission();
+    return this.withDurableMutation(() => this.notifier.setTarget(input));
   }
 
   async retryNotifications(states?: NotificationDeliveryState[]): Promise<number> {
     this.assertInitialized();
-    return this.notifier.retryPending(states);
+    this.assertNewAdmission();
+    return this.withDurableMutation(() => this.notifier.retryPending(states));
   }
 
   /**
@@ -691,6 +721,7 @@ export class Supervisor {
     return {
       name: TOOL_NAME,
       version: VERSION,
+      capabilities: { ownerScope: true, webUi: true, managedRuntime: true, drain: true },
       pid: process.pid,
       stateDir: this.stateDir,
       supervisorId: this.supervisorId,
@@ -744,6 +775,7 @@ export class Supervisor {
 
   async spawn(input: SpawnInput, options: { requestId?: string } = {}): Promise<WorkerSummary> {
     this.assertInitialized();
+    this.assertNewAdmission();
     this.assertAcceptingWork();
     const requestId = validateIdempotencyKey(options.requestId);
     const source: NotificationBindingSource =
@@ -754,9 +786,9 @@ export class Supervisor {
           : "daemon-default";
     const run = async (workerIdOut?: { value?: string }) =>
       this.attachNotificationBinding(await this.spawnOnce(input, workerIdOut), source);
-    return requestId
+    return this.withAdmittedWork(async () => requestId
       ? await this.withIdempotency("spawn", requestId, input, (workerIdOut) => run(workerIdOut))
-      : await run();
+      : await run());
   }
 
   private async spawnOnce(input: SpawnInput, workerIdOut?: { value?: string }): Promise<WorkerSummary> {
@@ -856,6 +888,9 @@ export class Supervisor {
   }
 
   private async spawnInternal(input: SpawnInput): Promise<WorkerSummary> {
+    if (input.ownerRef !== undefined && (typeof input.ownerRef !== "string" || input.ownerRef.length < 1 || input.ownerRef.length > 300 || /[\x00-\x1f\x7f]/.test(input.ownerRef))) {
+      throw new SupervisorError("BAD_REQUEST", "ownerRef must be a nonempty reference of at most 300 characters without control characters");
+    }
     const runtimeName = input.runtime ?? "pi";
     const adapter = this.adapters.get(runtimeName);
     if (!adapter) {
@@ -896,6 +931,7 @@ export class Supervisor {
       schemaVersion: SCHEMA_VERSION,
       id,
       runtime: runtimeName,
+      ownerRef: input.ownerRef,
       name: optionalString(input.name, 200, "name"),
       cwd,
       promptPreview: safeText(input.prompt, 500),
@@ -1039,6 +1075,7 @@ export class Supervisor {
     options: { requestId?: string } = {},
   ): Promise<WorkerSummary> {
     this.assertInitialized();
+    this.assertNewAdmission();
     this.assertAcceptingWork();
     const requestId = validateIdempotencyKey(options.requestId);
     const source: NotificationBindingSource =
@@ -1048,11 +1085,11 @@ export class Supervisor {
         await this.resumeOnce(workerId, input, workerIdOut),
         source,
       );
-    return requestId
+    return this.withAdmittedWork(async () => requestId
       ? await this.withIdempotency("resume", requestId, { workerId, input }, (workerIdOut) =>
           run(workerIdOut),
         )
-      : await run();
+      : await run());
   }
 
   private async resumeOnce(
@@ -1099,6 +1136,7 @@ export class Supervisor {
     options: { requestId?: string } = {},
   ): Promise<WorkerSummary> {
     this.assertInitialized();
+    this.assertNewAdmission();
     this.assertAcceptingWork();
     const requestId = validateIdempotencyKey(options.requestId);
     const source: NotificationBindingSource =
@@ -1108,11 +1146,11 @@ export class Supervisor {
         await this.continueOnce(workerId, input, workerIdOut),
         source,
       );
-    return requestId
+    return this.withAdmittedWork(async () => requestId
       ? await this.withIdempotency("continue", requestId, { workerId, input }, (workerIdOut) =>
           run(workerIdOut),
         )
-      : await run();
+      : await run());
   }
 
   private async continueOnce(
@@ -1395,6 +1433,7 @@ export class Supervisor {
   }
 
   list(filter?: {
+    ownerRef?: string;
     statuses?: WorkerStatus[];
     limit?: number;
     includeArchived?: boolean;
@@ -1406,6 +1445,7 @@ export class Supervisor {
     const after = filter?.after;
     return this.store
       .listWorkers()
+      .filter((record) => filter?.ownerRef === undefined || record.ownerRef === filter.ownerRef)
       .filter((record) => !statuses || statuses.has(record.status))
       .filter((record) => filter?.includeArchived === true || !record.archived)
       // Keyset order is (createdAt DESC, id ASC). Comparing the pair rather
@@ -1427,6 +1467,7 @@ export class Supervisor {
 
   async admin(workerId: string, action: WorkerAdminAction): Promise<WorkerSummary> {
     this.assertInitialized();
+    this.assertNewAdmission();
     this.assertAcceptingWork();
     const record = this.requireWorker(workerId);
     const apply = async (): Promise<void> => {
@@ -1500,7 +1541,7 @@ export class Supervisor {
     if (action === "archive" || action === "retire") {
       await this.withWorkerMutation(workerId, action, apply);
     } else {
-      await apply();
+      await this.withDurableMutation(apply);
     }
     return this.summary(record);
   }
@@ -1511,6 +1552,7 @@ export class Supervisor {
    */
   async forget(workerId: string): Promise<ForgetWorkerResult> {
     this.assertInitialized();
+    this.assertNewAdmission();
     this.assertAcceptingWork();
     this.requireWorker(workerId);
     return this.withWorkerMutation(workerId, "forget", async () => {
@@ -1566,6 +1608,7 @@ export class Supervisor {
     options: { workerId?: string; keepProgress?: number; dryRun?: boolean } = {},
   ): Promise<CompactResult> {
     this.assertInitialized();
+    this.assertNewAdmission();
     this.assertAcceptingWork();
     const dryRun = options.dryRun === true;
     const keepProgress = clampInt(options.keepProgress ?? 200, 0, 100_000);
@@ -1823,11 +1866,13 @@ export class Supervisor {
     options: { requestId?: string } = {},
   ): Promise<WorkerSummary> {
     this.assertInitialized();
+    this.assertNewAdmission();
     const requestId = validateIdempotencyKey(options.requestId);
-    if (!requestId) return this.sendOnce(workerId, message, mode);
-    return this.withIdempotency("send", requestId, { workerId, message, mode }, () =>
-      this.sendOnce(workerId, message, mode),
-    );
+    return this.withAdmittedWork(async () => !requestId
+      ? this.sendOnce(workerId, message, mode)
+      : this.withIdempotency("send", requestId, { workerId, message, mode }, () =>
+          this.sendOnce(workerId, message, mode),
+        ));
   }
 
   private async sendOnce(
@@ -2166,11 +2211,81 @@ export class Supervisor {
     return this.summary(record);
   }
 
+  beginDrain(intentId: string): void {
+    this.assertInitialized();
+    if (this.drainIntent && this.drainIntent !== intentId) {
+      throw new SupervisorError("CONFLICT", "Another managed update is already draining", {
+        intentId: this.drainIntent,
+      });
+    }
+    this.drainIntent = intentId;
+  }
+
+  cancelDrain(intentId: string): void {
+    if (this.drainIntent !== intentId) {
+      throw new SupervisorError("CONFLICT", "The drain intent does not match");
+    }
+    this.drainIntent = null;
+    this.drainSealed = false;
+  }
+
+  /** Freeze the last durable human actions after quiescence, before backup. */
+  sealDrain(intentId: string): void {
+    if (this.drainIntent !== intentId || !this.drainStatus().ready) {
+      throw new SupervisorError("INVALID_STATE", "Cannot seal a managed update before quiescence");
+    }
+    this.drainSealed = true;
+  }
+
+  drainStatus(): {
+    intentId: string | null;
+    ready: boolean;
+    workerIds: string[];
+    pendingSpawns: number;
+    resuming: string[];
+    runtimeIds: string[];
+    maintenance: string | null;
+    pendingDurableMutations: number;
+    pendingAdmissions: number;
+  } {
+    // Orphaned workers are terminal for observation, but a detached native
+    // process is not proof that it is safe to hand off a shared daemon.
+    const workerIds = this.store.listWorkers()
+      .filter((record) => !isTerminal(record.status) || record.status === "orphaned")
+      .map((record) => record.id);
+    const runtimeIds = [...this.runtimes.keys()];
+    return {
+      intentId: this.drainIntent,
+      ready: workerIds.length === 0 && runtimeIds.length === 0 &&
+        this.pendingSpawns === 0 && this.resuming.size === 0 && this.maintenance === null && this.pendingDurableMutations === 0 && this.pendingAdmissions === 0,
+      workerIds,
+      pendingSpawns: this.pendingSpawns,
+      resuming: [...this.resuming],
+      runtimeIds,
+      maintenance: this.maintenance,
+      pendingDurableMutations: this.pendingDurableMutations,
+      pendingAdmissions: this.pendingAdmissions,
+    };
+  }
+
+  async flushForHandoff(): Promise<void> {
+    if (!this.drainIntent || !this.drainStatus().ready) {
+      throw new SupervisorError("INVALID_STATE", "Managed update has not finished draining");
+    }
+    await this.store.flush();
+    await this.notifier.flush();
+    await this.metrics.flush();
+    await this.idempotency.flush();
+    if (!this.drainStatus().ready) {
+      throw new SupervisorError("INVALID_STATE", "Supervisor changed while preparing handoff");
+    }
+  }
+
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     const drainDeadline = Date.now() + 5000;
     while (
-      (this.pendingSpawns > 0 || this.resuming.size > 0 || this.maintenance !== null) &&
+      (this.pendingSpawns > 0 || this.resuming.size > 0 || this.maintenance !== null || this.pendingDurableMutations > 0 || this.pendingAdmissions > 0) &&
       Date.now() < drainDeadline
     ) {
       await sleep(25);
@@ -2998,6 +3113,7 @@ export class Supervisor {
     action: string,
     run: () => Promise<T>,
   ): Promise<T> {
+    this.assertNewAdmission();
     if (this.resuming.has(workerId)) {
       throw new SupervisorError(
         "INVALID_STATE",
@@ -3237,7 +3353,34 @@ export class Supervisor {
     }
   }
 
+  private assertNewAdmission(): void {
+    if (this.drainIntent) {
+      throw new SupervisorError("INVALID_STATE", "Supervisor is draining for a managed core update", {
+        intentId: this.drainIntent,
+      });
+    }
+  }
+
+  private async withDurableMutation<T>(run: () => Promise<T>): Promise<T> {
+    if (this.drainSealed || this.shuttingDown) {
+      throw new SupervisorError("INVALID_STATE", "Supervisor is switching cores or shutting down; retry after reconnection");
+    }
+    this.pendingDurableMutations += 1;
+    try { return await run(); }
+    finally { this.pendingDurableMutations -= 1; }
+  }
+
+  private async withAdmittedWork<T>(run: () => Promise<T>): Promise<T> {
+    this.assertNewAdmission();
+    // Reserve before idempotency.flush or any other await. Once accepted, this
+    // operation may complete during draining, but handoff must wait for it.
+    this.pendingAdmissions += 1;
+    try { return await run(); }
+    finally { this.pendingAdmissions -= 1; }
+  }
+
   private async withMaintenance<T>(name: string, run: () => Promise<T>): Promise<T> {
+    this.assertNewAdmission();
     if (this.maintenance) {
       throw new SupervisorError(
         "INVALID_STATE",

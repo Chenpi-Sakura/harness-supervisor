@@ -381,6 +381,7 @@ export class Notifier {
   }
 
   list(filter: {
+    workerIds?: ReadonlySet<string>;
     state?: "pending" | "delivered" | "failed" | "all";
     workerId?: string;
     limit?: number;
@@ -409,6 +410,7 @@ export class Notifier {
         return record.delivery.state === state;
       })
       .filter((record) => (filter.workerId ? record.workerId === filter.workerId : true))
+      .filter((record) => !filter.workerIds || filter.workerIds.has(record.workerId))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
       .slice(0, limit)
       .map((record) => {
@@ -431,6 +433,7 @@ export class Notifier {
  * "this is how many records exist in scope".
  */
   counts(filter: {
+    workerIds?: ReadonlySet<string>;
     state?: "pending" | "delivered" | "failed" | "all";
     workerId?: string;
     unacknowledgedOnly?: boolean;
@@ -443,6 +446,7 @@ export class Notifier {
     let superseded = 0;
     let unacked = 0;
     for (const record of this.records.values()) {
+      if (filter.workerIds && !filter.workerIds.has(record.workerId)) continue;
       if (filter.workerId && record.workerId !== filter.workerId) continue;
       if (filter.unacknowledgedOnly && (record.ackAt || record.delivery.state === "superseded")) {
         continue;
@@ -490,6 +494,11 @@ export class Notifier {
       enqueuedAt: record.delivery.enqueuedAt, messageId: record.delivery.messageId,
     });
     return { acked: changed.length, missing };
+  }
+
+  /** Used to validate the whole ACK batch before mutating any record. */
+  workerForNotification(id: string): string | undefined {
+    return this.records.get(id)?.workerId;
   }
 
   /**

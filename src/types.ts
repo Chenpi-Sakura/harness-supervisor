@@ -168,6 +168,8 @@ export interface WorkerResult {
 export interface WorkerRecord {
   schemaVersion: number;
   id: string;
+  /** Originating Master session. Routing scope, not an OS security boundary. */
+  ownerRef?: string;
   runtime: string;
   name?: string;
   cwd: string;
@@ -309,6 +311,7 @@ export interface WorkerEvent {
 }
 
 export interface SpawnInput {
+  ownerRef?: string;
   notifyTarget?: NotifyTarget;
   /**
    * Codex thread that issued this MCP call. The MCP layer fills it from the
@@ -486,6 +489,8 @@ export interface StorageDiagnostics {
 export interface SupervisorInfo {
   name: string;
   version: string;
+  /** Explicit feature handshake; absent on older daemons. */
+  capabilities?: { ownerScope: true; webUi: true; managedRuntime: true; drain: true };
   pid: number;
   stateDir: string;
   supervisorId: string;
@@ -613,6 +618,7 @@ export interface NotificationsResult {
 }
 
 export interface NotificationScope {
+  ownerRef?: string;
   state: "pending" | "delivered" | "failed" | "all";
   workerId?: string;
   unacknowledgedOnly: boolean;

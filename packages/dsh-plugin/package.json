@@ -1,0 +1,42 @@
+{
+  "name": "dsh-harness-supervisor",
+  "version": "0.1.0",
+  "description": "DSH Master access and shared browser UI for Harness Supervisor.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "engines": { "node": ">=22.19.0", "dsh": "0.2.2-rc.1" },
+  "files": ["dist", "cordis.patch.yml", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "pack:release": "node scripts/pack.mjs"
+  },
+  "dependencies": { "harness-supervisor": "0.10.0" },
+  "bundleDependencies": ["harness-supervisor"],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-mcp-client": "0.2.2-rc.1",
+    "@deepseek-ai/schemastery": "~3.19.0"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-sidebar-browser",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-commands"
+      ]
+    }
+  }
+}

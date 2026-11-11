@@ -2,6 +2,7 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { HarnessIcon } from "./harness-icons";
 import { EventTimeline } from "./EventTimeline";
+import { emptyEventHistory, EventPager, type EventPage } from "./event-pages";
 import { WorkerNavigation } from "./WorkerNavigation";
 import { chooseWorkerSelection, mergeWorkerLists, mergeWorkerPages, workerPageCursor, type WorkerListCursor, type WorkerListPage } from "./worker-pages";
 import "./style.css";
@@ -32,12 +33,6 @@ interface Worker {
   statusReason?: string;
   persistence: string;
   pendingInput?: PendingInput;
-}
-interface Event {
-  seq: number;
-  ts: string;
-  type: string;
-  data?: Record<string, unknown>;
 }
 interface Usage {
   id: string;
@@ -82,10 +77,9 @@ function App() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<Worker | null>(null);
-  const [events, setEvents] = useState<Event[]>([]);
+  const [eventHistory, setEventHistory] = useState(emptyEventHistory);
   const [usage, setUsage] = useState<Usage[]>([]);
   const [usageAvailable, setUsageAvailable] = useState(true);
-  const [hasMoreEvents, setHasMoreEvents] = useState(false);
   const [hasMoreWorkers, setHasMoreWorkers] = useState(false);
   const [error, setError] = useState("");
   const [connecting, setConnecting] = useState(true);
@@ -94,7 +88,7 @@ function App() {
   const [panel, setPanel] = useState<"result" | "events">("result");
   const [navigationCollapsed, setNavigationCollapsed] = useState(() => window.matchMedia("(max-width: 620px)").matches);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
-  const cursor = useRef(0);
+  const eventPager = useRef<EventPager | null>(null);
   const listPages = useRef(1);
   const globalCursor = useRef<WorkerListCursor | undefined>(undefined);
   const listRevision = useRef(0);
@@ -171,12 +165,9 @@ function App() {
     const controller = new AbortController();
     let disposed = false;
     let running = false;
-    cursor.current = 0;
-    setEvents([]);
     setDetail(null);
     detailRef.current = null;
     setUsage([]);
-    setHasMoreEvents(false);
     setCancelConfirm(false);
     async function refresh() {
       if (document.hidden || running || disposed) return;
@@ -204,17 +195,13 @@ function App() {
         }
         if (selected && fresh.workers.some(worker => worker.id === selected)) {
           const id = encodeURIComponent(selected);
-          const [status, page, metered] = await Promise.all([
+          const [status, metered] = await Promise.all([
             request<{ worker: Worker }>(`/workers/${id}/status`, auth, undefined, controller.signal),
-            request<{ events: Event[]; nextSeq: number; hasMore: boolean }>(`/workers/${id}/events?sinceSeq=${cursor.current}&limit=100`, auth, undefined, controller.signal),
             request<{ available: boolean; usage: Usage[] }>(`/workers/${id}/usage`, auth, undefined, controller.signal),
           ]);
           if (disposed) return;
           setDetail(status.worker);
           detailRef.current = status.worker;
-          cursor.current = page.nextSeq;
-          setHasMoreEvents(page.hasMore);
-          setEvents(previous => [...previous, ...page.events].slice(-300));
           setUsage(metered.usage);
           setUsageAvailable(metered.available);
         }
@@ -226,7 +213,7 @@ function App() {
       } finally { running = false; }
     }
     void refresh();
-    const interval = setInterval(() => { void refresh(); }, 2000);
+    const interval = setInterval(() => { void refresh(); }, 5000);
     const visible = () => { if (!document.hidden) void refresh(); };
     document.addEventListener("visibilitychange", visible);
     return () => {
@@ -236,6 +223,48 @@ function App() {
       document.removeEventListener("visibilitychange", visible);
     };
   }, [token, selected, preferredOwnerRef]);
+
+  useEffect(() => {
+    setEventHistory(emptyEventHistory());
+    if (!token || !selected) return;
+    const auth = token;
+    const controller = new AbortController();
+    let disposed = false;
+    const pager = new EventPager((sinceSeq, limit) => request<EventPage>(
+      `/workers/${encodeURIComponent(selected)}/events?sinceSeq=${sinceSeq}&limit=${limit}`, auth, undefined, controller.signal,
+    ), setEventHistory);
+    eventPager.current = pager;
+    async function refresh() {
+      if (document.hidden || disposed) return;
+      try { await pager.read(); }
+      catch (failure) {
+        if (disposed) return;
+        if (failure instanceof ApiError && failure.status === 401) expire(failure.message);
+      }
+    }
+    void refresh();
+    const interval = setInterval(() => { void refresh(); }, 5000);
+    const visible = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      disposed = true;
+      pager.dispose();
+      controller.abort();
+      if (eventPager.current === pager) eventPager.current = null;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [token, selected]);
+
+  async function pageEvents(direction: "previous" | "next" | "refresh") {
+    const pager = eventPager.current;
+    if (!pager) return;
+    try { await pager.read(direction); }
+    catch (failure) {
+      if (eventPager.current !== pager) return;
+      if (failure instanceof ApiError && failure.status === 401) expire(failure.message);
+    }
+  }
 
   async function act(action: "answer" | "cancel", body: unknown) {
     if (!token || !detail || busy) return;
@@ -315,9 +344,9 @@ function App() {
             document.getElementById(`tab-${next}`)?.focus();
           }}>
             <button id="tab-result" role="tab" aria-controls="panel-result" aria-selected={panel === "result"} tabIndex={panel === "result" ? 0 : -1} onClick={() => setPanel("result")}>结果</button>
-            <button id="tab-events" role="tab" aria-controls="panel-events" aria-selected={panel === "events"} tabIndex={panel === "events" ? 0 : -1} onClick={() => setPanel("events")}>轨迹 <span>{events.length}{hasMoreEvents ? "+" : ""}</span></button>
+            <button id="tab-events" role="tab" aria-controls="panel-events" aria-selected={panel === "events"} tabIndex={panel === "events" ? 0 : -1} onClick={() => setPanel("events")}>轨迹</button>
           </div>
-          {panel === "result" ? <div className="result-panel" id="panel-result" role="tabpanel" aria-labelledby="tab-result" tabIndex={0}>{detail.result ? <><pre>{detail.result.text}</pre>{detail.result.truncated && <p className="muted">结果已被存储上限截断，完整内容请查阅原生 Harness Session。</p>}</> : <div className="empty small"><h3>{ACTIVE.has(detail.status) ? "任务正在执行" : detail.status === "cancelled" ? "任务已取消" : "暂无最终结果"}</h3><p>{ACTIVE.has(detail.status) ? "最终答复会显示在这里。运行过程可在轨迹中查看。" : "可在轨迹中查看已记录的执行过程。"}</p></div>}{detail.error && detail.status !== "cancelled" && <p className="notice error" role="alert">{detail.error}</p>}</div> : <div className="events-panel" id="panel-events" role="tabpanel" aria-labelledby="tab-events" tabIndex={0}><EventTimeline key={detail.id} events={events} hasMore={hasMoreEvents} /></div>}
+          {panel === "result" ? <div className="result-panel" id="panel-result" role="tabpanel" aria-labelledby="tab-result" tabIndex={0}>{detail.result ? <><pre>{detail.result.text}</pre>{detail.result.truncated && <p className="muted">结果已被存储上限截断，完整内容请查阅原生 Harness Session。</p>}</> : <div className="empty small"><h3>{ACTIVE.has(detail.status) ? "任务正在执行" : detail.status === "cancelled" ? "任务已取消" : "暂无最终结果"}</h3><p>{ACTIVE.has(detail.status) ? "最终答复会显示在这里。运行过程可在轨迹中查看。" : "可在轨迹中查看已记录的执行过程。"}</p></div>}{detail.error && detail.status !== "cancelled" && <p className="notice error" role="alert">{detail.error}</p>}</div> : <div className="events-panel" id="panel-events" role="tabpanel" aria-labelledby="tab-events" tabIndex={0}><EventTimeline key={detail.id} history={eventHistory} runtime={detail.runtime} onPage={direction => { void pageEvents(direction); }} /></div>}
           {ACTIVE.has(detail.status) && <div className="danger-zone">{cancelConfirm ? <><p>取消此 Worker 的当前任务？此操作会请求终止执行。</p><div className="actions"><button className="danger" disabled={busy} onClick={() => { void act("cancel", {}); }}>{busy ? "正在处理…" : "确认取消任务"}</button><button disabled={busy} onClick={() => setCancelConfirm(false)}>继续运行</button></div></> : <button className="subtle-danger" disabled={busy} onClick={() => setCancelConfirm(true)}>取消当前任务</button>}</div>}
         </>}
       </section>

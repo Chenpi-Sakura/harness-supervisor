@@ -19,6 +19,7 @@ export async function releaseMetadata(root, env) {
   const lock = await json(path.join(root, "package-lock.json"));
   const plugin = await json(path.join(root, "packages/dsh-plugin/package.json"));
   ensure(core.name === "harness-supervisor" && plugin.name === "dsh-harness-supervisor", "Unexpected release package name");
+  ensure(core.private !== true, "Core must be public");
   ensure(STABLE_VERSION.test(core.version) && STABLE_VERSION.test(plugin.version), "Release package versions must be stable semver");
   ensure(lock.version === core.version && lock.packages?.[""]?.version === core.version, "Core manifest and lock versions disagree");
   const source = await readFile(path.join(root, "src/version.ts"), "utf8");
@@ -29,6 +30,7 @@ export async function releaseMetadata(root, env) {
   ensure(/const EXPECTED_CORE_VERSION\s*=\s*"([^"]+)"/.exec(pluginSource)?.[1] === core.version, "Plugin runtime expects a different core version");
   ensure(/pluginVersion:\s*"([^"]+)"/.exec(pluginSource)?.[1] === plugin.version, "Plugin status version disagrees with its manifest");
   ensure(typeof env.GITHUB_REPOSITORY === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPOSITORY), "A GitHub repository is required");
+  ensure(core.repository?.url === `git+https://github.com/${env.GITHUB_REPOSITORY}.git`, "Core repository.url must match its GitHub trusted publisher");
   ensure(plugin.repository?.url === `git+https://github.com/${env.GITHUB_REPOSITORY}.git`, "Plugin repository.url must match its GitHub trusted publisher");
   ensure(plugin.repository?.directory === "packages/dsh-plugin", "Plugin repository directory is incorrect");
   const tag = `v${core.version}`;
@@ -38,7 +40,7 @@ export async function releaseMetadata(root, env) {
   }
   return {
     tag, repository: env.GITHUB_REPOSITORY,
-    coreVersion: core.version, coreTarball: `${core.name}-${core.version}.tgz`,
+    coreName: core.name, coreVersion: core.version, coreTarball: `${core.name}-${core.version}.tgz`,
     pluginName: plugin.name, pluginVersion: plugin.version, pluginTarball: `${plugin.name}-${plugin.version}.tgz`,
   };
 }
@@ -69,16 +71,51 @@ export async function verifyRelease(directory, metadata) {
 }
 
 /** An existing version is immutable; only an identical artifact may be skipped. */
-export async function alreadyPublished(release, fetcher = fetch) {
-  const response = await fetcher(`${REGISTRY}/${encodeURIComponent(release.pluginName)}/${encodeURIComponent(release.pluginVersion)}`, {
+export async function alreadyPublished(pkg, fetcher = fetch) {
+  const response = await fetcher(`${REGISTRY}/${encodeURIComponent(pkg.name)}/${encodeURIComponent(pkg.version)}`, {
     headers: { Accept: "application/json" }, signal: AbortSignal.timeout(20_000),
   });
   if (response.status === 404) return false;
   ensure(response.ok, `Cannot check npm release: HTTP ${response.status}`);
   const published = await response.json();
-  ensure(published.name === release.pluginName && published.version === release.pluginVersion && published.dist?.integrity === release.pluginIntegrity,
-    "This npm version already exists with different bytes; bump the plugin version before publishing");
+  ensure(published.name === pkg.name && published.version === pkg.version && published.dist?.integrity === pkg.integrity,
+    `${pkg.name}@${pkg.version} already exists with different bytes; bump its version before publishing`);
   return true;
+}
+
+/** The two immutable versions recover independently after a partial publish. */
+export async function publishedPackages(release, fetcher = fetch) {
+  const [core, plugin] = await Promise.all([
+    alreadyPublished({ name: release.coreName, version: release.coreVersion, integrity: release.coreIntegrity }, fetcher),
+    alreadyPublished({ name: release.pluginName, version: release.pluginVersion, integrity: release.pluginIntegrity }, fetcher),
+  ]);
+  return { core_published: String(core), plugin_published: String(plugin) };
+}
+
+/** npm may accept a publish before its metadata is public; never resubmit here. */
+export async function waitForPublished(release, {
+  fetcher = fetch, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  timeoutMs = 12 * 60_000, intervalMs = 30_000, onPending = () => {},
+} = {}) {
+  const deadline = now() + timeoutMs;
+  const expired = () => new Error("Publication accepted but not confirmed public: both package versions and integrity must be readable from npm before the deadline. Check registry processing; do not republish blindly.");
+  while (true) {
+    const remaining = deadline - now();
+    if (remaining <= 0) throw expired();
+    let published;
+    try {
+      published = await publishedPackages(release, (url, options) => fetcher(url, {
+        ...options, signal: AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, remaining))]),
+      }));
+    } catch (error) {
+      if (now() >= deadline) throw expired();
+      throw error;
+    }
+    if (now() >= deadline) throw expired();
+    if (published.core_published === "true" && published.plugin_published === "true") return published;
+    onPending(published);
+    await sleep(Math.min(intervalMs, deadline - now()));
+  }
 }
 
 async function output(values, env) {
@@ -92,14 +129,17 @@ async function main(command) {
   const metadata = await releaseMetadata(ROOT, process.env);
   const destination = path.join(ROOT, "release/npm");
   if (command === "metadata") {
-    await output({ core_version: metadata.coreVersion, plugin_version: metadata.pluginVersion, plugin_tarball: metadata.pluginTarball }, process.env);
+    await output({ core_name: metadata.coreName, core_version: metadata.coreVersion, core_tarball: metadata.coreTarball, plugin_version: metadata.pluginVersion, plugin_tarball: metadata.pluginTarball }, process.env);
   } else if (command === "stage") {
     await stageRelease(ROOT, destination, metadata);
-  } else if (command === "published") {
+  } else if (command === "published" || command === "verify-published") {
     ensure(process.env.GITHUB_EVENT_NAME === "push" && process.env.GITHUB_REF_TYPE === "tag", "Publishing requires a pushed release tag");
     const release = await verifyRelease(destination, metadata);
-    await output({ published: String(await alreadyPublished(release)) }, process.env);
-  } else throw new Error("Usage: node .github/scripts/npm-release.mjs metadata|stage|published");
+    const published = command === "published" ? await publishedPackages(release) : await waitForPublished(release, {
+      onPending: status => console.log(`Waiting for npm processing: core=${status.core_published}, plugin=${status.plugin_published}`),
+    });
+    await output(published, process.env);
+  } else throw new Error("Usage: node .github/scripts/npm-release.mjs metadata|stage|published|verify-published");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

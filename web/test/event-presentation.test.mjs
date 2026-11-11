@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { eventDataJson, eventSearchText, presentEvent } from "../src/event-presentation.ts";
+import { buildTimelineEntries, eventDataJson, eventSearchText, presentEvent, presentTimelineEntry, timelineEntrySearchText } from "../src/event-presentation.ts";
 
 const event = (type, data = {}) => ({ seq: 42, ts: "2026-11-11T00:00:00Z", type, data });
 
@@ -49,4 +49,50 @@ test("usage summaries distinguish unreported values from reported zero", () => {
   assert.equal(presentEvent(event("run.usage", { outputTokens: 0 })).summary, "输出 0");
   assert.equal(presentEvent(event("run.usage", {})).summary, "已收到运行时用量记录");
   assert.equal(presentEvent(event("run.usage", { inputTokens: "99", outputTokens: Infinity })).summary, "已收到运行时用量记录");
+});
+
+const fragment = (seq, preview, extra = {}) => ({ ...event("run.progress", { kind: "thinking", preview, ...extra }), seq });
+
+test("known ACP thinking deltas merge verbatim, remain fully searchable and retain every raw event", () => {
+  const source = [fragment(1, "We"), fragment(2, " "), fragment(3, "should\n  inspect "), fragment(4, "好".repeat(250) + " FullTextMarker")];
+  const before = structuredClone(source);
+  for (const runtime of ["qoder", "mcode", "dsh"]) {
+    const entries = buildTimelineEntries(source, runtime);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].recordedText, "We should\n  inspect " + "好".repeat(250) + " FullTextMarker");
+    assert.equal(entries[0].events.length, 4);
+    assert.equal(presentTimelineEntry(entries[0]).summary.length, 180);
+    assert.ok(timelineEntrySearchText(entries[0]).includes("fulltextmarker"));
+    assert.ok(timelineEntrySearchText(entries[0]).includes("we should"));
+    assert.strictEqual(entries[0].events[2], source[2]);
+  }
+  assert.deepEqual(source, before, "aggregation never changes source data");
+});
+
+test("tools, lifecycle, turn boundaries, other kinds and sequence gaps stop thinking aggregation", () => {
+  for (const boundary of [
+    event("run.progress", { kind: "tool_start", tool: "read" }),
+    event("run.progress", { kind: "turn_complete" }),
+    event("run.progress", { kind: "assistant_message", preview: "commentary" }),
+    event("run.completed"), event("worker.resumed"),
+  ]) {
+    const entries = buildTimelineEntries([fragment(1, "before"), { ...boundary, seq: 2 }, fragment(3, "after")], "qoder");
+    assert.equal(entries.length, 3);
+  }
+  assert.equal(buildTimelineEntries([fragment(1, "first"), fragment(3, "gap")], "mcode").length, 2);
+});
+
+test("snapshots, unknown shapes/runtimes and already-truncated records are not blindly concatenated", () => {
+  for (const runtime of [undefined, "pi", "future-runtime"]) {
+    assert.equal(buildTimelineEntries([fragment(1, "a"), fragment(2, "ab")], runtime).length, 2);
+  }
+  for (const extra of [{ mode: "snapshot" }, { delta: false }, { messageId: "different" }, { previewTruncated: true }, { detail: "alternate payload" }]) {
+    const entries = buildTimelineEntries([fragment(1, "a"), fragment(2, "ab", extra), fragment(3, "c")], "dsh");
+    assert.equal(entries.length, 3);
+  }
+  const snapshots = [1, 2].map(seq => ({ ...event("run.progress", { kind: "assistant_message", preview: "whole snapshot" }), seq }));
+  assert.equal(buildTimelineEntries(snapshots, "qoder").length, 2);
+  const detailOnly = [1, 2].map(seq => ({ ...event("run.progress", { kind: "thinking", detail: "legacy text" }), seq }));
+  assert.equal(buildTimelineEntries(detailOnly, "qoder").length, 2);
+  assert.equal(buildTimelineEntries(detailOnly, "qoder")[0].recordedText, "legacy text");
 });

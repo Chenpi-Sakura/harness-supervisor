@@ -145,7 +145,7 @@ exports.apply = function apply(ctx) {
         button("在右侧栏打开全局面板", () => open(sessionId), !sessionId),
         button("刷新状态", refresh)),
       h("h3", null, "配套 HS 核心"),
-      h("p", null, `插件 ${data?.pluginVersion || "0.1.2"} · 配套核心 ${data?.pairedCoreVersion || "0.10.2"} · 运行核心 ${data?.supervisor?.version || "正在读取"}`),
+      h("p", null, `插件 ${data?.pluginVersion || "0.1.3"} · 配套核心 ${data?.pairedCoreVersion || "0.10.3"} · 运行核心 ${data?.supervisor?.version || "正在读取"}`),
       h("p", null, "等待已有任务结束后切换，期间仍可审批和取消任务。"),
       h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
         button("应用配套 HS 核心", async () => { const result = await call("apply-core"); if (active.current) setNotice(result.alreadyActive ? "当前已是配套 HS 核心。" : "已登记更新；排空完成后由 HS 自动切换。"); await refresh(); }, draining || ["switching", "verifying"].includes(intent?.phase)),

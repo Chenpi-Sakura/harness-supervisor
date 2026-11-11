@@ -1,4 +1,4 @@
-name: Publish DSH plugin
+name: Publish core and DSH plugin
 
 on:
   push:
@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
+      core_name: ${{ steps.release.outputs.core_name }}
+      core_tarball: ${{ steps.release.outputs.core_tarball }}
       plugin_tarball: ${{ steps.release.outputs.plugin_tarball }}
     steps:
       - uses: actions/checkout@v7
@@ -54,7 +56,7 @@ jobs:
     if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -71,11 +73,18 @@ jobs:
         with:
           name: npm-release
           path: release/npm/
-      - name: Verify the built artifacts and published version
+      - name: Verify the built artifacts and published versions
         id: registry
         run: node .github/scripts/npm-release.mjs published
+      - name: Publish the prebuilt core using OIDC
+        if: steps.registry.outputs.core_published != 'true'
+        env:
+          CORE_TARBALL: ${{ needs.build.outputs.core_tarball }}
+        run: npm publish "./release/npm/$CORE_TARBALL" --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org
       - name: Publish the prebuilt plugin using OIDC
-        if: steps.registry.outputs.published != 'true'
+        if: steps.registry.outputs.plugin_published != 'true'
         env:
           PLUGIN_TARBALL: ${{ needs.build.outputs.plugin_tarball }}
         run: npm publish "./release/npm/$PLUGIN_TARBALL" --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org
+      - name: Confirm both package versions are public
+        run: node .github/scripts/npm-release.mjs verify-published

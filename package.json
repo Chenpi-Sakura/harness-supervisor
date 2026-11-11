@@ -1,12 +1,18 @@
 {
   "name": "harness-supervisor",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "A small lifecycle and messaging layer for native AI agent harnesses (Pi first).",
   "type": "module",
   "license": "MIT",
+  "homepage": "https://gitcode.com/chenpi_1/harness-supervisor",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Chenpi-Sakura/harness-supervisor.git"
+  },
   "bin": {
     "harness-supervisor": "dist/src/cli.js",
-    "harness-sup": "dist/src/cli.js"
+    "harness-sup": "dist/src/cli.js",
+    "harness-sup-mcp": "dist/src/mcp.js"
   },
   "exports": {
     ".": {

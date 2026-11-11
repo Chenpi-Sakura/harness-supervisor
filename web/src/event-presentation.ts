@@ -14,6 +14,11 @@ export interface EventPresentation {
   failed: boolean;
 }
 
+export interface TimelineEntry {
+  events: TimelineEvent[];
+  recordedText?: string;
+}
+
 const SUMMARY_LIMIT = 180;
 
 function text(data: Record<string, unknown>, ...keys: string[]): string {
@@ -29,6 +34,48 @@ function compact(value: string): string {
   if (line.length <= SUMMARY_LIMIT) return line;
   const characters = Array.from(line);
   return characters.length > SUMMARY_LIMIT ? `${characters.slice(0, SUMMARY_LIMIT - 1).join("")}…` : line;
+}
+
+function recordedOutput(event: TimelineEvent): string | undefined {
+  if (event.type !== "run.progress" || !["thinking", "assistant_message"].includes(String(event.data?.kind))) return undefined;
+  // Never trim a delta: its leading/trailing whitespace joins adjacent words.
+  if (typeof event.data?.preview === "string") return event.data.preview;
+  if (typeof event.data?.detail === "string") return event.data.detail;
+  return undefined;
+}
+
+function isThinkingDelta(event: TimelineEvent, runtime?: string): boolean {
+  // These adapters map ACP agent_thought_chunk to exactly this shape. Pi does
+  // not record thinking deltas. Other/extended shapes may be snapshots, so do
+  // not guess their semantics (nor those of assistant_message).
+  return ["qoder", "mcode", "dsh"].includes(runtime ?? "") && event.type === "run.progress" &&
+    event.data?.kind === "thinking" && typeof event.data.preview === "string" &&
+    Object.keys(event.data).every(key => ["kind", "preview"].includes(key));
+}
+
+/** Presentation only: source events, sequence numbers and cursors stay intact. */
+export function buildTimelineEntries(events: TimelineEvent[], runtime?: string): TimelineEntry[] {
+  const entries: TimelineEntry[] = [];
+  for (const event of events) {
+    const previous = entries.at(-1);
+    const last = previous?.events.at(-1);
+    if (previous && last && event.seq === last.seq + 1 && isThinkingDelta(last, runtime) && isThinkingDelta(event, runtime)) {
+      previous.events.push(event);
+      previous.recordedText = (previous.recordedText ?? "") + (recordedOutput(event) ?? "");
+    } else {
+      entries.push({ events: [event], recordedText: recordedOutput(event) });
+    }
+  }
+  return entries;
+}
+
+export function presentTimelineEntry(entry: TimelineEntry): EventPresentation {
+  const presentation = presentEvent(entry.events[0]!);
+  return entry.recordedText === undefined ? presentation : { ...presentation, summary: compact(entry.recordedText) || "已记录" };
+}
+
+export function timelineEntrySearchText(entry: TimelineEntry): string {
+  return `${entry.recordedText ?? ""} ${entry.events.map(event => eventSearchText(event, presentEvent(event), eventDataJson(event))).join(" ")}`.toLocaleLowerCase();
 }
 
 function joined(...parts: string[]): string {

@@ -1,12 +1,12 @@
 # DSH Harness Supervisor
 
-将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。支持 DSH `0.2.2-rc.1`，配套 HS `0.10.1`；其他 DSH 版本尚需验收。
+将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。支持 DSH `0.2.2-rc.1`，配套 HS `0.10.2`；其他 DSH 版本尚需验收。
 
 [项目仓库](https://gitcode.com/chenpi_1/harness-supervisor) · [完整项目 README](https://gitcode.com/chenpi_1/harness-supervisor/blob/main/README.md)
 
 ## 安装与使用
 
-在 DSH 插件管理器安装 `dsh-harness-supervisor-0.1.1.tgz` 并启用。安装包包含核心、依赖和共用 WebUI，无需额外安装 HS 或编译。
+在 DSH 插件管理器安装 `dsh-harness-supervisor-0.1.2.tgz` 并启用。安装包包含核心、依赖和共用 WebUI，无需额外安装 HS 或编译。
 
 从左侧导航、会话顶部或设置中的 **Harness Supervisor** 打开共用 WebUI。人工视图可查看全部 Worker，默认只展开当前对话分组；没有当前对话时也可在左侧导航和设置页查看。也可用 `/hs` 在右侧浏览器打开同样的全局视图。支持 DSH Desktop 和本机 DSH Web；禁用或卸载插件不会停止已有 Worker。
 
@@ -42,7 +42,7 @@ npm run build
 先在仓库根目录运行 `npm run build`、`npm run pack:core`，再在插件目录打包：
 
 ```powershell
-npm run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.1.tgz
+npm run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.2.tgz
 ```
 
 HS 核心发布物已包含经过根锁文件校验的生产依赖。插件打包只解包该固定压缩包，对照 `production-lock.json` 核对依赖版本，再使用 npm `bundleDependencies` 制作可直接安装的发布物；不重新解析依赖版本，不执行安装脚本。DSH SDK、React 等宿主能力不随插件重复打包。

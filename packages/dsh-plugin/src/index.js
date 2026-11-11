@@ -16,7 +16,7 @@ export const Config = z.object({
 });
 
 const coreRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve("harness-supervisor"))), "../..");
-const EXPECTED_CORE_VERSION = "0.10.1";
+const EXPECTED_CORE_VERSION = "0.10.2";
 
 export function assertCapabilities(info) {
   const required = ["ownerScope", "webUi", "managedRuntime", "drain"];
@@ -72,7 +72,7 @@ export async function apply(ctx, config) {
   const rpc = createRpcHandler({
     agents: ctx.agents, namespace, request,
     status: async () => ({
-      pluginVersion: "0.1.1", pairedCoreVersion: EXPECTED_CORE_VERSION,
+      pluginVersion: "0.1.2", pairedCoreVersion: EXPECTED_CORE_VERSION,
       supervisor: await request("info"), update: await request("runtime_update_status"),
       sessions: [...connections].map(([agent, status]) => ({ sessionId: agent.id, ...status })),
     }),

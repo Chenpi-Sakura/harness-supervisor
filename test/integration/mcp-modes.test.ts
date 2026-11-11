@@ -145,18 +145,34 @@ test("MCP mode comes from CLI/env, defaults to production, and rejects invalid v
   const productionInfo = parseTool(await call(production, "supervisor_info", {}));
   assert.equal(productionInfo.mcpMode, "production");
   assert.equal(productionInfo.version, VERSION);
-  assert.ok(productionInfo.limits.maxWorkers > 0);
+  assert.equal(productionInfo.running, true);
+  assert.equal("limits" in productionInfo, false, "production info is a decision snapshot");
+  assert.equal("wake" in productionInfo, false);
+  assert.equal("stateDir" in productionInfo, false, "production info omits daemon diagnostics");
   const qoder = productionInfo.runtimes.find((runtime: { runtime: string }) => runtime.runtime === "qoder");
   assert.ok(qoder, "Qoder must remain visible");
-  assert.match(qoder.notes, /unverified/i, "the unverified Qoder steer effect must not be hidden");
-  assert.equal("stateDir" in productionInfo, false, "production info omits daemon diagnostics");
+  assert.deepEqual(qoder, { runtime: "qoder", available: true });
+  assert.doesNotMatch(
+    JSON.stringify(productionInfo),
+    /unverified/i,
+    "adapter notes belong to development, not production",
+  );
 
   const development = await connectMcp(t, stateDir, { modeEnv: "development" });
   const developmentInfo = parseTool(await call(development, "supervisor_info", {}));
   assert.equal(developmentInfo.version, VERSION);
-  assert.equal("stateDir" in developmentInfo, true, "development keeps the legacy daemon payload");
+  assert.equal("stateDir" in developmentInfo, true, "development keeps the daemon diagnostics");
   assert.equal("pid" in developmentInfo, true);
-  assert.equal("mcpMode" in developmentInfo, false);
+  assert.equal(developmentInfo.mcpMode, "development");
+  assert.equal(developmentInfo.mcpModeSource, "environment");
+  const developmentQoder = developmentInfo.runtimes.find(
+    (runtime: { runtime: string }) => runtime.runtime === "qoder",
+  );
+  assert.match(
+    developmentQoder.notes,
+    /not verified|unverified/i,
+    "the unverified Qoder steer effect must not be hidden",
+  );
 
   const overridden = await connectMcp(t, stateDir, {
     modeEnv: "development",
@@ -211,6 +227,7 @@ test("production hides diagnostics while development keeps the legacy status pay
   assert.deepEqual(
     Object.keys(spawned).sort(),
     [
+      "accepted",
       "id",
       "lastSeq",
       "lifecycle",
@@ -233,17 +250,18 @@ test("production hides diagnostics while development keeps the legacy status pay
   assert.equal(status.worker.id, spawned.id);
   assert.equal(status.worker.status, "running");
   assert.equal(status.worker.lastSeq > 0, true);
-  assert.equal(Array.isArray(status.recentEvents), true, "compact status returns lifecycle events");
-  assert.ok(status.recentEvents.length <= 10, "compact status is capped at 10 lifecycle events");
-  for (const event of status.recentEvents) {
-    assert.notEqual(event.type, "run.progress", "compact status never returns progress");
-  }
+  assert.equal("recentEvents" in status, false, "production status is a pure snapshot");
+  assert.equal("lastProgress" in status, false);
+  assert.equal("timeline" in status, false);
+  assert.equal("inputState" in status, false);
+  assert.equal(status.worker.resultAvailable, false);
   assert.equal("stderrTail" in status, false);
   assert.ok(
     Buffer.byteLength(rawText(statusCall), "utf8") <= 2048,
     "compact status stays within the 2 KiB default budget",
   );
   for (const field of [
+    "cwd",
     "pid",
     "sessionId",
     "sessionFile",
@@ -257,16 +275,23 @@ test("production hides diagnostics while development keeps the legacy status pay
   ]) {
     assert.equal(field in status.worker, false, `production status must not expose ${field}`);
   }
-  assert.equal(status.worker.cwd, cwd, "cwd stays available for artifact verification");
 
-  const statusWithEvents = parseTool(
-    await call(production, "worker_status", { workerId: spawned.id, recentEvents: 3 }),
+  const statusWithEvents = await call(production, "worker_status", {
+    workerId: spawned.id,
+    recentEvents: 3,
+  });
+  assert.equal(statusWithEvents.isError, true);
+  assert.match(
+    rawText(statusWithEvents),
+    /^UNSUPPORTED: .*worker_status\.recentEvents/,
+    "event history is read through worker_events, not status",
   );
-  assert.equal(Array.isArray(statusWithEvents.recentEvents), true);
-  assert.ok(statusWithEvents.recentEvents.length <= 3);
-  for (const event of statusWithEvents.recentEvents) {
-    assert.equal("notifyTarget" in event, false);
-  }
+  const statusWithResult = await call(production, "worker_status", {
+    workerId: spawned.id,
+    includeResult: true,
+  });
+  assert.equal(statusWithResult.isError, true);
+  assert.match(rawText(statusWithResult), /^UNSUPPORTED: .*worker_status\.includeResult/);
 
   const sent = parseTool(
     await call(production, "worker_send", {
@@ -275,13 +300,21 @@ test("production hides diagnostics while development keeps the legacy status pay
       mode: "steer",
     }),
   );
-  assert.deepEqual(Object.keys(sent).sort(), ["id", "lastSeq", "status"]);
+  assert.deepEqual(Object.keys(sent).sort(), [
+    "accepted",
+    "id",
+    "lastSeq",
+    "status",
+    "terminal",
+  ]);
   assert.equal(sent.status, "running");
 
   const cancelled = parseTool(
     await call(production, "worker_cancel", { workerId: spawned.id, timeoutMs: 10_000 }),
   );
   assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.cancellationState, "cancelled");
+  assert.equal(cancelled.terminal, true);
   assert.equal("pid" in cancelled, false);
 
   const legacySpawn = parseTool(
@@ -292,7 +325,20 @@ test("production hides diagnostics while development keeps the legacy status pay
     }),
   );
   for (const field of [
+    "cwd",
+    "createdAt",
+    "session",
+    "eventCount",
+    "resumeCount",
+    "resumeAvailable",
+    "status",
+    "lastSeq",
+    "pidAlive",
     "pid",
+  ]) {
+    assert.ok(field in legacySpawn, `development spawn must keep ${field}`);
+  }
+  for (const field of [
     "sessionId",
     "sessionFile",
     "supervisorId",
@@ -300,10 +346,10 @@ test("production hides diagnostics while development keeps the legacy status pay
     "capabilities",
     "config",
     "stats",
-    "createdAt",
     "updatedAt",
+    "schemaVersion",
   ]) {
-    assert.ok(field in legacySpawn, `development spawn must keep ${field}`);
+    assert.equal(field in legacySpawn, false, `development spawn must not expose ${field}`);
   }
   const legacyStatus = parseTool(
     await call(development, "worker_status", { workerId: legacySpawn.id }),
@@ -353,9 +399,16 @@ test("production returns a complete report once, answers native input, and prese
     1,
     "the final report must appear exactly once",
   );
-  const completedEvent = report.events.find((event: { type: string }) => event.type === "run.completed");
-  assert.ok(completedEvent);
-  assert.equal("text" in (completedEvent.data ?? {}), false, "run.completed must not repeat result.text");
+  assert.equal("events" in report, false, "default wait returns the result, not an event log");
+  const reportEvents = parseTool(
+    await call(production, "worker_events", { workerId: reportWorker.id }),
+  );
+  const completedEvent = reportEvents.events.find(
+    (event: { type: string }) => event.type === "run.completed",
+  );
+  assert.ok(completedEvent, "the completion stays available through worker_events");
+  assert.equal("data" in completedEvent, false, "production event reads return summaries only");
+  assert.equal("text" in completedEvent, false);
 
   const compactReportCall = await call(production, "worker_status", { workerId: reportWorker.id });
   const compactReport = parseTool(compactReportCall);
@@ -363,15 +416,25 @@ test("production returns a complete report once, answers native input, and prese
     Buffer.byteLength(rawText(compactReportCall), "utf8") <= 2048,
     "a 20k-char result still fits the 2 KiB default budget",
   );
-  assert.equal(compactReport.worker.result.chars, reportText.length, "the preview reports the real length");
-  assert.equal(compactReport.worker.result.truncated, true);
-  assert.ok(compactReport.worker.result.preview.length < reportText.length);
-
-  const fullReport = parseTool(
-    await call(production, "worker_status", { workerId: reportWorker.id, includeResult: true }),
+  assert.equal(compactReport.worker.resultAvailable, true);
+  assert.equal(
+    compactReport.worker.resultPreview.chars,
+    reportText.length,
+    "the preview reports the real length",
   );
-  assert.equal(fullReport.worker.result.text, reportText, "includeResult=true still returns the complete result");
-  assert.equal(fullReport.worker.result.truncated, false);
+  assert.equal(compactReport.worker.resultPreview.truncated, true);
+  assert.ok(compactReport.worker.resultPreview.preview.length < reportText.length);
+
+  const statusResultRead = await call(production, "worker_status", {
+    workerId: reportWorker.id,
+    includeResult: true,
+  });
+  assert.equal(statusResultRead.isError, true);
+  assert.match(
+    rawText(statusResultRead),
+    /^UNSUPPORTED: .*worker_status\.includeResult/,
+    "the full report is read through worker_wait, not status",
+  );
 
   const developmentWait = parseTool(
     await call(development, "worker_wait", {
@@ -493,7 +556,7 @@ test("production returns a complete report once, answers native input, and prese
   parseTool(await call(production, "worker_wait", { workerId: first.id, timeoutMs: 15_000 }));
 });
 
-test("includeResult and includeInput are independent reads", async (t) => {
+test("worker_status is a snapshot: includeInput never returns the result and wait carries it", async (t) => {
   const daemon = await TestDaemon.create("hs-mcp-faces-");
   t.after(() => daemon.stop());
   const cwd = await makeWorkspace();
@@ -525,35 +588,32 @@ test("includeResult and includeInput are independent reads", async (t) => {
   });
   const inputOnly = parseTool(inputOnlyCall);
   assert.equal(
-    "text" in (inputOnly.worker.result ?? {}),
+    "text" in (inputOnly.worker.resultPreview ?? {}),
     false,
     "includeInput must not return the full result",
   );
-  assert.equal(inputOnly.worker.result.chars, resultText.length);
-  assert.equal(inputOnly.worker.result.truncated, true);
-  assert.ok(inputOnly.worker.result.preview.length <= 1000);
+  assert.equal(inputOnly.worker.resultAvailable, true);
+  assert.equal(inputOnly.worker.resultPreview.chars, resultText.length);
+  assert.equal(inputOnly.worker.resultPreview.truncated, true);
+  assert.ok(inputOnly.worker.resultPreview.preview.length < resultText.length);
+  assert.ok(
+    Buffer.byteLength(rawText(inputOnlyCall), "utf8") <= 2048,
+    "the snapshot stays inside the default 2 KiB budget",
+  );
+  assert.equal("recentEvents" in inputOnly, false);
   t.diagnostic(`includeInput (report) response: ${Buffer.byteLength(rawText(inputOnlyCall), "utf8")} bytes`);
 
-  const inputWithEvents = parseTool(
-    await call(production, "worker_status", {
-      workerId: reportWorker.id,
-      includeInput: true,
-      recentEvents: 100,
-    }),
-  );
+  const rejectedEvents = await call(production, "worker_status", {
+    workerId: reportWorker.id,
+    includeInput: true,
+    recentEvents: 100,
+  });
+  assert.equal(rejectedEvents.isError, true);
+  assert.match(rawText(rejectedEvents), /^UNSUPPORTED: .*worker_status\.recentEvents/);
   assert.equal(
-    "text" in (inputWithEvents.worker.result ?? {}),
+    rawText(rejectedEvents).includes("FAKE_PI_REPORT_BEGIN"),
     false,
-    "includeInput must not return the full result even with recentEvents",
-  );
-  assert.ok(inputWithEvents.recentEvents.length <= 10, "status events stay capped at 10");
-  for (const event of inputWithEvents.recentEvents) {
-    assert.equal("data" in event, false, "status events are summaries, never raw payloads");
-  }
-  assert.equal(
-    JSON.stringify(inputWithEvents.recentEvents).includes("FAKE_PI_REPORT_BEGIN"),
-    false,
-    "the unrequested result must not come back through recentEvents",
+    "a rejected status read must not leak the result",
   );
 
   const askWorker = parseTool(
@@ -574,69 +634,50 @@ test("includeResult and includeInput are independent reads", async (t) => {
   const longQuestion: string = waiting.worker.pendingInput.message;
   assert.equal(longQuestion.length, 2000);
 
-  const resultOnly = parseTool(
-    await call(production, "worker_status", {
-      workerId: askWorker.id,
-      includeResult: true,
-    }),
+  const statusInput = parseTool(
+    await call(production, "worker_status", { workerId: askWorker.id }),
   );
   assert.equal(
-    typeof resultOnly.worker.pendingInput.message,
+    typeof statusInput.worker.pendingInput.message,
     "object",
-    "includeResult must keep the question a bounded preview",
+    "the default status keeps the question a bounded preview",
   );
-  assert.equal(resultOnly.worker.pendingInput.message.chars, 2000);
-  assert.equal(resultOnly.worker.pendingInput.message.truncated, true);
-  assert.ok(resultOnly.worker.pendingInput.message.preview.length <= 400);
-  assert.equal(typeof resultOnly.worker.pendingInput.seq, "number", "the request seq stays available");
-  assert.equal("result" in resultOnly.worker, false, "awaiting input has no result body");
+  assert.equal(statusInput.worker.pendingInput.message.chars, 2000);
+  assert.equal(statusInput.worker.pendingInput.message.truncated, true);
+  assert.ok(statusInput.worker.pendingInput.message.preview.length <= 400);
+  assert.equal(typeof statusInput.worker.pendingInput.seq, "number", "the request seq stays available");
+  assert.equal(statusInput.worker.resultAvailable, false);
 
-  const resultWithEvents = parseTool(
-    await call(production, "worker_status", {
-      workerId: askWorker.id,
-      includeResult: true,
-      recentEvents: 100,
-    }),
-  );
+  const rejectedResult = await call(production, "worker_status", {
+    workerId: askWorker.id,
+    includeResult: true,
+  });
+  assert.equal(rejectedResult.isError, true);
+  assert.match(rawText(rejectedResult), /^UNSUPPORTED: .*worker_status\.includeResult/);
   assert.equal(
-    typeof resultWithEvents.worker.pendingInput.message,
-    "object",
-    "includeResult must not return the full question even with recentEvents",
-  );
-  assert.ok(resultWithEvents.recentEvents.length <= 10);
-  for (const event of resultWithEvents.recentEvents) {
-    assert.equal("data" in event, false, "status events are summaries, never raw payloads");
-  }
-  assert.equal(
-    JSON.stringify(resultWithEvents.recentEvents).includes("Q".repeat(200)),
+    rawText(rejectedResult).includes("Q".repeat(200)),
     false,
-    "the unrequested question must not come back through recentEvents",
+    "a rejected status read must not leak the pending question",
   );
 
-  const both = parseTool(
+  const rejectedBoth = await call(production, "worker_status", {
+    workerId: askWorker.id,
+    includeResult: true,
+    includeInput: true,
+  });
+  assert.equal(rejectedBoth.isError, true);
+  assert.match(rawText(rejectedBoth), /^UNSUPPORTED: .*worker_status\.includeResult/);
+
+  const fullInput = parseTool(
     await call(production, "worker_status", {
       workerId: askWorker.id,
-      includeResult: true,
       includeInput: true,
     }),
   );
   assert.equal(
-    both.worker.pendingInput.message,
+    fullInput.worker.pendingInput.message,
     longQuestion,
-    "both flags return the complete pending input",
-  );
-
-  const bothReport = parseTool(
-    await call(production, "worker_status", {
-      workerId: reportWorker.id,
-      includeResult: true,
-      includeInput: true,
-    }),
-  );
-  assert.equal(
-    bothReport.worker.result.text,
-    resultText,
-    "both flags return the complete result",
+    "includeInput returns the complete pending input",
   );
 
   parseTool(
@@ -654,13 +695,14 @@ test("includeResult and includeInput are independent reads", async (t) => {
     }),
   );
 
-  const fullReport = parseTool(
-    await call(production, "worker_status", {
+  const finalWait = parseTool(
+    await call(production, "worker_wait", {
       workerId: reportWorker.id,
-      includeResult: true,
+      timeoutMs: 5_000,
+      until: "terminal",
     }),
   );
-  assert.equal(fullReport.worker.result.text, resultText, "includeResult returns the complete result");
+  assert.equal(finalWait.worker.result.text, resultText, "worker_wait returns the complete result");
 
   const failedWorker = parseTool(
     await call(production, "worker_spawn", {
@@ -669,37 +711,33 @@ test("includeResult and includeInput are independent reads", async (t) => {
       notifyTarget: { channel: "none" },
     }),
   );
-  parseTool(
+  const failedWait = parseTool(
     await call(production, "worker_wait", {
       workerId: failedWorker.id,
       timeoutMs: 15_000,
       until: "terminal",
     }),
   );
+  assert.match(failedWait.worker.error, /FAKE_PROVIDER_ERROR/);
   const failedInput = parseTool(
     await call(production, "worker_status", {
       workerId: failedWorker.id,
       includeInput: true,
     }),
   );
-  assert.equal(typeof failedInput.worker.error, "object", "error belongs to the result face");
-  assert.equal(failedInput.worker.error.truncated, false);
-  assert.ok(failedInput.worker.error.chars > 0);
-  const failedFull = parseTool(
-    await call(production, "worker_status", {
-      workerId: failedWorker.id,
-      includeResult: true,
-    }),
-  );
-  assert.match(failedFull.worker.error, /FAKE_PROVIDER_ERROR/);
+  assert.equal(typeof failedInput.worker.errorPreview, "object", "error belongs to the result face");
+  assert.equal(failedInput.worker.errorPreview.truncated, false);
+  assert.ok(failedInput.worker.errorPreview.chars > 0);
+  assert.equal(failedInput.worker.errorAvailable, true);
 });
 
-test("production event pagination stays lossless and explicit progress still works", async (t) => {
+test("production event pagination stays lossless and rejects progress bypasses", async (t) => {
   const daemon = await TestDaemon.create("hs-mcp-events-");
   t.after(() => daemon.stop());
   const cwd = await makeWorkspace();
   await daemon.start();
   const production = await connectMcp(t, daemon.stateDir, {});
+  const development = await connectMcp(t, daemon.stateDir, { modeEnv: "development" });
 
   const worker = parseTool(
     await call(production, "worker_spawn", {
@@ -730,12 +768,20 @@ test("production event pagination stays lossless and explicit progress still wor
     "compact events stay within the 4 KiB default budget",
   );
 
+  const progressBypass = await call(production, "worker_events", {
+    workerId: worker.id,
+    sinceSeq: 0,
+    limit: 2,
+    includeProgress: true,
+  });
+  assert.equal(progressBypass.isError, true);
+  assert.match(rawText(progressBypass), /^UNSUPPORTED: .*worker_events\.includeProgress/);
+
   const firstPage = parseTool(
     await call(production, "worker_events", {
       workerId: worker.id,
       sinceSeq: 0,
       limit: 2,
-      includeProgress: true,
     }),
   );
   assert.equal(firstPage.events.length, 2);
@@ -743,16 +789,23 @@ test("production event pagination stays lossless and explicit progress still wor
   assert.equal(firstPage.hasMore, true);
   assert.equal(firstPage.nextSeq, firstPage.events[1].seq);
   for (const event of firstPage.events) {
-    assert.deepEqual(Object.keys(event).filter((key) => key === "notifyTarget"), []);
+    assert.equal("data" in event, false, "production events are summaries");
+    assert.equal("notifyTarget" in event, false);
     assert.equal("workerId" in event, false);
   }
+
+  const lifecycleSeq = firstPage.events[0].seq;
+  const single = parseTool(
+    await call(production, "worker_events", { workerId: worker.id, seq: lifecycleSeq }),
+  );
+  assert.equal(single.event.seq, lifecycleSeq);
+  assert.equal("data" in single.event, false, "a single production event is still a summary");
 
   const secondPage = parseTool(
     await call(production, "worker_events", {
       workerId: worker.id,
       sinceSeq: firstPage.nextSeq,
       limit: 500,
-      includeProgress: true,
     }),
   );
   const firstSeqs = new Set(firstPage.events.map((event: { seq: number }) => event.seq));
@@ -765,42 +818,161 @@ test("production event pagination stays lossless and explicit progress still wor
   assert.ok(
     secondPage.events.every((event: { seq: number }) => event.seq > firstPage.nextSeq),
   );
+  assert.equal(
+    secondPage.events.some((event: { type: string }) => event.type === "run.progress"),
+    false,
+  );
 
-  const withProgress = parseTool(
-    await call(production, "worker_wait", {
+  const waitBypass = await call(production, "worker_wait", {
+    workerId: worker.id,
+    timeoutMs: 5_000,
+    until: "terminal",
+    includeProgress: true,
+  });
+  assert.equal(waitBypass.isError, true);
+  assert.match(rawText(waitBypass), /^UNSUPPORTED: .*worker_wait\.includeProgress/);
+
+  const typesBypass = await call(production, "worker_wait", {
+    workerId: worker.id,
+    timeoutMs: 5_000,
+    until: "event",
+    types: ["run.progress"],
+  });
+  assert.equal(typesBypass.isError, true);
+  assert.match(rawText(typesBypass), /^UNSUPPORTED: .*worker_wait\.types=run\.progress/);
+
+  const devEvents = parseTool(
+    await call(development, "worker_events", {
       workerId: worker.id,
-      timeoutMs: 5_000,
-      until: "terminal",
+      sinceSeq: 0,
+      limit: 500,
       includeProgress: true,
     }),
   );
-  assert.ok(
-    withProgress.events.some((event: { type: string }) => event.type === "run.progress"),
-    "includeProgress=true must still deliver progress in production",
-  );
-
-  const progressSeq = withProgress.events.find(
+  const progressSeq = devEvents.events.find(
     (event: { type: string }) => event.type === "run.progress",
-  ).seq;
-  const single = parseTool(
-    await call(production, "worker_events", { workerId: worker.id, seq: progressSeq }),
-  );
-  assert.equal(single.event.seq, progressSeq, "a single event is readable by seq");
-  assert.equal(single.event.type, "run.progress", "single-event reads bypass the progress filter");
-  assert.equal(typeof single.event.data, "object", "single-event reads keep the full stored data");
+  )?.seq;
+  assert.ok(progressSeq, "development still exposes raw progress");
+  const singleBypass = await call(production, "worker_events", {
+    workerId: worker.id,
+    seq: progressSeq,
+  });
+  assert.equal(singleBypass.isError, true);
+  assert.match(rawText(singleBypass), /^UNSUPPORTED: .*worker_events\.seq=/);
 
   const list = parseTool(await call(production, "worker_list", {}));
-  assert.equal(list.length, 1);
-  assert.deepEqual(Object.keys(list[0]).sort(), [
+  assert.equal(list.workers.length, 1);
+  assert.deepEqual(Object.keys(list.workers[0]).sort(), [
     "id",
     "lastSeq",
     "lifecycle",
+    "needsInput",
     "persistence",
     "runtime",
-    "session",
     "status",
     "taskId",
   ]);
+  assert.equal(list.nextCursor, null);
+  assert.equal(list.hasMore, false);
+  assert.equal("session" in list.workers[0], false);
+});
+
+test("production wait timeout returns only status and cursor", async (t) => {
+  const daemon = await TestDaemon.create("hs-mcp-timeout-");
+  t.after(() => daemon.stop());
+  const cwd = await makeWorkspace();
+  await daemon.start({ env: { FAKE_PI_SLOW_STEP_MS: "4000" } });
+  const production = await connectMcp(t, daemon.stateDir, {});
+
+  const worker = parseTool(
+    await call(production, "worker_spawn", {
+      cwd,
+      prompt: "[scenario:slow] timeout shape",
+      notifyTarget: { channel: "none" },
+    }),
+  );
+  const started = Date.now();
+  const timedOut = parseTool(
+    await call(production, "worker_wait", {
+      workerId: worker.id,
+      timeoutMs: 500,
+      until: "terminal",
+    }),
+  );
+  assert.equal(timedOut.timedOut, true);
+  assert.equal(timedOut.terminal, false);
+  assert.equal(timedOut.worker.status, "running");
+  assert.equal("events" in timedOut, false, "timeout must not dump history");
+  assert.equal("lastProgress" in timedOut, false);
+  assert.equal("timeline" in timedOut, false);
+  assert.equal("inputState" in timedOut, false);
+  assert.ok(timedOut.nextSeq >= 0);
+  assert.ok(Date.now() - started < 3_000, "the bounded wait must return near its timeout");
+
+  parseTool(await call(production, "worker_cancel", { workerId: worker.id, timeoutMs: 10_000 }));
+});
+
+test("production wait with until=event ignores progress-only wakeups", async (t) => {
+  const daemon = await TestDaemon.create("hs-mcp-event-wake-");
+  t.after(() => daemon.stop());
+  const cwd = await makeWorkspace();
+  await daemon.start();
+  const production = await connectMcp(t, daemon.stateDir, {});
+
+  const worker = parseTool(
+    await call(production, "worker_spawn", {
+      cwd,
+      prompt: "[scenario:partial] progress must not wake an event wait",
+      notifyTarget: { channel: "none" },
+    }),
+  );
+  const wait = parseTool(
+    await call(production, "worker_wait", {
+      workerId: worker.id,
+      timeoutMs: 300,
+      until: "event",
+    }),
+  );
+  assert.equal(
+    wait.timedOut,
+    true,
+    "a progress-only event must not end a production event wait",
+  );
+  assert.equal(wait.terminal, false);
+  assert.equal("events" in wait, false);
+
+  const done = parseTool(
+    await call(production, "worker_wait", { workerId: worker.id, timeoutMs: 20_000 }),
+  );
+  assert.equal(done.terminal, true);
+  assert.match(done.worker.result.text, /FAKE_PI_OK/);
+
+  const emptyTypesWorker = parseTool(
+    await call(production, "worker_spawn", {
+      cwd,
+      prompt: "[scenario:delayed-progress] empty types must not reopen the bypass",
+      notifyTarget: { channel: "none" },
+    }),
+  );
+  const emptyTypesWait = parseTool(
+    await call(production, "worker_wait", {
+      workerId: emptyTypesWorker.id,
+      timeoutMs: 1_500,
+      until: "event",
+      types: [],
+    }),
+  );
+  assert.equal(
+    emptyTypesWait.timedOut,
+    true,
+    "an empty types filter must still default to the lifecycle allowlist",
+  );
+  parseTool(
+    await call(production, "worker_cancel", {
+      workerId: emptyTypesWorker.id,
+      timeoutMs: 10_000,
+    }),
+  );
 });
 
 test("compact failure status is bounded and the full error stays retrievable", async (t) => {
@@ -828,18 +1000,23 @@ test("compact failure status is bounded and the full error stays retrievable", a
   const statusCall = await call(production, "worker_status", { workerId: worker.id });
   const status = parseTool(statusCall);
   assert.equal(status.worker.status, "failed");
-  assert.ok(status.worker.error.chars > 0, "the error is never dropped from the compact view");
+  assert.ok(
+    status.worker.errorPreview.chars > 0,
+    "the error preview is never dropped from the compact view",
+  );
+  assert.equal(status.worker.errorAvailable, true);
   assert.ok(
     Buffer.byteLength(rawText(statusCall), "utf8") <= 2048,
     "compact failure status stays within 2 KiB",
   );
 
   const full = parseTool(
-    await call(production, "worker_status", { workerId: worker.id, includeResult: true }),
+    await call(production, "worker_wait", { workerId: worker.id, timeoutMs: 5_000 }),
   );
   assert.equal(full.worker.status, "failed");
   assert.equal(typeof full.worker.error, "string");
   assert.ok(full.worker.error.length > 0);
+  assert.match(full.worker.error, /FAKE_PROVIDER_ERROR/);
 });
 
 test("complete status and default wait never leak tool calls", async (t) => {
@@ -864,21 +1041,20 @@ test("complete status and default wait never leak tool calls", async (t) => {
     }),
   );
 
-  // The complete read returns the full result/input, but `recentEvents` must
-  // still be lifecycle-only: asking for the payload is not asking for tool calls.
-  const fullStatus = parseTool(
-    await call(production, "worker_status", {
-      workerId: worker.id,
-      includeResult: true,
-      recentEvents: 100,
-    }),
+  // A snapshot read rejects both diagnostic parameters. Lifecycle history is
+  // read through worker_events, which never carries progress.
+  const rejectedStatus = await call(production, "worker_status", {
+    workerId: worker.id,
+    includeResult: true,
+    recentEvents: 100,
+  });
+  assert.equal(rejectedStatus.isError, true);
+  assert.match(rawText(rejectedStatus), /^UNSUPPORTED: .*worker_status\.includeResult/);
+  const statusSnapshot = parseTool(
+    await call(production, "worker_status", { workerId: worker.id }),
   );
-  assert.equal(
-    fullStatus.recentEvents.some((event: { type: string }) => event.type === "run.progress"),
-    false,
-    "the complete status read must not smuggle progress in through recentEvents",
-  );
-  assert.ok(fullStatus.eventsOmitted > 0, "the omitted progress is counted");
+  assert.equal("recentEvents" in statusSnapshot, false);
+  assert.equal("eventsOmitted" in statusSnapshot, false);
 
   const waited = parseTool(
     await call(production, "worker_wait", {
@@ -887,28 +1063,25 @@ test("complete status and default wait never leak tool calls", async (t) => {
       timeoutMs: 5_000,
     }),
   );
+  assert.equal("events" in waited, false, "wait does not dump events alongside the result");
+  const waitedEvents = parseTool(
+    await call(production, "worker_events", { workerId: worker.id }),
+  );
   assert.equal(
-    waited.events.some((event: { type: string }) => event.type === "run.progress"),
+    waitedEvents.events.some((event: { type: string }) => event.type === "run.progress"),
     false,
-    "a failed tool call is still tool detail, not wait output",
+    "a failed tool call is still tool detail, not a wait/event result",
   );
-  assert.ok(waited.eventsOmitted > 0);
+  assert.ok(waitedEvents.progressOmitted > 0);
 
-  const withProgress = parseTool(
-    await call(production, "worker_wait", {
-      workerId: worker.id,
-      sinceSeq: 0,
-      timeoutMs: 5_000,
-      includeProgress: true,
-    }),
-  );
-  assert.ok(
-    withProgress.events.some(
-      (event: { type: string; data?: { isError?: boolean } }) =>
-        event.type === "run.progress" && event.data?.isError === true,
-    ),
-    "includeProgress=true still exposes the failed tool call",
-  );
+  const withProgress = await call(production, "worker_wait", {
+    workerId: worker.id,
+    sinceSeq: 0,
+    timeoutMs: 5_000,
+    includeProgress: true,
+  });
+  assert.equal(withProgress.isError, true);
+  assert.match(rawText(withProgress), /^UNSUPPORTED: .*worker_wait\.includeProgress/);
 });
 
 test("production notification defaults filter unacked before the limit and never hide new records", async (t) => {
@@ -972,17 +1145,38 @@ test("production notification defaults filter unacked before the limit and never
   );
   assert.ok(inbox.notifications.every((record: { acked: boolean }) => record.acked === false));
   for (const record of inbox.notifications) {
-    assert.deepEqual(Object.keys(record).sort(), ["acked", "id", "kind", "summary", "workerId"]);
+    assert.deepEqual(Object.keys(record).sort(), [
+      "acked",
+      "actionable",
+      "createdAt",
+      "deliveryState",
+      "eventType",
+      "id",
+      "kind",
+      "seq",
+      "summary",
+      "workerId",
+    ]);
+    assert.equal("delivery" in record, false, "delivery history is a diagnostic");
+    assert.equal("target" in record, false, "production inbox omits routing metadata");
   }
   assert.equal(inbox.counts.unacked >= 1, true);
   assert.equal("target" in inbox, false, "production inbox omits routing metadata");
-  const diagnostics = parseTool(await call(production,"supervisor_notifications", {
-    state:"all", workerId:worker.id, includeDelivery:true,
-  }));
-  const diagnosticRecord = diagnostics.notifications.find((item: {workerId:string}) => item.workerId===worker.id);
-  assert.ok(diagnosticRecord?.createdAt);
-  assert.ok(diagnosticRecord?.delivery);
-  assert.deepEqual(diagnosticRecord.target,{channel:"codex-queue",codexThreadId:threadId});
+  const deliveryRead = await call(production, "supervisor_notifications", {
+    state: "all",
+    workerId: worker.id,
+    includeDelivery: true,
+  });
+  assert.equal(deliveryRead.isError, true);
+  assert.match(
+    rawText(deliveryRead),
+    /^UNSUPPORTED: .*supervisor_notifications\.includeDelivery/,
+  );
+  assert.equal(
+    rawText(deliveryRead).includes(threadId),
+    false,
+    "a rejected inbox read must not leak the routing target",
+  );
 
   const legacyInbox = parseTool(
     await call(development, "supervisor_notifications", {
@@ -1009,7 +1203,7 @@ test("production notification defaults filter unacked before the limit and never
   });
 
   const wakeTarget = parseTool(await call(production, "supervisor_wake_target", {}));
-  assert.deepEqual(wakeTarget, { channel: "none" });
+  assert.deepEqual(wakeTarget, { channel: "none", configured: false });
   assert.equal("notifications" in wakeTarget, false, "a no-arg read must not return inbox content");
 
   const ids = inbox.notifications.map((item: { id: string }) => item.id);
@@ -1058,10 +1252,14 @@ test("production surfaces UNCERTAIN over MCP and never re-executes an interrupte
   assert.match(text, /^UNCERTAIN: /);
   assert.match(text, new RegExp(requestId));
   const list = parseTool(await call(second, "worker_list", {}));
-  assert.equal(list.length, 1, "the interrupted request must not be re-executed into a second worker");
+  assert.equal(
+    list.workers.length,
+    1,
+    "the interrupted request must not be re-executed into a second worker",
+  );
 });
 
-test("production wait keeps historical completion reports across resume", async (t) => {
+test("production preserves historical completion reports across resume", async (t) => {
   const daemon = await TestDaemon.create("hs-mcp-resume-history-");
   t.after(() => daemon.stop());
   const cwd = await makeWorkspace();
@@ -1104,29 +1302,22 @@ test("production wait keeps historical completion reports across resume", async 
   );
   assert.equal(history.worker.status, "completed");
   assert.match(history.worker.result?.text ?? "", /RESUMED/);
-  const completions = history.events.filter(
+  assert.equal("events" in history, false, "wait returns the current result only");
+  const historyEvents = parseTool(
+    await call(production, "worker_events", { workerId: worker.id }),
+  );
+  const completions = historyEvents.events.filter(
     (event: { type: string }) => event.type === "run.completed",
   );
-  assert.ok(completions.length >= 2, "the response must include both completed rounds");
-  const oldCompletion = completions[0];
-  const currentCompletion = completions.at(-1);
-  assert.equal(
-    oldCompletion.data?.text,
-    "FAKE_PI_OK",
-    "the previous run's report must not be dropped after resume",
-  );
-  assert.equal(
-    "text" in (currentCompletion.data ?? {}),
-    false,
-    "the current run's result is still deduplicated",
-  );
+  assert.ok(completions.length >= 2, "both completed rounds stay visible as lifecycle events");
   assert.ok(
-    history.events.some(
-      (event: { type: string; data?: { text?: string } }) =>
-        event.type === "run.completed" && event.data?.text === "FAKE_PI_OK",
-    ),
-    "the historical completion event still carries its report",
+    completions.some((event: { summary?: string }) => event.summary === "FAKE_PI_OK"),
+    "the previous run's report survives as a summary",
   );
+  for (const event of completions) {
+    assert.equal("data" in event, false, "production completion events carry no raw payload");
+    assert.equal("text" in event, false);
+  }
 });
 
 test("a 0.6.0 daemon omits caller IPC, keeps spawn working and explains the gap", async (t) => {
@@ -1163,6 +1354,64 @@ test("a 0.6.0 daemon omits caller IPC, keeps spawn working and explains the gap"
     false,
     "an older daemon's strict spawn schema must not receive the new field",
   );
+});
+
+test("an older daemon serves worker_list page one but rejects a keyset cursor clearly", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-old-daemon-list-"));
+  const old = new OldDaemonFixture(stateDir, "0.6.0");
+  await old.start();
+  t.after(() => old.stop());
+  const production = await connectMcp(t, stateDir, {});
+
+  const first = parseTool(
+    await call(production, "worker_list", { limit: 1, includeArchived: false }),
+  );
+  assert.equal(first.workers.length, 1);
+  assert.equal(first.hasMore, true);
+  assert.ok(first.nextCursor, "page one still returns a cursor");
+
+  const second = await call(production, "worker_list", {
+    cursor: first.nextCursor,
+  });
+  assert.equal(second.isError, true);
+  assert.match(
+    rawText(second),
+    /^UNSUPPORTED: worker_list cursor pagination requires supervisor daemon 0\.9\.1/,
+  );
+  assert.equal(
+    old.requests.some(
+      (request) =>
+        request.method === "list" &&
+        request.params !== null &&
+        typeof request.params === "object" &&
+        "after" in request.params,
+    ),
+    false,
+    "the MCP must not send the 0.9.1 keyset key to an older daemon",
+  );
+});
+
+test("production resume tolerates an older daemon without a session projection", async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-old-daemon-resume-"));
+  const old = new OldDaemonFixture(stateDir, "0.6.0");
+  await old.start();
+  t.after(() => old.stop());
+  const production = await connectMcp(t, stateDir, {});
+
+  const resumed = parseTool(
+    await call(production, "worker_resume", {
+      workerId: "w-old-fixture",
+      prompt: "continue old work",
+      notifyTarget: { channel: "none" },
+    }),
+  );
+  assert.equal(resumed.accepted, true);
+  assert.equal(
+    "sessionRestored" in resumed,
+    false,
+    "an unreported old-daemon restore result must stay absent, not become false",
+  );
+  assert.equal("session" in resumed, false, "missing old-daemon data is not fabricated");
 });
 
 test("new MCP refuses production on a 0.2 daemon but development uses the legacy target read", async (t) => {
@@ -1212,6 +1461,7 @@ test("new MCP refuses production on a 0.2 daemon but development uses the legacy
   assert.deepEqual(target, {
     channel: "codex-queue",
     codexThreadId: "old-default-thread",
+    configured: true,
   });
   assert.equal("notifications" in target, false);
   assert.equal(JSON.stringify(target).includes("old inbox only"), false);

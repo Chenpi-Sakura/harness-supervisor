@@ -1,0 +1,392 @@
+{
+  "schemaVersion": 1,
+  "ranAt": "2026-11-10T14:59:01.050Z",
+  "host": "win32 10.0.26300 / Node v24.21.0",
+  "mcpMode": "production",
+  "runtimes": {
+    "qoder": {
+      "runtime": "qoder",
+      "version": "1.1.82",
+      "prompt": "不要调用任何工具，不要修改或读取文件。只回复下面这一行，不要添加其他内容：QODER_MCP_OK_261110",
+      "error": null,
+      "spawn": {
+        "bytes": 536,
+        "keys": [
+          "accepted",
+          "id",
+          "lastSeq",
+          "lifecycle",
+          "notificationBinding",
+          "notifyTarget",
+          "persistence",
+          "runtime",
+          "session",
+          "status",
+          "taskId"
+        ],
+        "status": "running"
+      },
+      "wait": {
+        "bytes": 355,
+        "calls": 1,
+        "totalBytes": 355,
+        "keys": [
+          "hasMore",
+          "nextSeq",
+          "terminal",
+          "timedOut",
+          "worker"
+        ],
+        "workerKeys": [
+          "id",
+          "lastSeq",
+          "lifecycle",
+          "persistence",
+          "result",
+          "resumeAvailable",
+          "runtime",
+          "session",
+          "status",
+          "taskId"
+        ],
+        "status": "completed",
+        "terminal": true,
+        "resultLength": 19,
+        "resultTruncated": false,
+        "tokenPresent": true,
+        "tokenOccurrences": 1,
+        "eventsPresent": false
+      },
+      "status": {
+        "bytes": 406,
+        "keys": [
+          "worker"
+        ],
+        "workerKeys": [
+          "errorAvailable",
+          "id",
+          "lastEvent",
+          "lastSeq",
+          "lifecycle",
+          "persistence",
+          "resultAvailable",
+          "resultPreview",
+          "resumeAvailable",
+          "runtime",
+          "session",
+          "status",
+          "taskId"
+        ],
+        "status": "completed",
+        "resultAvailable": true,
+        "resultPreview": {
+          "chars": 19,
+          "truncated": false,
+          "previewLength": 19
+        },
+        "hasRecentEvents": false,
+        "lastEvent": {
+          "seq": 44,
+          "type": "worker.exited"
+        }
+      },
+      "events": {
+        "bytes": 544,
+        "keys": [
+          "events",
+          "eventsOmitted",
+          "hasMore",
+          "nextSeq",
+          "progressOmitted",
+          "worker"
+        ],
+        "count": 6,
+        "types": [
+          "run.accepted",
+          "run.completed",
+          "run.started",
+          "worker.exited",
+          "worker.started",
+          "worker.starting"
+        ],
+        "eventKeys": [
+          "seq",
+          "ts",
+          "type"
+        ],
+        "progressOmitted": 37,
+        "hasRunProgress": false,
+        "hasRawData": false
+      },
+      "development": {
+        "statusBytes": 7211,
+        "statusWorkerKeys": [
+          "createdAt",
+          "cwd",
+          "endedAt",
+          "eventCount",
+          "exit",
+          "firstStartedAt",
+          "id",
+          "lastSeq",
+          "lifecycle",
+          "notifyTarget",
+          "persistence",
+          "pid",
+          "pidAlive",
+          "result",
+          "resumeAvailable",
+          "resumeCount",
+          "runtime",
+          "session",
+          "startedAt",
+          "status",
+          "taskId"
+        ],
+        "eventCount": 44,
+        "progressCount": 37,
+        "progressKinds": [
+          "assistant_message",
+          "session_init",
+          "thinking",
+          "turn_complete"
+        ],
+        "eventTypes": [
+          "run.accepted",
+          "run.completed",
+          "run.progress",
+          "run.started",
+          "worker.exited",
+          "worker.session",
+          "worker.started",
+          "worker.starting"
+        ]
+      },
+      "checks": {
+        "terminal": true,
+        "completed": true,
+        "tokenPresent": true,
+        "tokenOccurrences": 1,
+        "resultNotPresentationTruncated": true,
+        "waitHasNoEvents": true,
+        "statusHasNoEvents": true,
+        "statusHasPreview": true,
+        "eventsHaveNoProgress": true,
+        "eventsHaveNoRawData": true,
+        "noProgressText": true,
+        "noThinkingDelta": true,
+        "noBannedKeys": []
+      },
+      "workerId": "w-mwatflsx-0c0a368c"
+    },
+    "mcode": {
+      "runtime": "mcode",
+      "version": "0.7.0",
+      "prompt": "不要调用任何工具，不要修改或读取文件。只回复下面这一行，不要添加其他内容：MCODE_MCP_OK_261110",
+      "error": null,
+      "spawn": {
+        "bytes": 536,
+        "keys": [
+          "accepted",
+          "id",
+          "lastSeq",
+          "lifecycle",
+          "notificationBinding",
+          "notifyTarget",
+          "persistence",
+          "runtime",
+          "session",
+          "status",
+          "taskId"
+        ],
+        "status": "running"
+      },
+      "wait": {
+        "bytes": 355,
+        "calls": 1,
+        "totalBytes": 355,
+        "keys": [
+          "hasMore",
+          "nextSeq",
+          "terminal",
+          "timedOut",
+          "worker"
+        ],
+        "workerKeys": [
+          "id",
+          "lastSeq",
+          "lifecycle",
+          "persistence",
+          "result",
+          "resumeAvailable",
+          "runtime",
+          "session",
+          "status",
+          "taskId"
+        ],
+        "status": "completed",
+        "terminal": true,
+        "resultLength": 19,
+        "resultTruncated": false,
+        "tokenPresent": true,
+        "tokenOccurrences": 1,
+        "eventsPresent": false
+      },
+      "status": {
+        "bytes": 406,
+        "keys": [
+          "worker"
+        ],
+        "workerKeys": [
+          "errorAvailable",
+          "id",
+          "lastEvent",
+          "lastSeq",
+          "lifecycle",
+          "persistence",
+          "resultAvailable",
+          "resultPreview",
+          "resumeAvailable",
+          "runtime",
+          "session",
+          "status",
+          "taskId"
+        ],
+        "status": "completed",
+        "resultAvailable": true,
+        "resultPreview": {
+          "chars": 19,
+          "truncated": false,
+          "previewLength": 19
+        },
+        "hasRecentEvents": false,
+        "lastEvent": {
+          "seq": 31,
+          "type": "worker.exited"
+        }
+      },
+      "events": {
+        "bytes": 544,
+        "keys": [
+          "events",
+          "eventsOmitted",
+          "hasMore",
+          "nextSeq",
+          "progressOmitted",
+          "worker"
+        ],
+        "count": 6,
+        "types": [
+          "run.accepted",
+          "run.completed",
+          "run.started",
+          "worker.exited",
+          "worker.started",
+          "worker.starting"
+        ],
+        "eventKeys": [
+          "seq",
+          "ts",
+          "type"
+        ],
+        "progressOmitted": 24,
+        "hasRunProgress": false,
+        "hasRawData": false
+      },
+      "development": {
+        "statusBytes": 7367,
+        "statusWorkerKeys": [
+          "createdAt",
+          "cwd",
+          "endedAt",
+          "eventCount",
+          "exit",
+          "firstStartedAt",
+          "id",
+          "lastSeq",
+          "lifecycle",
+          "notifyTarget",
+          "persistence",
+          "pid",
+          "pidAlive",
+          "result",
+          "resumeAvailable",
+          "resumeCount",
+          "runtime",
+          "session",
+          "startedAt",
+          "status",
+          "taskId"
+        ],
+        "eventCount": 31,
+        "progressCount": 24,
+        "progressKinds": [
+          "assistant_message",
+          "thinking"
+        ],
+        "eventTypes": [
+          "run.accepted",
+          "run.completed",
+          "run.progress",
+          "run.started",
+          "worker.exited",
+          "worker.session",
+          "worker.started",
+          "worker.starting"
+        ]
+      },
+      "checks": {
+        "terminal": true,
+        "completed": true,
+        "tokenPresent": true,
+        "tokenOccurrences": 1,
+        "resultNotPresentationTruncated": true,
+        "waitHasNoEvents": true,
+        "statusHasNoEvents": true,
+        "statusHasPreview": true,
+        "eventsHaveNoProgress": true,
+        "eventsHaveNoRawData": true,
+        "noProgressText": true,
+        "noThinkingDelta": true,
+        "noBannedKeys": []
+      },
+      "workerId": "w-mwatfv52-9e08944a"
+    }
+  },
+  "assertions": {},
+  "limits": {
+    "scope": "One minimal text-only task per runtime through the production MCP. No Desktop-model run, no persistent multi-turn continuity, no steering/permission flow.",
+    "result": "worker_wait keeps the complete final result. result.truncated only reflects the supervisor's storage cap, not MCP presentation truncation.",
+    "usage": "Runtime-specific usage counters are not part of this acceptance; only response fields and payload leakage are checked."
+  },
+  "supervisor": {
+    "bytes": 246,
+    "keys": [
+      "mcpMode",
+      "running",
+      "runtimes",
+      "version",
+      "workers"
+    ],
+    "version": "0.9.1",
+    "mcpMode": "production",
+    "runtimes": [
+      {
+        "runtime": "pi",
+        "available": true
+      },
+      {
+        "runtime": "qoder",
+        "available": true
+      },
+      {
+        "runtime": "mcode",
+        "available": true
+      },
+      {
+        "runtime": "dsh",
+        "available": true
+      }
+    ]
+  }
+}

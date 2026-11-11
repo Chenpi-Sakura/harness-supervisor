@@ -14,8 +14,10 @@ import {
   readCompactEvents,
   resultPreview,
   singleEventView,
+  singleProductionEventView,
   textPreview,
 } from "../../src/context-budget.js";
+import { isProductionEventType } from "../../src/event-policy.js";
 import type { ReadEventsResult, WorkerEvent, WorkerStatusResult, WorkerSummary } from "../../src/types.js";
 
 function worker(overrides: Partial<WorkerSummary> = {}): WorkerSummary {
@@ -442,4 +444,84 @@ test("readCompactEvents budgets the whole response, not just the event array", a
   assert.ok(jsonBytes(read) <= EVENTS_BUDGET_BYTES, `serialized response ${jsonBytes(read)} exceeds 4 KiB`);
   assert.ok(read.events.length > 0);
   assert.ok((read.eventsOmitted ?? 0) > 0, "trimmed events are counted, not hidden");
+});
+
+test("readCompactEvents finds the lifecycle tail after 100k progress events", async () => {
+  const events: WorkerEvent[] = [];
+  for (let seq = 1; seq <= 100_000; seq += 1) {
+    events.push(event(seq, "run.progress", { kind: "tool_start", tool: "bash" }));
+  }
+  events.push(event(100_001, "run.completed", { text: "done" }));
+
+  const started = Date.now();
+  const read = await readCompactEvents(fakeReader(events, 100_001), {
+    budgetBytes: EVENTS_BUDGET_BYTES,
+    eventFilter: (item) => isProductionEventType(item.type),
+  });
+  assert.deepEqual(read.events.map((item) => item.seq), [100_001]);
+  assert.equal(read.events[0]?.summary, "done");
+  assert.equal(read.nextSeq, 100_001);
+  assert.equal(read.hasMore, false);
+  assert.equal(read.progressOmitted, 899, "only the bounded tail window is scanned");
+  assert.ok(jsonBytes(read) <= EVENTS_BUDGET_BYTES);
+  assert.ok(Date.now() - started < 5_000, "the snapshot must not scan the whole history");
+});
+
+test("readCompactEvents advances a strict cursor across 100k progress events", async () => {
+  const events: WorkerEvent[] = [];
+  for (let seq = 1; seq <= 100_000; seq += 1) {
+    events.push(event(seq, "run.progress", { kind: "tool_start", tool: "bash" }));
+  }
+  events.push(event(100_001, "run.completed", { text: "done" }));
+
+  let cursor = 0;
+  let calls = 0;
+  let visible: Array<{ seq: number; type: string }> = [];
+  while (calls < 300) {
+    const page = await readCompactEvents(fakeReader(events, 100_001), {
+      sinceSeq: cursor,
+      limit: 500,
+      budgetBytes: EVENTS_BUDGET_BYTES,
+      eventFilter: (item) => isProductionEventType(item.type),
+    });
+    calls += 1;
+    assert.ok(page.nextSeq >= cursor, "the cursor must never move backwards");
+    assert.equal(page.events.some((item) => item.type === "run.progress"), false);
+    visible = page.events;
+    if (visible.length > 0) break;
+    cursor = page.nextSeq;
+    assert.equal(page.hasMore, true, "progress pages still report remaining history");
+  }
+  assert.deepEqual(visible.map((item) => item.seq), [100_001]);
+  assert.equal(calls, 201, "200 progress pages plus the completion page");
+});
+
+test("readCompactEvents reports production allowlist omissions separately from progress", async () => {
+  const events = [
+    event(1, "run.started"),
+    event(2, "run.usage", { totalTokens: 10 }),
+    event(3, "worker.session", { sessionId: "s-1" }),
+    event(4, "run.message_sent", { mode: "steer" }),
+    event(5, "run.completed", { text: "done" }),
+  ];
+  const read = await readCompactEvents(fakeReader(events, 5), {
+    sinceSeq: 0,
+    limit: 10,
+    budgetBytes: EVENTS_BUDGET_BYTES,
+    eventFilter: (item) => isProductionEventType(item.type),
+  });
+  assert.deepEqual(read.events.map((item) => item.type), ["run.started", "run.completed"]);
+  assert.equal(read.eventsOmitted, 3);
+  assert.equal(read.progressOmitted, 0);
+});
+
+test("singleProductionEventView keeps a summary but never returns event data", () => {
+  const item = event(9, "run.completed", { text: "FINAL_REPORT" });
+  const view = singleProductionEventView(
+    worker({ result: { text: "FINAL_REPORT", truncated: false } }),
+    item,
+  ) as Record<string, any>;
+  assert.equal(view.event.seq, 9);
+  assert.equal(view.event.summary, "FINAL_REPORT");
+  assert.equal("data" in view.event, false);
 });

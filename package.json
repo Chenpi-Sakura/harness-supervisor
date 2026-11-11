@@ -1,6 +1,6 @@
 {
   "name": "harness-supervisor",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "A small lifecycle and messaging layer for native AI agent harnesses (Pi first).",
   "type": "module",
   "license": "MIT",
@@ -42,6 +42,7 @@
     "mcp": "node dist/src/mcp.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "e2e:qoder:acp": "npm run build && node scripts/e2e-qoder-acp.mjs",
+    "e2e:mcp:runtimes": "npm run build && node scripts/e2e-mcp-runtimes.mjs",
     "e2e:dsh:acp": "npm run build && node scripts/e2e-dsh-acp.mjs",
     "e2e:codex:wake": "npm run build && node scripts/e2e-codex-wake.mjs"
   },

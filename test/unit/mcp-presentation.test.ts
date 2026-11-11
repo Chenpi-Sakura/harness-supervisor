@@ -5,12 +5,20 @@ import {
   MCP_MODE_ENV,
   formatToolError,
   presentAcceptedWorker,
-  presentEvents,
+  presentEventsDevelopment,
+  presentForgetResult,
   presentInfo,
+  presentMetricsReport,
+  presentNotificationAck,
   presentNotifications,
   presentStatus,
+  presentTaskCreated,
+  presentTaskMetrics,
+  presentUsageRecord,
   presentWait,
   presentWorkerAdmin,
+  presentWorkerDevelopment,
+  presentWorkerList,
   resolveMcpMode,
 } from "../../src/mcp-presentation.js";
 import type {
@@ -21,6 +29,7 @@ import type {
   WorkerEvent,
   WorkerSummary,
 } from "../../src/types.js";
+import type { MetricsReport, TaskMetrics, TaskRecord, UsageRecord } from "../../src/metrics.js";
 
 test("accepted worker presentation keeps the notification binding", () => {
   const worker = {
@@ -76,7 +85,9 @@ test("explicit history marks superseded input as non-actionable in production", 
   assert.equal(view.notifications[0]?.acked, false, "superseding is not a consumer acknowledgement");
   const compact = view.notifications[0] as unknown as Record<string, unknown>;
   assert.equal("delivery" in compact, false);
-  const debug = presentNotifications(result, "production", true) as {notifications: {delivery: {state: string}; createdAt: string}[]};
+  const debug = presentNotifications(result, "development") as {
+    notifications: { delivery: { state: string }; createdAt: string; target?: unknown }[];
+  };
   assert.equal(debug.notifications[0]?.delivery.state, "superseded");
   assert.equal(debug.notifications[0]?.createdAt, result.notifications[0]?.createdAt);
 });
@@ -171,7 +182,7 @@ test("production errors keep CONFLICT/UNCERTAIN identifiers but not diagnostics"
   assert.match(conflict, /requestId=req-2/);
 });
 
-test("production events remove management keys without touching user report content", () => {
+test("development events keep raw data behind the explicit worker whitelist", () => {
   const result = {
     worker: {
       id: "w-1",
@@ -191,6 +202,7 @@ test("production events remove management keys without touching user report cont
       pidAlive: null,
       resumeAvailable: false,
       schemaVersion: 1,
+      session: { available: false, restorable: false },
     } as unknown as WorkerSummary,
     events: [
       {
@@ -223,25 +235,18 @@ test("production events remove management keys without touching user report cont
     hasMore: false,
   } as unknown as ReadEventsResult;
 
-  const view = presentEvents(result, "production") as any;
-  assert.deepEqual(Object.keys(view.worker).sort(), ["id", "lastSeq", "status"]);
-  assert.equal("workerId" in view.events[0], false);
-  assert.equal("notifyTarget" in view.events[0], false);
-  assert.deepEqual(view.events[0].data, undefined, "management-only data is omitted");
-  assert.equal("data" in view.events[0], false);
-  assert.equal(view.events[1].data.sessionFile, undefined);
-  assert.equal(view.events[1].data.pid, undefined);
-  assert.equal(view.events[1].data.text, "FULL REPORT");
-  assert.deepEqual(view.events[1].data.nested, {
-    sessionFile: "user-authored field stays",
-  });
-  assert.equal(view.nextSeq, 2);
-  assert.equal(view.hasMore, false);
-
-  const development = presentEvents(result, "development") as any;
-  assert.equal(development.worker.promptPreview, "secret prompt");
+  const development = presentEventsDevelopment(result) as any;
+  assert.equal(
+    "promptPreview" in development.worker,
+    false,
+    "development is an explicit whitelist, not the raw WorkerSummary",
+  );
+  assert.equal("schemaVersion" in development.worker, false);
+  assert.equal(development.worker.eventCount, 2);
   assert.equal(development.events[0].notifyTarget.codexThreadId, "thread-1");
   assert.equal(development.events[1].data.sessionFile, "C:/secrets/session.jsonl");
+  assert.equal(development.nextSeq, 2);
+  assert.equal(development.hasMore, false);
 });
 function waitFixture(
   worker: Partial<WorkerSummary>,
@@ -265,7 +270,7 @@ function waitFixture(
   };
 }
 
-test("production wait dedupes only a completion text already returned in the current result", () => {
+test("production wait returns the final result without events unless until=event", () => {
   const oldEvent = {
     seq: 10,
     workerId: "w-1",
@@ -280,74 +285,113 @@ test("production wait dedupes only a completion text already returned in the cur
     type: "run.completed",
     data: { text: "NEW_RUN_REPORT", truncated: false, stopReason: "stop" },
   } as WorkerEvent;
-
-  // Resumed and running: worker.result is gone, so the old report must survive.
-  const running = presentWait(
-    waitFixture({ status: "running", startedAt: "2026-01-02T00:00:00.000Z" }, [oldEvent]),
-    { events: [oldEvent], eventsOmitted: 0 },
-    "production",
-  ) as any;
-  assert.equal(running.events[0].data.text, "OLD_RUN_REPORT");
-
-  // The new result exists, but only the current run's event may be deduplicated.
-  const completed = presentWait(
-    waitFixture(
-      {
-        status: "completed",
-        startedAt: "2026-01-02T00:00:00.000Z",
-        result: { text: "NEW_RUN_REPORT", truncated: false },
-      },
-      [oldEvent, currentEvent],
-    ),
-    { events: [oldEvent, currentEvent], eventsOmitted: 0 },
-    "production",
-  ) as any;
-  assert.equal(completed.events[0].data.text, "OLD_RUN_REPORT");
-  assert.equal("text" in (completed.events[1].data ?? {}), false);
-
-  // No result at all: nothing proves the text was returned, so keep it.
-  const noResult = presentWait(
-    waitFixture(
-      { status: "failed", startedAt: "2026-01-02T00:00:00.000Z", result: undefined },
-      [currentEvent],
-    ),
-    { events: [currentEvent], eventsOmitted: 0 },
-    "production",
-  ) as any;
-  assert.equal(noResult.events[0].data.text, "NEW_RUN_REPORT");
-
-  // Current 20 KB report: the 8 KB event prefix is deduplicated, the full
-  // result remains complete and the end marker occurs exactly once.
-  const fullReport = `FAKE_PI_REPORT_BEGIN
-${"R".repeat(20_000)}
-FAKE_PI_REPORT_END`;
-  const eventPrefix = `${fullReport.slice(0, 8_192)}
-...[truncated 11848 chars]`;
-  const longEvent = {
-    seq: 30,
+  const progress = {
+    seq: 21,
     workerId: "w-1",
-    ts: "2026-01-02T00:00:10.000Z",
-    type: "run.completed",
-    data: { text: eventPrefix, truncated: true },
+    ts: "2026-01-02T00:00:09.000Z",
+    type: "run.progress",
+    data: { kind: "assistant_message", preview: "streamed token" },
   } as WorkerEvent;
-  const long = presentWait(
-    waitFixture(
-      {
-        status: "completed",
-        startedAt: "2026-01-02T00:00:00.000Z",
-        result: { text: fullReport, truncated: false },
-      },
-      [longEvent],
-    ),
-    { events: [longEvent], eventsOmitted: 0 },
+
+  const completedResult = waitFixture(
+    {
+      status: "completed",
+      startedAt: "2026-01-02T00:00:00.000Z",
+      result: { text: "NEW_RUN_REPORT", truncated: false },
+    },
+    [oldEvent, progress, currentEvent],
+  );
+  const compacted = {
+    events: [oldEvent, progress, currentEvent],
+    eventsOmitted: 0,
+    progressOmitted: 1,
+  };
+
+  const defaultView = presentWait(completedResult, compacted, "production") as any;
+  assert.equal(defaultView.worker.result.text, "NEW_RUN_REPORT");
+  assert.equal("events" in defaultView, false, "completion carries the result, not an event log");
+  assert.equal("progressOmitted" in defaultView, false);
+  assert.equal("lastProgress" in defaultView, false);
+  assert.equal("timeline" in defaultView, false);
+
+  const withEvents = presentWait(completedResult, compacted, "production", {
+    includeEvents: true,
+  }) as any;
+  assert.equal(withEvents.events.length, 2, "progress is never returned in production");
+  assert.equal(
+    withEvents.events.some((event: { type: string }) => event.type === "run.progress"),
+    false,
+  );
+  assert.deepEqual(Object.keys(withEvents.events[0]).sort(), ["seq", "summary", "ts", "type"]);
+  assert.equal(withEvents.events[0].summary, "OLD_RUN_REPORT");
+  assert.equal(
+    "summary" in withEvents.events[1],
+    false,
+    "the current run's completion text already appears in worker.result",
+  );
+  assert.equal(withEvents.progressOmitted, 1);
+  assert.equal(JSON.stringify(withEvents).split("NEW_RUN_REPORT").length - 1, 1);
+
+  const manyEvents = Array.from({ length: 20 }, (_, index) => ({
+    seq: index + 1,
+    workerId: "w-1",
+    ts: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    type: "worker.started",
+    data: {},
+  })) as WorkerEvent[];
+  const manyView = presentWait(
+    waitFixture({ status: "running" }, manyEvents),
+    { events: manyEvents, eventsOmitted: 0, progressOmitted: 0 },
     "production",
+    { includeEvents: true },
   ) as any;
-  assert.equal(long.worker.result.text, fullReport);
-  assert.equal("text" in (long.events[0].data ?? {}), false);
-  assert.equal(JSON.stringify(long).split("FAKE_PI_REPORT_END").length - 1, 1);
+  assert.ok(manyView.events.length <= 10, "a wait event batch is bounded");
+  assert.ok(manyView.events.length > 0);
+  assert.equal(
+    manyView.eventsOmitted,
+    manyEvents.length - manyView.events.length,
+    "bounded wait events report what was omitted",
+  );
 });
 
-test("production presentation adds no report length limit and keeps every pendingInput field", () => {
+test("production wait timeout is a status check, not a progress dump", () => {
+  const result = {
+    ...waitFixture({ status: "running" }, []),
+    timedOut: true,
+    lastProgress: {
+      state: "available" as const,
+      text: "streamed token",
+      chars: 14,
+      truncated: false,
+      evidence: "partial_progress" as const,
+    },
+    timeline: {
+      createdAt: "2026-01-01T00:00:00.000Z",
+      resumeCount: 0,
+      segmentsTotal: 0,
+      segments: [],
+      note: "",
+    },
+    inputState: { state: "unknown" as const, nextActions: [] },
+  };
+  const view = presentWait(result, { events: [], eventsOmitted: 0 }, "production", {
+    includeEvents: true,
+  }) as any;
+  assert.deepEqual(Object.keys(view).sort(), [
+    "hasMore",
+    "nextSeq",
+    "terminal",
+    "timedOut",
+    "worker",
+  ]);
+  assert.equal(view.timedOut, true);
+  assert.equal("events" in view, false);
+  assert.equal("lastProgress" in view, false);
+  assert.equal("timeline" in view, false);
+  assert.equal("inputState" in view, false);
+});
+
+test("production status is a bounded snapshot while wait carries the full result", () => {
   const text = `BEGIN
 ${"X".repeat(100_000)}
 END`;
@@ -362,35 +406,111 @@ END`;
     createdAt: "2026-01-01T00:00:00.000Z",
     expiresAt: "2026-01-01T00:05:00.000Z",
   };
-  const view = presentStatus(
-    {
-      worker: {
-        id: "w-1",
-        runtime: "pi",
-        cwd: "C:/work",
-        status: "awaiting_input",
-        lastSeq: 10,
-        result: { text, truncated: false },
-        pendingInput,
-        resumeAvailable: false,
-      } as unknown as WorkerSummary,
-      recentEvents: [],
-      stderrTail: "diagnostic only",
+  const worker = {
+    id: "w-1",
+    runtime: "pi",
+    cwd: "C:/work",
+    status: "awaiting_input",
+    lastSeq: 10,
+    result: { text, truncated: false },
+    pendingInput,
+    resumeAvailable: false,
+    session: { available: false, restorable: false },
+  } as unknown as WorkerSummary;
+  const status = {
+    worker,
+    recentEvents: [
+      {
+        seq: 9,
+        workerId: "w-1",
+        ts: "2026-01-01T00:00:09.000Z",
+        type: "run.progress",
+        data: { kind: "assistant_message", preview: "streamed token" },
+      },
+      {
+        seq: 10,
+        workerId: "w-1",
+        ts: "2026-01-01T00:00:10.000Z",
+        type: "run.needs_input",
+        data: { requestId: "ui-1" },
+      },
+    ] as WorkerEvent[],
+    stderrTail: "diagnostic only",
+    lastProgress: {
+      state: "available" as const,
+      text: "streamed token",
+      chars: 14,
+      truncated: false,
+      evidence: "partial_progress" as const,
     },
-    "production",
-    { includeRecentEvents: false },
-  ) as any;
-  assert.equal(view.worker.result.text, text);
-  assert.equal(view.worker.result.text.length, text.length);
-  assert.deepEqual(view.worker.pendingInput, pendingInput);
+    timeline: {
+      createdAt: "2026-01-01T00:00:00.000Z",
+      resumeCount: 0,
+      segmentsTotal: 0,
+      segments: [],
+      note: "",
+    },
+    inputState: { state: "unknown" as const, nextActions: [] },
+  };
+
+  const view = presentStatus(status, "production") as any;
+  assert.deepEqual(Object.keys(view), ["worker"]);
+  assert.equal("result" in view.worker, false, "status never returns the full result");
+  assert.equal(
+    "error" in view.worker,
+    false,
+    "status never returns the full error",
+  );
+  assert.equal(view.worker.resultAvailable, true);
+  assert.equal(view.worker.errorAvailable, false);
+  assert.equal(view.worker.resultPreview.truncated, true);
+  assert.ok(view.worker.resultPreview.preview.length < text.length);
+  assert.equal("cwd" in view.worker, false);
+  assert.equal("recentEvents" in view, false);
+  assert.equal("lastProgress" in view, false);
+  assert.equal("timeline" in view, false);
+  assert.equal("inputState" in view, false);
   assert.equal("stderrTail" in view, false);
+  assert.deepEqual(view.worker.lastEvent, { seq: 10, type: "run.needs_input" });
+  assert.equal(
+    typeof view.worker.pendingInput.message,
+    "object",
+    "the default status input stays a bounded preview",
+  );
+
+  const withInput = presentStatus(status, "production", { includeInput: true }) as any;
+  assert.deepEqual(withInput.worker.pendingInput, pendingInput);
+
+  const waited = presentWait(
+    {
+      ...waitFixture(
+        {
+          status: "awaiting_input",
+          result: { text, truncated: false },
+          pendingInput,
+        },
+        [],
+      ),
+      terminal: false,
+    },
+    { events: [], eventsOmitted: 0 },
+    "production",
+  ) as any;
+  assert.equal(waited.worker.result.text, text, "wait is the full-result path");
+  assert.equal(waited.worker.result.text.length, text.length);
+  assert.deepEqual(waited.worker.pendingInput, pendingInput);
+
+  const development = presentStatus(status, "development") as any;
+  assert.equal(development.worker.result.text, text);
+  assert.deepEqual(development.worker.pendingInput, pendingInput);
+  assert.equal(development.recentEvents.length, 2);
+  assert.equal(development.stderrTail, "diagnostic only");
+  assert.equal("promptPreview" in development.worker, false);
 });
 
-test("production info keeps every advertised runtime on a terse note", () => {
-  // The adapter's own notes are written for a human reading the full runtime
-  // contract. The production presentation has to replace them, otherwise a
-  // runtime that nobody registered (a new adapter, say) leaks its whole note
-  // into the trimmed output.
+test("production info is a minimal availability snapshot; development keeps diagnostics", () => {
+  // Adapter notes run to over a thousand characters. They belong to the
+  // development diagnostics, never to the production response.
   const longNote =
     "MiniMax Code Agent Client Protocol (ACP) over ndJSON stdio. The protocol version was verified against a real 0.6.12 process: initialize, session/new, session/prompt, session/cancel and session/load all answered on the wire, and agent_message_chunk updates arrived during a live turn. session/prompt blocks until the turn ends and the agent rejects a second concurrent prompt. Steering goes through the mcode/session/steer extension and queued follow-ups through mcode/session/queue/enqueue; both require a build that advertises those extensions and are otherwise reported as unsupported. Permission requests arrive as client-side session/request_permission calls and are surfaced as awaiting_input; the reply must reuse the request id and one of the offered option ids. MiniMax Code itself defaults to bypassPermissions, so the worker asks the session to use the Ask mode unless HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE says otherwise. There is no sandbox: cwd is not a file-isolation boundary.";
   const info = {
@@ -411,6 +531,11 @@ test("production info keeps every advertised runtime on a terse note", () => {
       maxEventStringBytes: 8192,
     },
     wake: { proactive: false, channel: "none", note: "pull-based" },
+    codexSteer: {
+      status: "unavailable",
+      verified: { appServerRpc: false, modelApplied: false, desktopActiveTurn: false },
+      reason: "not exposed by this host",
+    },
     runtimes: [
       {
         runtime: "pi",
@@ -422,30 +547,9 @@ test("production info keeps every advertised runtime on a terse note", () => {
         interactiveInput: true,
         idleContinue: "L3",
         notes: longNote,
-      },      {
-        runtime: "qoder",
-        steer: true,
-        followUp: true,
-        cancel: true,
-        resume: true,
-        pause: false,
-        interactiveInput: true,
-        notes: longNote,
       },
       {
         runtime: "mcode",
-        steer: true,
-        followUp: true,
-        cancel: true,
-        resume: true,
-        pause: false,
-        interactiveInput: true,
-        notes: longNote,
-      },
-      {
-        // A runtime nobody registered yet. The production table cannot know it,
-        // so the fallback must still stay short.
-        runtime: "future-runtime",
         steer: true,
         followUp: true,
         cancel: true,
@@ -471,44 +575,69 @@ test("production info keeps every advertised runtime on a terse note", () => {
     },
   } as unknown as SupervisorInfo;
 
-  const view = presentInfo(info, "production", "production") as {
-    runtimes: { runtime: string; notes: string; idleContinue?: string }[];
-    storage?: Record<string, unknown>;
-  };
-  assert.equal(view.runtimes.length, 4);
-  assert.deepEqual(view.storage, {
-    workers: 3,
-    eventBytes: 12345,
-    largestEventFileBytes: 9000,
-    activeWorkers: 1,
-    idleWorkers: 2,
-    otherWorkers: 0,
-    startupMs: 12,
-  });
+  const view = presentInfo(info, "production", "production", "cli") as any;
+  assert.deepEqual(Object.keys(view).sort(), [
+    "mcpMode",
+    "running",
+    "runtimes",
+    "version",
+    "workers",
+  ]);
+  assert.equal(view.running, true);
+  assert.deepEqual(view.runtimes, [
+    { runtime: "pi", available: true },
+    { runtime: "mcode", available: true },
+  ]);
+  assert.deepEqual(view.workers, { active: 1, total: 3 });
+  assert.equal(view.mcpMode, "production");
   assert.equal(
-    view.runtimes.find((runtime) => runtime.runtime === "pi")?.idleContinue,
-    "L3",
-    "a verified idle-continuation level must survive the production trim",
-  );
-  assert.equal(
-    "idleContinue" in (view.runtimes.find((runtime) => runtime.runtime === "qoder") ?? {}),
+    "mcpModeSource" in view,
     false,
-    "an unverified level stays absent instead of being invented",
+    "resolved mode provenance is a diagnostic, not a production decision input",
   );
-  for (const runtime of view.runtimes) {
-    assert.notEqual(
-      runtime.notes,
-      longNote,
-      `${runtime.runtime} must not fall back to the adapter's full note in production mode`,
-    );
-    assert.ok(
-      runtime.notes.length < longNote.length / 2,
-      `${runtime.runtime} production note must stay short, got ${runtime.notes.length} chars`,
-    );
+  for (const key of ["pid", "stateDir", "supervisorId", "uptimeMs", "limits", "wake", "storage"]) {
+    assert.equal(key in view, false, `${key} must not leak into the production info`);
   }
-  const mcode = view.runtimes.find((runtime) => runtime.runtime === "mcode");
-  assert.ok(mcode, "the mcode runtime must be advertised");
-  assert.match(mcode.notes, /steer/i);
+  assert.doesNotMatch(JSON.stringify(view), /session\/prompt/);
+
+  const unknownStorage = presentInfo(
+    { ...info, storage: undefined } as unknown as SupervisorInfo,
+    "production",
+    "production",
+  ) as any;
+  assert.equal(unknownStorage.workersKnown, false);
+  assert.equal("workers" in unknownStorage, false);
+
+  const development = presentInfo(info, "development", "development", "environment") as any;
+  assert.equal(development.pid, 1);
+  assert.equal(development.stateDir, "C:/state");
+  assert.equal(development.mcpModeSource, "environment");
+  assert.deepEqual(development.limits, info.limits);
+  assert.deepEqual(development.wake, info.wake);
+  assert.deepEqual(development.storage, info.storage);
+  const pi = development.runtimes.find((runtime: { runtime: string }) => runtime.runtime === "pi");
+  assert.equal(pi.idleContinue, "L3");
+  assert.equal(pi.notes, longNote);
+});
+
+test("development worker views tolerate an old daemon without a session projection", () => {
+  const legacy = {
+    id: "w-legacy",
+    runtime: "pi",
+    cwd: "C:/work",
+    status: "completed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastSeq: 3,
+    eventCount: 3,
+    resumeCount: 0,
+    resumeAvailable: false,
+    pidAlive: null,
+  } as unknown as WorkerSummary;
+  const view = presentWorkerDevelopment(legacy) as Record<string, unknown>;
+  assert.equal("session" in view, false, "an unreported session must stay absent, not be invented");
+  assert.equal(view.id, "w-legacy");
+  assert.doesNotThrow(() => presentAcceptedWorker(legacy, "development"));
+  assert.doesNotThrow(() => presentWorkerList([legacy], "development"));
 });
 
 test("admin presentation carries management flags and hides them when absent", () => {
@@ -529,4 +658,326 @@ test("admin presentation carries management flags and hides them when absent", (
   assert.equal(managed.archived, true);
   assert.equal(managed.retiredAt, "2026-11-09T00:00:00.000Z");
   assert.equal("promptPreview" in managed, false);
+});
+
+test("worker list has one envelope in both modes and stays a summary in production", () => {
+  const worker = {
+    id: "w-1",
+    runtime: "pi",
+    cwd: "C:/work",
+    status: "awaiting_input",
+    persistence: "persistent",
+    lifecycle: "active",
+    lastSeq: 12,
+    session: {
+      available: true,
+      restorable: true,
+      ref: { runtime: "pi", runtimeInstanceRef: "r-1", sessionId: "s-1" },
+    },
+    promptPreview: "secret prompt",
+    result: { text: "secret result", truncated: false },
+  } as unknown as WorkerSummary;
+
+  const production = presentWorkerList([worker], "production", {
+    nextCursor: "w-1",
+    hasMore: true,
+  }) as any;
+  assert.deepEqual(Object.keys(production).sort(), ["hasMore", "nextCursor", "workers"]);
+  assert.equal(production.hasMore, true);
+  assert.equal(production.nextCursor, "w-1");
+  assert.deepEqual(Object.keys(production.workers[0]).sort(), [
+    "id",
+    "lastSeq",
+    "lifecycle",
+    "needsInput",
+    "persistence",
+    "runtime",
+    "status",
+  ]);
+  assert.equal(production.workers[0].needsInput, true);
+  assert.equal("cwd" in production.workers[0], false);
+  assert.equal("session" in production.workers[0], false);
+  assert.equal("result" in production.workers[0], false);
+
+  const development = presentWorkerList([worker], "development") as any;
+  assert.deepEqual(Object.keys(development).sort(), ["hasMore", "nextCursor", "workers"]);
+  assert.equal(development.nextCursor, null);
+  assert.equal(development.hasMore, false);
+  assert.equal(development.workers[0].cwd, "C:/work");
+  assert.equal(development.workers[0].session.ref.sessionId, "s-1");
+  assert.equal(
+    "promptPreview" in development.workers[0],
+    false,
+    "development is an explicit whitelist, not the raw summary",
+  );
+
+  assert.deepEqual(presentWorkerList([], "production"), {
+    workers: [],
+    nextCursor: null,
+    hasMore: false,
+  });
+});
+
+test("ack and forget projections keep decision fields in both modes", () => {
+  assert.deepEqual(
+    presentNotificationAck({ acked: 1, missing: ["n-2"] }, "production", ["n-1", "n-2"], "master"),
+    { requested: 2, acked: 1, missing: ["n-2"], by: "master" },
+  );
+  assert.deepEqual(
+    presentNotificationAck({ acked: 1, missing: [] }, "development", ["n-1"]),
+    { requested: 1, acked: 1, missing: [], requestedIds: ["n-1"] },
+  );
+
+  const forgotten = {
+    workerId: "w-1",
+    forgotten: true,
+    sessionPreserved: true as const,
+    note: "native session file was not deleted",
+  };
+  assert.deepEqual(presentForgetResult(forgotten, "production"), forgotten);
+  assert.deepEqual(presentForgetResult(forgotten, "development"), forgotten);
+});
+
+const taskFixture: TaskRecord = {
+  schemaVersion: 1,
+  id: "t-1",
+  title: "Ship 0.9.1",
+  category: "release",
+  executionMode: "delegated",
+  createdAt: "2026-11-10T00:00:00.000Z",
+  updatedAt: "2026-11-10T01:00:00.000Z",
+  workerIds: ["w-1"],
+  parentSessionRef: "session-parent",
+  acceptanceStatus: "pending",
+  reworkCount: 2,
+  interventionCount: 1,
+  createdBy: "mcp",
+};
+
+const usageFixture: UsageRecord = {
+  schemaVersion: 1,
+  id: "u-1",
+  taskId: "t-1",
+  workerId: "w-1",
+  role: "worker",
+  provider: "deepseek",
+  modelId: "deepseek-v4",
+  harness: "pi",
+  inputTokens: 100,
+  outputTokens: 50,
+  cacheReadTokens: 10,
+  cacheWriteTokens: 5,
+  reportedTotalTokens: 165,
+  usageSource: "manual",
+  attribution: "exact",
+  confidence: "verified",
+  recordedAt: "2026-11-10T00:30:00.000Z",
+  note: "measured locally",
+};
+
+const usageSummaryFixture = {
+  records: 1,
+  usableRecords: 1,
+  verifiedRecords: 1,
+  partialRecords: 0,
+  unverifiedRecords: 0,
+  unknownRecords: 0,
+  inputTokens: { value: 100, knownRecords: 1, missingRecords: 0 },
+  outputTokens: { value: 50, knownRecords: 1, missingRecords: 0 },
+  cacheReadTokens: { value: 10, knownRecords: 1, missingRecords: 0 },
+  cacheWriteTokens: { value: 5, knownRecords: 1, missingRecords: 0 },
+  reportedTotalTokens: { value: 165, knownRecords: 1, missingRecords: 0 },
+};
+
+function metricsFixture(): TaskMetrics {
+  return {
+    schemaVersion: 1,
+    task: { ...taskFixture },
+    status: "running",
+    timing: {
+      createdAt: taskFixture.createdAt,
+      firstStartedAt: taskFixture.createdAt,
+      startedAt: taskFixture.createdAt,
+      finishedAt: null,
+      endToEndMs: null,
+      waitingMs: 1000,
+    },
+    workers: [
+      {
+        workerId: "w-1",
+        missing: false,
+        runtime: "pi",
+        status: "running",
+        createdAt: taskFixture.createdAt,
+        firstStartedAt: taskFixture.createdAt,
+        startedAt: taskFixture.createdAt,
+        resumeCount: 1,
+        runMs: 5000,
+      },
+    ],
+    usage: [{ ...usageFixture } as UsageRecord],
+    usageSummary: {
+      worker: { ...usageSummaryFixture },
+      parentAttributable: { ...usageSummaryFixture, records: 0, usableRecords: 0 },
+      parentSessionLevel: { ...usageSummaryFixture, records: 0, usableRecords: 0 },
+      unverified: { records: 0, note: "no unverified usage" },
+    },
+    warnings: ["worker w-2 is missing"],
+    unknownFields: ["customField"],
+  };
+}
+
+test("production metrics summaries never carry raw usage or task diagnostics", () => {
+  const metrics = metricsFixture();
+
+  const task = presentTaskCreated({ ...taskFixture } as any, "production") as any;
+  assert.deepEqual(Object.keys(task).sort(), [
+    "category",
+    "createdAt",
+    "parentSessionRef",
+    "taskId",
+    "title",
+    "workerIds",
+  ]);
+  assert.equal("schemaVersion" in task, false);
+  assert.equal("executionMode" in task, false);
+  assert.equal("acceptanceStatus" in task, false);
+  assert.equal("reworkCount" in task, false);
+  assert.equal("createdBy" in task, false);
+
+  const production = presentTaskMetrics(metrics, "production") as any;
+  assert.equal("usage" in production, false);
+  assert.equal("schemaVersion" in production.task, false);
+  assert.deepEqual(Object.keys(production.workers[0]).sort(), [
+    "missing",
+    "runMs",
+    "status",
+    "workerId",
+  ]);
+  assert.equal("runtime" in production.workers[0], false);
+  assert.equal("resumeCount" in production.workers[0], false);
+
+  const development = presentTaskMetrics(metrics, "development") as any;
+  assert.equal(development.usage.length, 1);
+  assert.equal(development.usage[0].inputTokens, 100);
+  assert.equal(development.task.schemaVersion, 1);
+  assert.equal(development.task.reworkCount, 2);
+  assert.equal(development.workers[0].runtime, "pi");
+
+  const usage = presentUsageRecord({ ...usageFixture } as UsageRecord, "production") as any;
+  assert.equal(usage.usageId, "u-1");
+  assert.equal(usage.attribution, "exact");
+  for (const key of [
+    "schemaVersion",
+    "inputTokens",
+    "outputTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+    "reportedTotalTokens",
+    "usageSource",
+    "note",
+  ]) {
+    assert.equal(key in usage, false, `${key} must stay out of the production usage record`);
+  }
+  const usageDevelopment = presentUsageRecord(
+    { ...usageFixture } as UsageRecord,
+    "development",
+  ) as any;
+  assert.equal(usageDevelopment.inputTokens, 100);
+  assert.equal(usageDevelopment.note, "measured locally");
+});
+
+test("metrics report production tasks are a summary; development keeps task metrics", () => {
+  const metrics = metricsFixture();
+  const report = {
+    schemaVersion: 1,
+    generatedAt: "2026-11-10T02:00:00.000Z",
+    period: { since: null, until: null, field: "task.createdAt" },
+    taskCount: 1,
+    workerCount: 1,
+    counts: {
+      running: 1,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+      interrupted: 0,
+      unknown: 0,
+    },
+    usageCoverage: {
+      tasks: 1,
+      tasksWithWorkers: 1,
+      tasksWithWorkerUsage: 1,
+      tasksWithAttributableParentUsage: 0,
+      tasksWithSessionLevelParentUsage: 0,
+      tasksWithAnyUsableUsage: 1,
+      tasksWithVerifiedUsage: 1,
+      tasksWithUnverifiedUsage: 0,
+      tasksWithMissingWorkers: 0,
+      workerUsageRecords: 1,
+      parentUsageRecords: 0,
+    },
+    knownWorkerUsage: { ...usageSummaryFixture },
+    knownParentUsage: { ...usageSummaryFixture, records: 0 },
+    sessionLevelParentUsage: { ...usageSummaryFixture, records: 0 },
+    unverifiedUsage: { records: 0, taskCount: 0, note: "none" },
+    durationStats: {
+      endToEnd: {
+        knownCount: 0,
+        missingCount: 1,
+        totalMs: null,
+        avgMs: null,
+        medianMs: null,
+        minMs: null,
+        maxMs: null,
+      },
+      workerRun: {
+        knownCount: 1,
+        missingCount: 0,
+        totalMs: 5000,
+        avgMs: 5000,
+        medianMs: 5000,
+        minMs: 5000,
+        maxMs: 5000,
+      },
+      waiting: {
+        knownCount: 1,
+        missingCount: 0,
+        totalMs: 1000,
+        avgMs: 1000,
+        medianMs: 1000,
+        minMs: 1000,
+        maxMs: 1000,
+      },
+      note: "durations only cover known intervals",
+    },
+    notTracked: {
+      cost: "not tracked",
+      firstPassAcceptance: "not tracked",
+      rework: "not tracked",
+      intervention: "not tracked",
+      comparison: "not tracked",
+    },
+    unknownFields: [],
+    dataQualityWarnings: ["one missing worker"],
+    tasks: [metrics],
+  } as unknown as MetricsReport;
+
+  const production = presentMetricsReport(report, "production") as any;
+  assert.deepEqual(production.period, report.period);
+  assert.deepEqual(production.tasks, [
+    {
+      taskId: "t-1",
+      title: "Ship 0.9.1",
+      status: "running",
+      createdAt: taskFixture.createdAt,
+      workerCount: 1,
+      endToEndMs: null,
+    },
+  ]);
+  assert.equal("usage" in production.tasks[0], false);
+
+  const development = presentMetricsReport(report, "development") as any;
+  assert.equal(development.tasks[0].usage[0].inputTokens, 100);
+  assert.deepEqual(development.tasks[0].usageSummary, metrics.usageSummary);
+  assert.deepEqual(development.durationStats, report.durationStats);
 });

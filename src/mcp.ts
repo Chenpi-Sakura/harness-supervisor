@@ -10,26 +10,27 @@ import {
   EVENTS_BUDGET_BYTES,
   MAX_COMPACT_EVENTS,
   MAX_EVENT_SUMMARY_CHARS,
-  MAX_PENDING_MESSAGE_CHARS,
-  MAX_RESULT_PREVIEW_CHARS,
-  STATUS_BUDGET_BYTES,
   compactEvent,
-  compactPendingInput,
-  compactStatus,
   lifecycleEvents,
   readCompactEvents,
-  resultPreview,
   singleEventView,
-  textPreview,
+  singleProductionEventView,
 } from "./context-budget.js";
+import { filterProductionEvents, isProductionEventType, PRODUCTION_EVENT_TYPES } from "./event-policy.js";
 import {
   formatToolError,
   presentAcceptedWorker,
-  presentEvents,
+  presentEventsDevelopment,
+  presentForgetResult,
   presentInfo,
+  presentMetricsReport,
+  presentNotificationAck,
   presentNotifications,
   presentNotifyTarget,
   presentStatus,
+  presentTaskCreated,
+  presentTaskMetrics,
+  presentUsageRecord,
   presentWait,
   presentWorkerAdmin,
   presentWorkerAction,
@@ -108,9 +109,11 @@ const client = new SupervisorClient({
 const REQUIRED_DAEMON_VERSION = "0.4.0";
 const METRICS_DAEMON_VERSION = "0.5.0";
 const CALLER_BINDING_DAEMON_VERSION = "0.6.1";
+const LIST_CURSOR_DAEMON_VERSION = "0.9.1";
 let daemonSupportsNewIpc = false;
 let daemonSupportsMetrics = false;
 let daemonSupportsCallerBinding = false;
+let daemonSupportsListCursor = false;
 let daemonVersion = "unknown";
 
 function versionTuple(value: unknown): [number, number, number] | null {
@@ -154,6 +157,7 @@ async function assessDaemonCompatibility(): Promise<void> {
   daemonSupportsNewIpc = daemonAtLeast(info.version, REQUIRED_DAEMON_VERSION);
   daemonSupportsMetrics = daemonAtLeast(info.version, METRICS_DAEMON_VERSION);
   daemonSupportsCallerBinding = daemonAtLeast(info.version, CALLER_BINDING_DAEMON_VERSION);
+  daemonSupportsListCursor = daemonAtLeast(info.version, LIST_CURSOR_DAEMON_VERSION);
   if (daemonSupportsNewIpc) return;
   if (mode === "production") {
     throw new SupervisorError("UNSUPPORTED", upgradeAdvice(daemonVersion));
@@ -182,15 +186,73 @@ function fail(error: unknown) {
   };
 }
 
+function productionDiagnosticUnsupported(what: string): SupervisorError {
+  return new SupervisorError(
+    "UNSUPPORTED",
+    `${what} is not exposed in production mode. Restart this MCP server with --mode development or HARNESS_SUPERVISOR_MCP_MODE=development to inspect raw execution detail.`,
+  );
+}
+
+/**
+ * worker_list cursor is an opaque keyset position: (createdAt, id) of the last
+ * returned record. It deliberately carries no row number, so inserting or
+ * removing workers between pages cannot shift the remaining sequence.
+ */
+function encodeWorkerListCursor(worker: WorkerSummary): string {
+  return Buffer.from(
+    JSON.stringify({ v: 1, createdAt: worker.createdAt, id: worker.id }),
+    "utf8",
+  ).toString("base64url");
+}
+
+function decodeWorkerListCursor(cursor: string): { createdAt: string; id: string } {
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    ) as { v?: unknown; createdAt?: unknown; id?: unknown };
+    if (
+      parsed?.v === 1 &&
+      typeof parsed.createdAt === "string" &&
+      Number.isFinite(Date.parse(parsed.createdAt)) &&
+      new Date(parsed.createdAt).toISOString() === parsed.createdAt &&
+      typeof parsed.id === "string" &&
+      parsed.id.length > 0 &&
+      parsed.id.length <= 200
+    ) {
+      return { createdAt: parsed.createdAt, id: parsed.id };
+    }
+  } catch {
+    // Fall through to the uniform BAD_REQUEST below.
+  }
+  throw new SupervisorError(
+    "BAD_REQUEST",
+    "Invalid worker_list cursor; restart pagination without a cursor",
+    { cursor },
+  );
+}
+
 function compactWaitEvents(events: WorkerEvent[], includeProgress: boolean) {
-  if (includeProgress) return { events, eventsOmitted: 0 };
+  if (includeProgress) return { events, eventsOmitted: 0, progressOmitted: 0 };
   // `queue_cleared` is a cancellation fact (how many queued messages were
   // dropped), not a tool call. Every other run.progress event is tool or
   // assistant detail and must be requested explicitly.
   const visible = events.filter(
     (event) => event.type !== "run.progress" || event.data?.kind === "queue_cleared",
   );
-  return { events: visible, eventsOmitted: events.length - visible.length };
+  return {
+    events: visible,
+    eventsOmitted: events.length - visible.length,
+    progressOmitted: events.filter((event) => event.type === "run.progress").length,
+  };
+}
+
+function compactProductionWaitEvents(events: WorkerEvent[]) {
+  const filtered = filterProductionEvents(events);
+  return {
+    events: filtered.events,
+    eventsOmitted: filtered.eventsOmitted,
+    progressOmitted: filtered.progressOmitted,
+  };
 }
 
 const RequestIdShape = {
@@ -261,13 +323,13 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   spawn:
     "Start an independent native harness process (Pi by default) in its own working directory. Returns when the prompt is accepted, not when the task completes. Keep the returned id/lastSeq and observe with worker_wait or worker_status. Pass persistence='persistent' when the same worker should accept later Turns via worker_continue; the process still exits after each Turn, but the worker id and native session are kept. The task prompt is prefixed with the HS worker protocol: finish the run with the final answer and never call `codex queue`. When notifyTarget is omitted and the Codex host supplies per-call thread metadata, HS auto-binds this worker to the current Codex thread (source=caller); an explicit notifyTarget always wins, and the daemon default is used only when no caller identity is available. The response includes notificationBinding: effective target, source (explicit / caller / daemon-default), wake (bound / unbound), observation (wake / wait) and warnings. For a long-running independent task with wake=bound and a host known to wake this thread, end the turn after spawn instead of polling; otherwise use worker_wait. A bound target is not a guarantee of wake-up.",
   status:
-    "Return the current status, a bounded result preview (chars/truncated), a bounded pending input and the lastSeq cursor. The default response stays within 2 KiB and includes at most 10 compact lifecycle events; run.progress is never included. includeResult=true returns the full result (error belongs to this face), includeInput=true returns the complete pending input; each is independent and the other face stays a bounded preview. In production, status events are always compact summaries (at most 10, even with recentEvents); full event payloads come only from worker_events or seq=<n>. Both explicit faces still exclude run.progress. The same response includes lastProgress (stored progress text with its event seq; evidence=partial_progress is not completion), timeline (firstStartedAt, currentRunStartedAt, run segments) and inputState (pending/answered/expired/withdrawn/closed with nextActions).",
+    "Return a bounded status snapshot: identity, status, lastSeq, session availability, a bounded result/error preview (chars/truncated) and a bounded pending input. The default response stays within 2 KiB and never includes recent events, run.progress, lastProgress, timeline or inputState; worker_status is not a result API. Use worker_wait for the full final result, worker_events for lifecycle history, and supervisor_notifications for the inbox. includeInput=true returns the complete pending input while the result/error face stays a bounded preview; this explicit read may exceed the default budget. includeResult and recentEvents are rejected in production with UNSUPPORTED.",
   list:
-    "List managed workers (newest first) with id, name, runtime, status and lastSeq. Archived workers are hidden unless includeArchived=true. State persists across daemon restarts.",
+    "List managed workers (newest first) as {workers,nextCursor,hasMore}. Ordering is createdAt DESC with id as the tie-breaker. Each entry carries identity, runtime, status, persistence, lifecycle, needsInput and lastSeq; call worker_status or worker_wait for details. Archived workers are hidden unless includeArchived=true. Pass nextCursor with the same statuses/includeArchived filters to read the next page; the cursor is a keyset position, so newly added, archived or deleted workers do not shift the remaining sequence. State persists across daemon restarts.",
   events:
-    "Read lifecycle events. Without sinceSeq this is a compact tail snapshot: the newest lifecycle events, no run.progress, staying within 4 KiB. Use the returned nextSeq as the cursor; pass sinceSeq for strict incremental reads, seq=<n> to read one stored event in full (including run.progress), or includeProgress=true for the complete event stream. Never assume a truncated response is complete: eventsOmitted and progressOmitted say what was left out. A single event returns the stored text, not necessarily the runtime's original output; storedTruncated/note or data.*Truncated/originalChars say when the storage cap clipped it, and the runtime session file may hold more.",
+    "Read lifecycle events. Without sinceSeq this is a compact tail snapshot: the newest allowed lifecycle events (seq/ts/type/summary), no run.progress, staying within 4 KiB. Use nextSeq as the cursor; pass sinceSeq for strict incremental reads and use hasMore/eventsOmitted to continue. Production exposes only decision-relevant lifecycle events and caps an incremental page at 200; includeProgress=true and seq pointing to run.progress are rejected with UNSUPPORTED. A single seq returns a compact event for an allowed type. Development mode exposes raw progress and full data. Never assume a truncated response is complete: eventsOmitted and progressOmitted say what was left out.",
   wait:
-    "Bounded long-poll (default 30s, maximum 120s). MCP is pull-based: the supervisor never wakes the main agent by itself, although optional codex-queue notifications can start a turn when the host has that thread loaded. Without sinceSeq it checks current state and the latest events first, then waits from the current tail. Returns early when terminal, awaiting_input, or a requested types event appears. Ordinary run.progress is omitted unless includeProgress=true or types includes run.progress. Pass sinceSeq for strict cursor delivery. Timeout is not failure.",
+    "Bounded long-poll (default 30s, maximum 120s). MCP is pull-based: the supervisor never wakes the main agent by itself, although optional codex-queue notifications can start a turn when the host has that thread loaded. Without sinceSeq it checks current state first, then waits from the current tail. Returns early when terminal, awaiting_input, or a requested types event appears. On completion it returns the full final result; on input it returns pendingInput; on timeout only status and cursor. Ordinary progress is never returned in production: includeProgress=true or types containing run.progress is rejected with UNSUPPORTED. until='event' without types waits only for allowlisted lifecycle events, so progress alone cannot end the wait; pass explicit lifecycle types to narrow it further. Pass sinceSeq for strict cursor delivery. Timeout is not failure.",
   send:
     "Queue a steering message (before the next model turn) or follow-up (after the current run) through the native harness. Valid only while running; it returns acceptance, not completion. Pi applies both natively. Qoder 1.1.76 accepts the stream message without a verified effect on the running turn. MiniMax Code steers an active turn through its steer extension and was verified to act on it; a steer sent after the turn ended is rejected by the agent. DSH ACP exposes neither, so it returns UNSUPPORTED. This does not answer extension dialogs; use worker_answer.",
   answer:
@@ -283,9 +345,9 @@ const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
   forget:
     "Remove the HS record and event directory for a terminal worker. Pinned workers and workers with unacknowledged notifications are refused; active workers are refused. The native session file is deliberately preserved, so this is not a harness-side delete. This operation cannot be undone.",
   info:
-    "Show the supervisor version, this MCP process mode, limits, runtimes and the explicit delivery/steering boundaries. Delivery is at-least-once and is not proof of wake-up. codexSteer reports that HS does not steer a Codex Desktop active turn, even though app-server turn/steer itself was verified.",
+    "Return the supervisor version, this MCP process mode, the advertised runtimes and active/total worker counts. Production is a minimal availability snapshot: limits, wake details, storage diagnostics and runtime notes are available in development mode. Delivery remains at-least-once and does not prove wake-up.",
   notifications:
-    "Read actionable unacknowledged notifications for important lifecycle events. Superseded requests are omitted by default; state='all' includes history with actionable=false. Wake messages carry a cursor, not the report or current question: read worker_status for full result, lastProgress and inputState before acting. Filter by workerId and acknowledge processed ids afterwards. Counts are scoped explicitly: filteredCounts covers the same filter as this list (before limit), globalCounts covers the whole inbox, scope records state/workerId/limit/returned, and the legacy counts field remains the global view.",
+    "Read actionable unacknowledged notifications for important lifecycle events. Each record carries id, workerId, seq, eventType, kind, createdAt, summary, deliveryState, acked and actionable. Superseded requests are omitted by default; state='all' includes history with actionable=false. Wake messages carry a cursor, not the report or current question: read worker_wait or worker_status for the current result/input before acting. Filter by workerId and acknowledge processed ids afterwards. Delivery history and routing targets are development diagnostics; includeDelivery is rejected in production. Counts are scoped explicitly: filteredCounts covers the same filter as this list (before limit), globalCounts covers the whole inbox, scope records state/workerId/limit/returned, and the legacy counts field remains the global view.",
   ack:
     "Mark notification ids as processed. Idempotent; unknown ids are reported rather than treated as errors.",
   wakeTarget:
@@ -296,11 +358,11 @@ const DEVELOPMENT_DESCRIPTIONS: ToolDescriptions = {
   spawn:
     "Start an independent native harness process (Pi by default) in its own working directory. Returns as soon as the prompt is accepted, NOT when the task completes. Save the returned worker id and lastSeq; use worker_wait for progress/completion. Do not spawn a duplicate worker for the same task while this one is active. Pass persistence='persistent' to keep the worker available for later Turns via worker_continue after its process exits. The worker survives this MCP client disconnecting because the supervisor daemon owns it.",
   status:
-    "Return the current lifecycle status, lastSeq cursor, recent incremental events, pending input request, result/error, and the last harness stderr tail. Status 'running' means the prompt is being processed; only terminal statuses (completed, failed, cancelled, crashed, orphaned, interrupted) end the task. Development mode returns the full stored view; the compact default and the includeResult/includeInput switches apply to production mode.",
+    "Return the current lifecycle status, lastSeq cursor, recent incremental events, pending input request, result/error, and the last harness stderr tail. Status 'running' means the prompt is being processed; only terminal statuses (completed, failed, cancelled, crashed, orphaned, interrupted) end the task. This is an explicit development whitelist, not the raw stored record: it includes session availability/ref, timing, resume counters, pid/exit facts and full result/pending input. Production status is a bounded snapshot and rejects includeResult/recentEvents.",
   list:
-    "List workers managed by the supervisor, newest first. State persists across daemon restarts.",
+    "List workers managed by the supervisor, newest first, as {workers,nextCursor,hasMore}. Ordering is createdAt DESC with id as the tie-breaker; nextCursor is a keyset position, so concurrent additions, archivals and deletions do not shift the remaining sequence. Each entry is the explicit development whitelist (status, timing, session, result and lifecycle diagnostics), never the raw record. Pass nextCursor with the same filters for the next page. State persists across daemon restarts.",
   events:
-    "Read normalized events after a sequence cursor. Use the returned nextSeq as the next sinceSeq. Pass sinceSeq=0 for full stored history. This is a fast, non-blocking read; use worker_wait when you want to block for progress or completion. The default response is a compact tail snapshot (newest lifecycle events, no run.progress); pass includeProgress=true for every stored event, or seq=<n> for one event in full. Stored text may be clipped before storage; storedTruncated/note and data.*Truncated/originalChars make that explicit.",
+    "Read stored normalized events after a sequence cursor. Without sinceSeq it starts at seq 1; with sinceSeq it returns events after that cursor, up to limit (default 100, max 500). Use the returned nextSeq as the next sinceSeq. This is a fast, non-blocking read; use worker_wait to block for progress or completion. Development returns the full stored stream including run.progress and event data; includeProgress is accepted for cross-mode compatibility but does not change the development result. Pass seq=<n> for one event in full. Stored text may be clipped before storage; storedTruncated/note and data.*Truncated/originalChars make that explicit.",
   wait:
     "Bounded long-poll. MCP tools are pull-based: this call returns only when the host invokes it; the supervisor never wakes the main agent by itself (optional codex-queue notifications can start a turn only while the host has that thread loaded). Default 30s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. Normal run.progress events are omitted by default to keep context small; only queue_cleared (a cancellation fact) is retained, so tool calls and tool errors require includeProgress=true. Pass includeProgress=true (or request types=['run.progress']) for full progress, or use worker_events for complete history. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
   send:
@@ -425,99 +487,59 @@ server.registerTool(
 server.registerTool(
   "worker_status",
   {
-    title: "Get worker status and recent events",
+    title: "Get a worker status snapshot",
     description: descriptions.status,
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       workerId: z.string().min(1),
-      recentEvents: z.number().int().min(0).max(100).optional(),
+      recentEvents: z
+        .number()
+        .int()
+        .min(0)
+        .max(100)
+        .optional()
+        .describe(
+          "Development only: include recent events. Production status is a snapshot and rejects this parameter; use worker_events.",
+        ),
       includeResult: z
         .boolean()
         .optional()
         .describe(
-          "Return the full result text (production only). The pending input stays a bounded preview; pass includeInput=true as well for both. Still no run.progress",
+          "Production rejects this parameter; use worker_wait for the full result. Development returns the full result by default.",
         ),
       includeInput: z
         .boolean()
         .optional()
         .describe(
-          "Return the complete pending input (production only). The result/error face stays a bounded preview; pass includeResult=true as well for both. Still no run.progress",
+          "Return the complete pending input. The result/error face stays a bounded preview.",
         ),
     },
   },
   async (args) => {
     try {
-      if (mode === "development") {
-        const includeRecentEvents = args.recentEvents !== undefined;
+      if (mode === "production") {
+        if (args.includeResult === true) {
+          throw productionDiagnosticUnsupported("worker_status.includeResult");
+        }
+        if (args.recentEvents !== undefined) {
+          throw productionDiagnosticUnsupported("worker_status.recentEvents");
+        }
         const result = await client.request<WorkerStatusResult>("status", {
           workerId: args.workerId,
-          recentEvents: includeRecentEvents ? args.recentEvents : 20,
-        });
-        return ok(presentStatus(result, mode, { includeRecentEvents }));
-      }
-      if (args.includeResult !== true && args.includeInput !== true) {
-        const result = await client.request<WorkerStatusResult>("status", {
-          workerId: args.workerId,
-          recentEvents: args.recentEvents ?? 100,
+          // Ten lifecycle events are enough to derive lastEvent without
+          // turning the status read into an event listing.
+          recentEvents: 10,
         });
         return ok(
-          compactStatus(result, {
-            budgetBytes: STATUS_BUDGET_BYTES,
-            eventLimit: Math.min(args.recentEvents ?? MAX_COMPACT_EVENTS, MAX_COMPACT_EVENTS),
-          }),
+          presentStatus(result, mode, { includeInput: args.includeInput === true }),
         );
       }
-      // The two faces are independent: asking for the full result must not also
-      // return the full pending input, and asking for the full input must not
-      // return the full result. Only the requested face is exempt from the
-      // default budget; the other one keeps a bounded preview.
       const includeRecentEvents = args.recentEvents !== undefined;
-      const requestedEvents = args.recentEvents ?? 0;
       const result = await client.request<WorkerStatusResult>("status", {
         workerId: args.workerId,
-        recentEvents: includeRecentEvents ? requestedEvents : 0,
+        recentEvents: includeRecentEvents ? args.recentEvents : 20,
       });
-      // Status events are always compact summaries in production. Returning the
-      // raw stored payload here would smuggle the unrequested face back in
-      // (`run.completed.data.text`, `run.failed.data.error`,
-      // `run.needs_input.data.message`). Full events stay in worker_events/seq.
-      const eventLimit = Math.min(requestedEvents, MAX_COMPACT_EVENTS);
-      const lifecycle = lifecycleEvents(result.recentEvents);
-      const kept = lifecycle.slice(Math.max(0, lifecycle.length - eventLimit));
-      const presented = presentStatus(
-        { ...result, recentEvents: [] },
-        mode,
-        { includeRecentEvents: false },
-      ) as {
-        worker: { result?: unknown; error?: unknown; pendingInput?: unknown; [key: string]: unknown };
-        recentEvents?: unknown[];
-        eventsOmitted?: number;
-      };
-      if (includeRecentEvents) {
-        presented.recentEvents = kept.map((event) =>
-          compactEvent(event, result.worker, MAX_EVENT_SUMMARY_CHARS),
-        );
-        const omitted = result.recentEvents.length - kept.length;
-        if (omitted > 0) presented.eventsOmitted = omitted;
-      }
-      if (args.includeResult !== true) {
-        if (result.worker.result) {
-          presented.worker.result = resultPreview(
-            result.worker.result,
-            MAX_RESULT_PREVIEW_CHARS,
-          );
-        }
-        if (result.worker.error !== undefined) {
-          presented.worker.error = textPreview(result.worker.error, MAX_RESULT_PREVIEW_CHARS);
-        }
-      }
-      if (args.includeInput !== true && result.worker.pendingInput) {
-        presented.worker.pendingInput = compactPendingInput(
-          result.worker.pendingInput,
-          MAX_PENDING_MESSAGE_CHARS,
-        );
-      }
-      return ok(presented);
+      return ok(presentStatus(result, mode, { includeRecentEvents }));
     } catch (error) {
       return fail(error);
     }
@@ -546,22 +568,43 @@ server.registerTool(
           ]),
         )
         .optional(),
-      limit: z.number().int().min(1).max(500).optional(),
+      limit: z.number().int().min(1).max(200).optional(),
+      cursor: z
+        .string()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe(
+          "Opaque keyset cursor from a previous worker_list response. Reuse the same statuses/includeArchived filters; changing them invalidates the traversal.",
+        ),
       includeArchived: z.boolean().optional(),
     },
   },
   async (args) => {
     try {
-      return ok(
-        presentWorkerList(
-          await client.request<WorkerSummary[]>("list", {
-            statuses: args.statuses as WorkerStatus[] | undefined,
-            limit: args.limit,
-            includeArchived: args.includeArchived,
-          }),
-          mode,
-        ),
-      );
+      const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
+      const after =
+        args.cursor !== undefined ? decodeWorkerListCursor(args.cursor) : undefined;
+      if (after && !daemonSupportsListCursor) {
+        throw new SupervisorError(
+          "UNSUPPORTED",
+          `worker_list cursor pagination requires supervisor daemon ${LIST_CURSOR_DAEMON_VERSION} or newer; the connected daemon is ${daemonVersion}. The first page is still available without a cursor. Restart or upgrade the daemon, then restart this MCP server; the MCP server never replaces a running daemon.`,
+        );
+      }
+      // Fetch one extra row to prove hasMore without a second IPC round trip.
+      const all = await client.request<WorkerSummary[]>("list", {
+        statuses: args.statuses as WorkerStatus[] | undefined,
+        limit: Math.min(limit + 1, 500),
+        ...(args.includeArchived === true ? { includeArchived: true } : {}),
+        ...(after ? { after } : {}),
+      });
+      const page = all.slice(0, limit);
+      const hasMore = all.length > limit;
+      const nextCursor =
+        hasMore && page.length > 0
+          ? encodeWorkerListCursor(page[page.length - 1]!)
+          : null;
+      return ok(presentWorkerList(page, mode, { nextCursor, hasMore }));
     } catch (error) {
       return fail(error);
     }
@@ -583,15 +626,22 @@ server.registerTool(
         .int()
         .min(1)
         .optional()
-        .describe("Read exactly one stored event by seq, in full (overrides the compact view)"),
+        .describe(
+          "Read exactly one stored event by seq. Development returns it in full; production returns a compact allowed lifecycle event and rejects run.progress.",
+        ),
       includeProgress: z
         .boolean()
         .optional()
-        .describe("Return the complete stored event stream including run.progress"),
+        .describe(
+          "Development already returns the complete stored stream; this flag is accepted for compatibility and has no additional effect. Production rejects it with UNSUPPORTED.",
+        ),
     },
   },
   async (args) => {
     try {
+      if (mode === "production" && args.includeProgress === true) {
+        throw productionDiagnosticUnsupported("worker_events.includeProgress");
+      }
       if (args.seq !== undefined) {
         const window = await client.request<ReadEventsResult>("events", {
           workerId: args.workerId,
@@ -605,9 +655,17 @@ server.registerTool(
             seq: args.seq,
           });
         }
+        if (mode === "production") {
+          if (!isProductionEventType(event.type)) {
+            throw productionDiagnosticUnsupported(
+              `worker_events.seq=${args.seq} (${event.type})`,
+            );
+          }
+          return ok(singleProductionEventView(window.worker, event));
+        }
         return ok(singleEventView(window.worker, event));
       }
-      if (mode === "production" && args.includeProgress !== true) {
+      if (mode === "production") {
         return ok(
           await readCompactEvents(
             (options) =>
@@ -616,7 +674,14 @@ server.registerTool(
                 sinceSeq: options.sinceSeq,
                 limit: options.limit,
               }),
-            { sinceSeq: args.sinceSeq, limit: args.limit, budgetBytes: EVENTS_BUDGET_BYTES },
+            {
+              sinceSeq: args.sinceSeq,
+              // Production incremental reads are capped at 200 events per page;
+              // the 4 KiB budget trims the response further.
+              limit: args.limit === undefined ? undefined : Math.min(args.limit, 200),
+              budgetBytes: EVENTS_BUDGET_BYTES,
+              eventFilter: (event) => isProductionEventType(event.type),
+            },
           ),
         );
       }
@@ -625,7 +690,7 @@ server.registerTool(
         sinceSeq: args.sinceSeq ?? 0,
         limit: args.limit ?? 100,
       });
-      return ok(presentEvents(result, mode));
+      return ok(presentEventsDevelopment(result));
     } catch (error) {
       return fail(error);
     }
@@ -643,19 +708,52 @@ server.registerTool(
       sinceSeq: z.number().int().min(0).optional().describe("Strict cursor: return only events with seq > sinceSeq"),
       timeoutMs: z.number().int().min(0).max(120_000).optional(),
       until: z.enum(["terminal", "event"]).optional(),
-      types: z.array(z.string()).max(30).optional().describe("Wake early on any of these event types"),
+      types: z
+        .array(z.string())
+        .max(30)
+        .optional()
+        .describe(
+          "Wake early on any of these event types. Production accepts only lifecycle types; run.progress is rejected.",
+        ),
       includeProgress: z
         .boolean()
         .optional()
-        .describe("Include run.progress events (tool/turn/assistant updates). Defaults to false; use worker_events for full history"),
+        .describe(
+          "Development only: include run.progress events. Production rejects this with UNSUPPORTED; use worker_events in development for full history.",
+        ),
     },
   },
   async (args) => {
     const timeoutMs = args.timeoutMs ?? 30_000;
     const until = args.until ?? "terminal";
-    const includeProgress =
-      args.includeProgress === true || (args.types?.includes("run.progress") ?? false);
     try {
+      if (mode === "production") {
+        if (args.includeProgress === true) {
+          throw productionDiagnosticUnsupported("worker_wait.includeProgress");
+        }
+        const unsupportedType = args.types?.find((type) => !isProductionEventType(type));
+        if (unsupportedType !== undefined) {
+          throw productionDiagnosticUnsupported(
+            `worker_wait.types=${unsupportedType}`,
+          );
+        }
+      }
+      const includeProgress =
+        args.includeProgress === true || (args.types?.includes("run.progress") ?? false);
+      const compact = (events: WorkerEvent[]) =>
+        mode === "production"
+          ? compactProductionWaitEvents(events)
+          : compactWaitEvents(events, includeProgress);
+      const includeEvents = mode === "development" || until === "event";
+      // Production must not wake on a progress-only event when the caller asks
+      // for an event without a type filter. Restrict the IPC wait itself to the
+      // lifecycle allowlist instead of returning an empty result per progress.
+      const waitTypes =
+        mode === "production" &&
+        until === "event" &&
+        (args.types === undefined || args.types.length === 0)
+          ? [...PRODUCTION_EVENT_TYPES]
+          : args.types;
       let sinceSeq = args.sinceSeq;
       if (sinceSeq === undefined) {
         const snapshot = await client.request<WorkerStatusResult>("status", {
@@ -675,10 +773,7 @@ server.registerTool(
           needsInput ||
           (until === "event" && typeFilter !== null && matched.length > 0)
         ) {
-          const compacted = compactWaitEvents(
-            terminal || needsInput ? recent : matched,
-            includeProgress,
-          );
+          const compacted = compact(terminal || needsInput ? recent : matched);
           return ok(
             presentWait(
               {
@@ -694,6 +789,7 @@ server.registerTool(
               },
               compacted,
               mode,
+              { includeEvents },
             ),
           );
         }
@@ -706,12 +802,12 @@ server.registerTool(
           sinceSeq,
           timeoutMs,
           until,
-          types: args.types,
+          types: waitTypes,
         },
         { timeoutMs: timeoutMs + 10_000 },
       );
-      const compacted = compactWaitEvents(result.events, includeProgress);
-      return ok(presentWait(result, compacted, mode));
+      const compacted = compact(result.events);
+      return ok(presentWait(result, compacted, mode, { includeEvents }));
     } catch (error) {
       return fail(error);
     }
@@ -791,16 +887,14 @@ server.registerTool(
         : args.confirmed !== undefined
           ? { confirmed: args.confirmed }
           : { value: args.value! };
-      return ok(
-        presentWorkerAction(
-          await client.request<WorkerSummary>("answer", {
-            workerId: args.workerId,
-            requestId: args.requestId,
-            response,
-          }),
-          mode,
-        ),
-      );
+      const worker = await client.request<WorkerSummary>("answer", {
+        workerId: args.workerId,
+        requestId: args.requestId,
+        response,
+      });
+      const presented = presentWorkerAction(worker, mode) as Record<string, unknown>;
+      presented.requestId = args.requestId;
+      return ok(presented);
     } catch (error) {
       return fail(error);
     }
@@ -820,16 +914,19 @@ server.registerTool(
   async (args) => {
     try {
       const timeoutMs = args.timeoutMs ?? 20_000;
-      return ok(
-        presentWorkerAction(
-          await client.request<WorkerSummary>(
-            "cancel",
-            { workerId: args.workerId, timeoutMs },
-            { timeoutMs: timeoutMs + 15_000 },
-          ),
-          mode,
-        ),
+      const worker = await client.request<WorkerSummary>(
+        "cancel",
+        { workerId: args.workerId, timeoutMs },
+        { timeoutMs: timeoutMs + 15_000 },
       );
+      const presented = presentWorkerAction(worker, mode) as Record<string, unknown>;
+      presented.cancellationState =
+        worker.status === "cancelled"
+          ? "cancelled"
+          : isTerminal(worker.status)
+            ? "terminal"
+            : "requested";
+      return ok(presented);
     } catch (error) {
       return fail(error);
     }
@@ -851,26 +948,26 @@ server.registerTool(
   },
   async (args) => {
     try {
-      return ok(
-        presentAcceptedWorker(
-          await client.request<WorkerSummary>(
-            "resume",
-            {
-              workerId: args.workerId,
-              prompt: args.prompt,
-              model: args.model,
-              provider: args.provider,
-              tools: args.tools,
-              thinking: args.thinking,
-              maxDurationMs: args.maxDurationMs,
-              requestId: args.requestId,
-              notifyTarget: args.notifyTarget,
-            },
-            { timeoutMs: 90_000 },
-          ),
-          mode,
-        ),
+      const worker = await client.request<WorkerSummary>(
+        "resume",
+        {
+          workerId: args.workerId,
+          prompt: args.prompt,
+          model: args.model,
+          provider: args.provider,
+          tools: args.tools,
+          thinking: args.thinking,
+          maxDurationMs: args.maxDurationMs,
+          requestId: args.requestId,
+          notifyTarget: args.notifyTarget,
+        },
+        { timeoutMs: 90_000 },
       );
+      const presented = presentAcceptedWorker(worker, mode) as Record<string, unknown>;
+      // Daemons before 0.9.0 have no session projection. Omit the field rather
+      // than claiming a restore result that the daemon did not report.
+      if (worker.session) presented.sessionRestored = worker.session.available === true;
+      return ok(presented);
     } catch (error) {
       return fail(error);
     }
@@ -957,9 +1054,10 @@ server.registerTool(
   },
   async (args) => {
     try {
-      return ok(
-        await client.request<ForgetWorkerResult>("forget", { workerId: args.workerId }),
-      );
+      const result = await client.request<ForgetWorkerResult>("forget", {
+        workerId: args.workerId,
+      });
+      return ok(presentForgetResult(result, mode));
     } catch (error) {
       return fail(error);
     }
@@ -976,7 +1074,7 @@ server.registerTool(
   async () => {
     try {
       const info = await client.request<SupervisorInfo>("info", {});
-      return ok(presentInfo(info, mode, mode));
+      return ok(presentInfo(info, mode, mode, modeInfo.source));
     } catch (error) {
       return fail(error);
     }
@@ -1013,9 +1111,10 @@ server.registerTool(
     try {
       if (!daemonSupportsMetrics) throw metricsUnsupportedError();
       const input: TaskCreateInput = { ...args, createdBy: "mcp" };
-      return ok(
-        await client.request<TaskRecord>("metrics_task_create", input, { timeoutMs: 15_000 }),
-      );
+      const task = await client.request<TaskRecord>("metrics_task_create", input, {
+        timeoutMs: 15_000,
+      });
+      return ok(presentTaskCreated(task, mode));
     } catch (error) {
       return fail(error);
     }
@@ -1027,16 +1126,17 @@ server.registerTool(
   {
     title: "Show one task's metrics",
     description:
-      "Read one task's derived status, worker timings, raw usage records, coverage and warnings. Worker completion is not acceptance. Unknown values stay null; all-zero runtime usage is unverified and excluded from known totals. Parent-agent usage appears only when explicitly recorded.",
+      "Read one task's derived status, worker timings, usage coverage and warnings. Development mode also returns the raw usage records. Worker completion is not acceptance. Unknown values stay null; all-zero runtime usage is unverified and excluded from known totals. Parent-agent usage appears only when explicitly recorded.",
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: { taskId: z.string().min(1).max(120) },
   },
   async (args) => {
     try {
       if (!daemonSupportsMetrics) throw metricsUnsupportedError();
-      return ok(
-        await client.request<TaskMetrics>("metrics_task_show", { taskId: args.taskId }),
-      );
+      const metrics = await client.request<TaskMetrics>("metrics_task_show", {
+        taskId: args.taskId,
+      });
+      return ok(presentTaskMetrics(metrics, mode));
     } catch (error) {
       return fail(error);
     }
@@ -1048,7 +1148,7 @@ server.registerTool(
   {
     title: "Summarize task metrics over a time range",
     description:
-      "Aggregate tasks whose createdAt falls in the optional since/until window. Reports task status counts, worker/parent/session-level usage separately, per-field coverage, durations, unknown fields and data-quality warnings. Token categories are never added together. Cost, first-pass acceptance, rework and intervention are not tracked in phases 1-2. includeTasks returns task details (limit applies; aggregate counts still cover all selected tasks).",
+      "Aggregate tasks whose createdAt falls in the optional since/until window. Reports task status counts, worker/parent/session-level usage separately, per-field coverage, durations, unknown fields and data-quality warnings. Token categories are never added together. Cost, first-pass acceptance, rework and intervention are not tracked in phases 1-2. includeTasks returns task summaries (full task details in development mode); limit applies, while aggregate counts still cover all selected tasks.",
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       since: z.string().min(1).max(100).optional().describe("ISO 8601 lower bound on task.createdAt"),
@@ -1060,9 +1160,10 @@ server.registerTool(
   async (args) => {
     try {
       if (!daemonSupportsMetrics) throw metricsUnsupportedError();
-      return ok(
-        await client.request<MetricsReport>("metrics_report", args, { timeoutMs: 30_000 }),
-      );
+      const report = await client.request<MetricsReport>("metrics_report", args, {
+        timeoutMs: 30_000,
+      });
+      return ok(presentMetricsReport(report, mode));
     } catch (error) {
       return fail(error);
     }
@@ -1102,9 +1203,10 @@ server.registerTool(
     try {
       if (!daemonSupportsMetrics) throw metricsUnsupportedError();
       const input: UsageRecordInput = { ...args };
-      return ok(
-        await client.request<UsageRecord>("metrics_usage_record", input, { timeoutMs: 15_000 }),
-      );
+      const record = await client.request<UsageRecord>("metrics_usage_record", input, {
+        timeoutMs: 15_000,
+      });
+      return ok(presentUsageRecord(record, mode));
     } catch (error) {
       return fail(error);
     }
@@ -1126,11 +1228,19 @@ server.registerTool(
         ),
       workerId: z.string().min(1).optional(),
       limit: z.number().int().min(1).max(500).optional(),
-      includeDelivery: z.boolean().optional().describe("Opt-in diagnostics: timestamps, delivery attempts, queue receipt and target. Does not prove host consumption; default output remains compact."),
+      includeDelivery: z
+        .boolean()
+        .optional()
+        .describe(
+          "Development includes delivery diagnostics by default. Production rejects this flag; delivery is at-least-once and does not prove host consumption.",
+        ),
     },
   },
   async (args) => {
     try {
+      if (mode === "production" && args.includeDelivery === true) {
+        throw productionDiagnosticUnsupported("supervisor_notifications.includeDelivery");
+      }
       const unacknowledgedOnly = mode === "production" && args.state === undefined;
       const result = await client.request<NotificationsResult>("notifications", {
         state: unacknowledgedOnly ? "all" : (args.state ?? "pending"),
@@ -1138,7 +1248,7 @@ server.registerTool(
         limit: args.limit ?? 50,
         ...(unacknowledgedOnly ? { unacknowledgedOnly: true } : {}),
       });
-      return ok(presentNotifications(result, mode, args.includeDelivery ?? false));
+      return ok(presentNotifications(result, mode));
     } catch (error) {
       return fail(error);
     }
@@ -1158,7 +1268,12 @@ server.registerTool(
   },
   async (args) => {
     try {
-      return ok(await client.request("notification_ack", { ids: args.ids, by: args.by ?? "mcp" }));
+      const by = args.by ?? "mcp";
+      const result = await client.request<{ acked: number; missing: string[] }>(
+        "notification_ack",
+        { ids: args.ids, by },
+      );
+      return ok(presentNotificationAck(result, mode, args.ids, by));
     } catch (error) {
       return fail(error);
     }

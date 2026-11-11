@@ -182,6 +182,110 @@ export class OldDaemonFixture {
         },
       };
     }
+    if (method === "list") {
+      if (
+        params &&
+        typeof params === "object" &&
+        (Object.prototype.hasOwnProperty.call(params, "after") ||
+          Object.prototype.hasOwnProperty.call(params, "includeArchived"))
+      ) {
+        // 0.x daemons before 0.9.x had a strict list schema with neither key.
+        return {
+          ok: false,
+          error: {
+            code: "BAD_REQUEST",
+            message: "Invalid params for list: Unrecognized key",
+          },
+        };
+      }
+      const limit =
+        params &&
+        typeof params === "object" &&
+        typeof (params as { limit?: unknown }).limit === "number"
+          ? (params as { limit: number }).limit
+          : 50;
+      const base = {
+        schemaVersion: 1,
+        runtime: "pi",
+        cwd: this.stateDir,
+        status: "completed",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+        lastSeq: 1,
+        eventCount: 1,
+        stats: { turns: 1, toolCalls: 0, toolErrors: 0 },
+        capabilities: {
+          runtime: "pi",
+          steer: true,
+          followUp: true,
+          cancel: true,
+          resume: true,
+          pause: false,
+          interactiveInput: false,
+          notes: "old fixture",
+        },
+        config: {},
+        resumeCount: 0,
+        supervisorId: "old-fixture-supervisor",
+        pidAlive: false,
+        resumeAvailable: true,
+      };
+      return {
+        ok: true,
+        result: [
+          {
+            ...base,
+            id: "w-old-newer",
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          {
+            ...base,
+            id: "w-old-older",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+        ].slice(0, limit),
+      };
+    }
+    if (method === "resume") {
+      const input = params as Record<string, unknown>;
+      const now = new Date().toISOString();
+      return {
+        ok: true,
+        result: {
+          schemaVersion: 1,
+          id: typeof input.workerId === "string" ? input.workerId : "w-old-fixture",
+          runtime: "pi",
+          cwd: this.stateDir,
+          status: "running",
+          createdAt: now,
+          updatedAt: now,
+          lastSeq: 2,
+          eventCount: 1,
+          stats: { turns: 1, toolCalls: 0, toolErrors: 0 },
+          capabilities: {
+            runtime: "pi",
+            steer: true,
+            followUp: true,
+            cancel: true,
+            resume: true,
+            pause: false,
+            interactiveInput: false,
+            notes: "old fixture",
+          },
+          config: {},
+          resumeCount: 1,
+          supervisorId: "old-fixture-supervisor",
+          pidAlive: true,
+          resumeAvailable: true,
+          notificationBinding: {
+            target: { channel: "none" },
+            source: "preserved",
+            wake: "unbound",
+            observation: "wait",
+            warnings: [],
+          },
+        },
+      };
+    }
     if (method === "notifications") {
       if (
         params &&

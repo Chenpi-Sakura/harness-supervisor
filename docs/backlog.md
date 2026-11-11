@@ -1,6 +1,7 @@
 # 后续事项 Backlog
 
 更新日期：2026-11-10。
+最近补充：2026-11-10，0.9.1 Phase 1–7 完成：Production 硬过滤 `worker_wait` / `worker_events` 的 progress 旁路；`worker_status` 收敛为纯状态快照；20 个实际注册工具全部使用显式双模式投影；`worker_list` 改为 Keyset 真分页并通过 1,200 Worker 与并发变更测试；真实 Qoder 1.1.82 与 MiniMax Code 0.7.0 的 Production MCP 最小任务验收通过，真实 thinking/progress 全部未泄漏；独立审查无阻断项。版本已提升到 0.9.1，尚未推送、打 tag 或部署。见 `docs/2026-11-10-hs-0.9.1-report.md`、`docs/2026-11-10-hs-0.9.1-mcp-response-plan.md` 与 `evidence/mcp-runtime-acceptance-261110/`。
 最近补充：2026-11-10，0.9.0 已发布（`cd8d5b4` / `v0.9.0`）并在目标生产环境部署：82 Worker、331 MB 状态冷启动 27s → 16.7s（首次）→ 0.48s（检查点），备份 37.6 MB 保留；本开发机默认状态为独立 15 Worker 实例。Codex Desktop Stage 1/2 已通过，Stage 3 未复验。完整测试 386/384/0/2。331 MB 数据来源见 `docs/2026-11-10-0.9.0-production-deployment.md`。
 最近补充：2026-11-05，0.8.0 完成 DSH（DeepSeek Harness）桌面端 ACP PoC：新增通用 ACP 传输层与 `dsh` runtime，真实 0.2.1-rc.5 的 spawn/模型与推理配置/`session/resume`/工作区写入/工作区外提权审批/`danger-full-access` 无审批写入/取消通过；`steer`/`followUp`/`tools`/`extraArgs` 明确不支持，`usage_update` 只作上下文占用。权限模式由 `HARNESS_SUPERVISOR_DSH_PERMISSION_MODE` 控制，原生默认是 `workspace-write` + `ask`。代码位于独立分支，暂不合并进生产默认。证据见 `evidence/dsh-acp-real/`。
 最近补充：2026-11-04，0.7.0 实现 Qoder ACP 并在真实 1.1.82 验收后**设为默认传输**（`HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json` 可回退），spawn/resume/Write 审批/AskUserQuestion/取消全部通过；版本号保持 0.7.0。ACP steer/follow-up、Token 用量与默认传输的长期稳定性仍待后续验证。
@@ -16,6 +17,7 @@
 
 | 事项 | 类型 | 后续验收重点 | 状态 |
 | --- | --- | --- | --- |
+| 0.9.1 MCP 返回契约 | 接口优化 | 20 个实际注册工具的 Production/Development 双白名单；Production 硬过滤 progress/thinking；`worker_status` 纯状态查询、`worker_wait` 完成时返回完整结果；`worker_list` Keyset 分页；参数绕过、10 万 progress、游标与响应体积测试 | Phase 1–7 已完成（2026-11-10）；真实 Qoder/MiniMax Code 验收通过；独立审查无阻断；待用户确认发布 |
 | Persistent Worker 桌面多 Thread 验收 | 宿主验收 | Stage 1/2 已验证：两个 Codex Thread 各一名 persistent Worker、通知只到正确 Thread、两个 Thread 均自动唤醒、同一 Worker continue、DSH `needs_input → Allow once → completed` 再次唤醒。Stage 3 的 Thread 切换 / 卸载 / 完整退出本轮未复验。按 `docs/2026-11-09-desktop-e2e-runbook.md` 执行，不用 app-server 冒充 | Stage 1/2 已通过（2026-11-10）；Stage 3 未复验 |
 | 331 MB 生产状态验收 | 规模验收 | 目标生产环境已验证（2026-11-10）：82 Worker，0 活动；0.8.0 27s → 0.9.0 首次 16.7s → 再次 0.48s；备份 37.6 MB 保留。本开发机默认 15 Worker 实例不用于该结论 | 已验证（目标环境，维护者报告） |
 | 生产状态压缩与备份保留 | 维护决策 | `compact --dry-run` 可回收 2,123,215 events / 321,291,500 bytes；备份 `state-20261110-123310.zip` 37.6 MB 保留。压缩不可逆，等待用户决定；如压缩，先压三大 Worker | 待决策 |

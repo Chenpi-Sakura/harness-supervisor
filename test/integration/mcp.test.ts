@@ -25,6 +25,10 @@ function parseTool(result: ToolResult): any {
   return JSON.parse(text);
 }
 
+function rawText(result: ToolResult): string {
+  return result.content.find((item) => item.type === "text")?.text ?? "";
+}
+
 test("MCP wait without a cursor observes current state and returns incremental results", async (t) => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-mcp-wait-"));
   const cwd = await makeWorkspace();
@@ -98,6 +102,9 @@ test("MCP wait without a cursor observes current state and returns incremental r
   assert.equal(started.terminal, false);
   assert.ok(Date.now() - waitStartedAt < 900, "wait should observe the existing event immediately");
   assert.ok(started.events.some((event: { type: string }) => event.type === "run.started"));
+  for (const event of started.events) {
+    assert.equal("data" in event, false, "event wake results carry summaries only");
+  }
 
   parseTool(
     (await mcp.callTool({
@@ -116,45 +123,44 @@ test("MCP wait without a cursor observes current state and returns incremental r
   assert.equal(final.worker.status, "completed");
   assert.match(final.worker.result?.text ?? "", /FAKE_PI_OK/);
   assert.match(final.worker.result?.text ?? "", /STEERED:MCP_WAIT_STEER/);
+  assert.equal("events" in final, false, "completion carries the result, not an event log");
+
+  const finalEvents = parseTool(
+    (await mcp.callTool({
+      name: "worker_events",
+      arguments: { workerId: worker.id },
+    })) as ToolResult,
+  );
   assert.equal(
-    final.events.some((event: { type: string }) => event.type === "run.progress"),
+    finalEvents.events.some((event: { type: string }) => event.type === "run.progress"),
     false,
-    "progress events should be omitted from the default wait response",
+    "progress events should be omitted from the default event response",
   );
-  assert.ok(final.eventsOmitted > 0, "the default wait must report omitted progress events");
+  assert.ok(finalEvents.progressOmitted > 0, "filtered progress is reported, not hidden");
 
-  const withProgress = parseTool(
-    (await mcp.callTool({
-      name: "worker_wait",
-      arguments: {
-        workerId: worker.id,
-        timeoutMs: 1000,
-        until: "terminal",
-        includeProgress: true,
-      },
-    })) as ToolResult,
-  );
-  assert.equal(withProgress.eventsOmitted, 0);
-  assert.ok(
-    withProgress.events.some((event: { type: string }) => event.type === "run.progress"),
-    "includeProgress=true must return progress events",
-  );
+  const withProgress = (await mcp.callTool({
+    name: "worker_wait",
+    arguments: {
+      workerId: worker.id,
+      timeoutMs: 1000,
+      until: "terminal",
+      includeProgress: true,
+    },
+  })) as ToolResult;
+  assert.equal(withProgress.isError, true);
+  assert.match(rawText(withProgress), /^UNSUPPORTED: .*worker_wait\.includeProgress/);
 
-  const progressByType = parseTool(
-    (await mcp.callTool({
-      name: "worker_wait",
-      arguments: {
-        workerId: worker.id,
-        timeoutMs: 1000,
-        until: "event",
-        types: ["run.progress"],
-      },
-    })) as ToolResult,
-  );
-  assert.ok(
-    progressByType.events.some((event: { type: string }) => event.type === "run.progress"),
-    "requesting the run.progress type must include progress events",
-  );
+  const progressByType = (await mcp.callTool({
+    name: "worker_wait",
+    arguments: {
+      workerId: worker.id,
+      timeoutMs: 1000,
+      until: "event",
+      types: ["run.progress"],
+    },
+  })) as ToolResult;
+  assert.equal(progressByType.isError, true);
+  assert.match(rawText(progressByType), /^UNSUPPORTED: .*worker_wait\.types=run\.progress/);
 
   const repeatStartedAt = Date.now();
   const repeated = parseTool(
@@ -166,9 +172,6 @@ test("MCP wait without a cursor observes current state and returns incremental r
   assert.equal(repeated.terminal, true);
   assert.ok(Date.now() - repeatStartedAt < 900, "terminal wait should return immediately");
 
-  const finalSeqs = new Set(
-    final.events.map((event: { seq: number }) => event.seq),
-  );
   const after = parseTool(
     (await mcp.callTool({
       name: "worker_events",
@@ -176,14 +179,18 @@ test("MCP wait without a cursor observes current state and returns incremental r
     })) as ToolResult,
   );
   assert.ok(
-    after.events.every((event: { seq: number }) => !finalSeqs.has(event.seq)),
-    "the cursor must not replay events already returned by the wait",
+    after.events.every((event: { seq: number }) => event.seq > final.nextSeq),
+    "the wait cursor must not replay earlier events",
   );
 
   const list = parseTool(
     (await mcp.callTool({ name: "worker_list", arguments: {} })) as ToolResult,
   );
-  assert.equal(list.length, 1, "the model-facing flow must not need duplicate workers");
+  assert.equal(
+    list.workers.length,
+    1,
+    "the model-facing flow must not need duplicate workers",
+  );
 });
 
 test("MCP client can spawn, observe, steer, cancel, and outlive its own disconnect", async (t) => {
@@ -249,8 +256,11 @@ test("MCP client can spawn, observe, steer, cancel, and outlive its own disconne
   const info = parseTool(
     (await mcp.callTool({ name: "supervisor_info", arguments: {} })) as ToolResult,
   );
-  assert.equal(info.wake.proactive, false);
-  assert.match(info.wake.note, /pull-based/i);
+  assert.equal(info.running, true);
+  assert.equal(info.mcpMode, "production");
+  assert.equal("wake" in info, false, "production info is a decision snapshot");
+  assert.equal("limits" in info, false);
+  assert.ok(info.runtimes.some((runtime: { runtime: string }) => runtime.runtime === "pi"));
 
   const worker = parseTool(
     (await mcp.callTool({
@@ -273,6 +283,9 @@ test("MCP client can spawn, observe, steer, cancel, and outlive its own disconne
     })) as ToolResult,
   );
   assert.ok(started.events.some((event: { type: string }) => event.type === "run.started"));
+  for (const event of started.events) {
+    assert.equal("data" in event, false, "event wake results carry summaries only");
+  }
 
   const sent = parseTool(
     (await mcp.callTool({
@@ -317,13 +330,8 @@ test("MCP client can spawn, observe, steer, cancel, and outlive its own disconne
       },
     })) as ToolResult,
   );
-  assert.ok(
-    cancelledView.events.some(
-      (event: { type: string; data?: { kind?: string } }) =>
-        event.type === "run.progress" && event.data?.kind === "queue_cleared",
-    ),
-    "compact waits must retain queue_cleared progress events",
-  );
+  assert.equal("events" in cancelledView, false, "production wait does not dump events");
+  assert.equal(cancelledView.worker.status, "cancelled");
 
   const exclusive = (await mcp.callTool({
     name: "worker_answer",

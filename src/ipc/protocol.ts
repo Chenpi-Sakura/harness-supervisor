@@ -131,6 +131,18 @@ export const METHOD_SCHEMAS = {
       statuses: z.array(WorkerStatusSchema).max(20).optional(),
       limit: z.number().int().min(1).max(500).optional(),
       includeArchived: z.boolean().optional(),
+      /**
+       * Keyset cursor: return records strictly after this (createdAt, id) in
+       * the list order (createdAt DESC, id ASC). The record itself does not
+       * need to still exist, so deletion/archival cannot derail pagination.
+       */
+      after: z
+        .object({
+          createdAt: z.string().min(1).max(100),
+          id: WorkerIdSchema,
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   events: z

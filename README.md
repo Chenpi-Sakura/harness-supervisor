@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.9.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.9.1-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -153,7 +153,7 @@ npm ci                 # 按 package-lock.json 安装，可复现
 npm run build          # 生成 dist/（tsc）
 npm run typecheck      # 可选：类型检查
 node dist/src/cli.js up
-node dist/src/cli.js info        # 核对 version=0.9.0 与 stateDir
+node dist/src/cli.js info        # 核对 version=0.9.1 与 stateDir
 ```
 
 若 `npm ci` 因网络镜像失败，改用 `npm install`，再用 `git status` 确认 `package-lock.json` 未被意外改写。
@@ -204,8 +204,8 @@ HS 的推荐默认是让原生 Harness 直接执行完整任务，不为普通�
 
 MCP server 有两种呈现模式，只影响当前 MCP 进程如何返回结果，不改变 daemon、Worker 状态、持久化事件、通知路由或权限边界：
 
-- `production`（默认）：只返回 Master 执行任务所需字段；`spawn`/`resume` 返回接受状态，`status` 显式请求才带最近事件，`wait` 不重复完整报告。适合日常使用，占用上下文更少。
-- `development`：保留完整 JSON 结构（例如 `recentEvents` 默认 20、`stderrTail`、PID/session 诊断字段、通知默认 `pending`），用于兼容现有脚本和排查问题。
+- `production`（默认）：只返回 Master 执行任务所需字段。`status` 是有界状态快照，不返回事件、时间线或完整结果；`wait` 在完成时返回完整最终结果，需要输入时返回 `pendingInput`，超时只返回状态与游标；`until=event` 未指定 `types` 时只等待 lifecycle 事件，progress 不会结束等待；`events` 只返回 lifecycle 摘要，`run.progress` 不会进入 Production；`list` 使用 Keyset 分页。适合日常使用。
+- `development`：扩展诊断字段白名单（完整 result/pendingInput、`recentEvents`、`lastProgress`、`timeline`、`stderrTail`、PID/session 引用等），但不是原始内部记录直出。用于排查问题，不进入 Master 的默认调用链。
 
 配置优先级：命令行 `--mode` > 环境变量 `HARNESS_SUPERVISOR_MCP_MODE` > 默认 `production`。非法值会在 MCP 启动时明确报错退出，不会静默降级，也不使用 `NODE_ENV`。
 
@@ -214,21 +214,23 @@ $env:HARNESS_SUPERVISOR_MCP_MODE = 'development'   # 或 production
 node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 ```
 
-`production` 的字段精简只服务于上下文预算，不提供安全隔离；完整诊断可在 `development` 或 CLI/IPC 中获取。
+`production` 的字段精简只服务于上下文预算，不提供安全隔离；完整诊断可在 `development` 或 CLI/IPC 中获取。完整最终结果不会被展示层截断；`result.truncated` 只表示 Supervisor 存储层已按 `maxResultBytes` 截断。
 
 `worker_spawn` 返回样例（接受任务，任务可能仍在运行；`notifyTarget` 是实际持久化目标）：
 
 ```json
-{"id":"w-xxx","runtime":"pi","status":"running","lastSeq":5,"notifyTarget":{"channel":"none"}}
+{"id":"w-xxx","accepted":true,"runtime":"pi","status":"running","lastSeq":5,"notifyTarget":{"channel":"none"}}
 ```
 
-`worker_wait` 返回样例（完整结果只出现在 `worker.result`；游标语义保持）：
+`worker_wait` 完成时返回样例（完整结果只出现一次；默认不带事件）：
 
 ```json
-{"worker":{"id":"w-xxx","runtime":"pi","cwd":"D:/work/demo","status":"completed","lastSeq":11,"result":{"text":"最终报告全文","truncated":false},"resumeAvailable":true},"events":[{"seq":10,"ts":"2026-10-23T08:37:41.210Z","type":"run.completed","data":{"aborted":false,"stopReason":"stop","forcedCleanup":false}}],"eventsOmitted":3,"nextSeq":11,"hasMore":false,"timedOut":false,"terminal":true}
+{"worker":{"id":"w-xxx","runtime":"pi","status":"completed","lastSeq":11,"result":{"text":"最终报告全文","truncated":false},"resumeAvailable":true,"session":{"available":true,"restorable":true}},"terminal":true,"timedOut":false,"nextSeq":11,"hasMore":false}
 ```
 
-`worker_status` 在未显式传 `recentEvents` 时不带事件和 `stderrTail`；`pendingInput` 保留回答所需全部字段。响应还会带 `lastProgress`、`timeline` 与 `inputState`。
+`worker_status` 默认是有界快照：只带 `resultPreview`/`errorPreview` 和必要的 `pendingInput`，不带 `recentEvents`、`lastProgress`、`timeline` 或 `inputState`。需要完整待处理输入时显式传 `includeInput=true`；需要完整结果时用 `worker_wait`。完整结果可从 `worker_wait` 获取，事件历史从 `worker_events` 获取。
+
+`worker_list` 返回 `{workers,nextCursor,hasMore}`；把 `nextCursor` 原样传回并保持相同的 `statuses`/`includeArchived` 过滤条件即可遍历完整历史。旧于 0.9.1 的 Daemon 仍可返回第一页；cursor 页会返回带升级指引的 `UNSUPPORTED`，不会把旧严格 Schema 错误直接暴露。
 
 ## 接口
 
@@ -237,10 +239,10 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 | 工具 | 用途 |
 | --- | --- |
 | `worker_spawn` | 启动 Worker；prompt 被接受即返回，不等待完成 |
-| `worker_status` | 状态、pending input、结果/错误；production 默认不带最近事件/诊断 |
-| `worker_list` | 列出 Worker（持久化，跨重启） |
-| `worker_events` | 按 `sinceSeq` 增量读取事件 |
-| `worker_wait` | 有界等待（默认 30s，最大 120s）；默认省略普通进度 |
+| `worker_status` | 有界状态快照、pending input 预览、结果/错误预览；完整结果用 `worker_wait` |
+| `worker_list` | 列出 Worker（持久化、跨重启）；`{workers,nextCursor,hasMore}` Keyset 分页 |
+| `worker_events` | 增量读取 lifecycle 事件；Production 不返回 `run.progress` 或原始 `data` |
+| `worker_wait` | 有界等待（默认 30s，最大 120s）；完成时返回完整结果，超时只返回状态与游标 |
 | `worker_send` | 运行中追加 steer / follow-up |
 | `worker_answer` | 回答输入请求或权限询问 |
 | `worker_cancel` | 取消并确认终态；不影响其他 Worker |
@@ -248,13 +250,13 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 | `worker_continue` | 在 idle 的 persistent Worker 上提交下一轮；沿用同一 native session |
 | `worker_admin` | pin / unpin、archive / unarchive、retire / unretire |
 | `worker_forget` | 删除终态 Worker 的 HS 记录与事件；保留 native session 文件 |
-| `supervisor_info` | 版本、限制、runtime 能力、通知通道 |
+| `supervisor_info` | Production 为版本、模式、runtime 与 Worker 计数快照；完整诊断在 Development |
 | `supervisor_notifications` | 读取通知收件箱（production 默认全部未确认；development 默认 pending） |
 | `supervisor_notifications_ack` | 确认通知（幂等） |
 | `supervisor_wake_target` | 可选：登记 Codex thread 以启用队列投递 |
 | `metrics_task_create` | 创建一个可关联多个 Worker 的委托任务 |
-| `metrics_task_show` | 单任务状态、耗时、用量记录、覆盖率与警告 |
-| `metrics_report` | 区间汇总（按任务创建时间）、覆盖率、未知字段；可带任务详情 |
+| `metrics_task_show` | 单任务状态、耗时、用量摘要、覆盖率与警告；原始 usage 记录仅在 Development 返回 |
+| `metrics_report` | 区间汇总（按任务创建时间）、覆盖率、未知字段；`includeTasks` 在 Production 返回任务摘要，Development 返回完整详情 |
 | `metrics_record_usage` | 人工补录 Master 或 Worker 用量；支持 `usageId` 幂等 |
 
 ### CLI 命令
@@ -302,7 +304,7 @@ node D:/Projects/Harness-Supervisor/dist/src/mcp.js
 
 ### Persistent Worker（开发分支能力）
 
-> 状态：0.9 Release Candidate。实现与验收范围见 [RC 报告](docs/2026-11-09-hs-0.9-release-candidate.md)；Codex Desktop 多线程唤醒仍待人工验收，步骤见 [Desktop Runbook](docs/2026-11-09-desktop-e2e-runbook.md)。
+> 状态：0.9.1。MCP 返回契约变更与真实 Qoder / MiniMax Code 验收见 [0.9.1 交付报告](docs/2026-11-10-hs-0.9.1-report.md)。
 
 `worker_spawn` 传入 `persistence="persistent"`（CLI 为 `spawn --persistence persistent`）后，Worker 的身份和 native session 会跨 Turn 保留。每轮结束后 Activation 进程退出，`status` 仍记录本轮终态（通常为 `completed`），派生字段 `lifecycle` 变为 `idle`；下一轮通过 `worker_continue` 在同一个 `workerId` 和同一个 session 上启动新的 Activation。
 

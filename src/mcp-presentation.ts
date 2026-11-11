@@ -4,13 +4,20 @@
  * The presentation mode belongs to one MCP process; it never changes the
  * supervisor, the daemon or the persisted records. `production` returns only
  * the information a caller needs to run and observe a task, while
- * `development` keeps the pre-0.3.0 full JSON payloads for existing tooling.
- *
- * These are explicit field whitelists per tool, not a recursive redaction
- * pass: a report or answer written by the worker is never mistaken for a
- * management field.
+ * `development` is an extended field whitelist for diagnostics. Neither mode
+ * serializes a raw internal DTO.
  */
+import {
+  EVENTS_BUDGET_BYTES,
+  MAX_COMPACT_EVENTS,
+  STATUS_BUDGET_BYTES,
+  compactStatus,
+  fullPendingInput,
+  jsonBytes,
+  packCompactEvents,
+} from "./context-budget.js";
 import { SupervisorError, errorMessage } from "./errors.js";
+import { isProductionEventType } from "./event-policy.js";
 import { isTerminal } from "./types.js";
 import type {
   NotificationRecord,
@@ -25,6 +32,12 @@ import type {
   WorkerStatusResult,
   WorkerSummary,
 } from "./types.js";
+import type {
+  MetricsReport,
+  TaskMetrics,
+  TaskRecord,
+  UsageRecord,
+} from "./metrics.js";
 
 export type McpPresentationMode = "production" | "development";
 
@@ -95,89 +108,71 @@ function targetOf(value: NotifyTarget | undefined): NotifyTarget {
     : { channel: value.channel };
 }
 
-/** Management-only event data keys. Everything else is process fact or user content. */
-const EVENT_DATA_MANAGEMENT_KEYS = new Set([
-  "pid",
-  "sessionId",
-  "sessionFile",
-  "fileExists",
-  "supervisorId",
-  "notifyTarget",
-]);
-
-function eventDataForProduction(data: Record<string, unknown> | undefined) {
-  if (!data) return undefined;
-  const kept: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (EVENT_DATA_MANAGEMENT_KEYS.has(key)) continue;
-    kept[key] = value;
-  }
-  return Object.keys(kept).length > 0 ? kept : undefined;
-}
-
-interface EventViewOptions {
-  /**
-   * Only set for wait responses, where worker.result is also returned. The
-   * completion text is removed only when the event belongs to the current run
-   * and its text is provably contained in that result. Historical completions
-   * and unverifiable cases keep their stored text.
-   */
-  currentRun?: WorkerSummary;
-}
-
-const TRUNCATION_SUFFIX = /^(.*)\n\.\.\.\[truncated \d+ chars\]$/s;
-
-/**
- * Event text is stored with a visible truncation suffix. Compare only the
- * original prefix so a larger worker.result can still be recognized as the
- * same completion. If the marker is absent or malformed, keep the text as-is;
- * an unverifiable match must preserve the event.
- */
-function eventCompletionPrefix(event: WorkerEvent): string | null {
-  const text = event.data?.text;
-  if (typeof text !== "string") return null;
-  if (event.data?.truncated !== true) return text;
-  const match = TRUNCATION_SUFFIX.exec(text);
-  return match ? match[1]! : text;
-}
-
-function completionTextIsCurrentResult(event: WorkerEvent, worker: WorkerSummary): boolean {
-  if (event.type !== "run.completed" || !worker.result || !worker.startedAt) return false;
-  const prefix = eventCompletionPrefix(event);
-  if (prefix === null) return false;
-  const startedMs = Date.parse(worker.startedAt);
-  const eventMs = Date.parse(event.ts);
-  if (!Number.isFinite(startedMs) || !Number.isFinite(eventMs) || eventMs < startedMs) {
-    return false;
-  }
-  // The event text is normally a prefix of the (larger) result text. If either
-  // limit is configured the other way around, preserve the event text instead
-  // of risking silent data loss.
-  return worker.result.text.startsWith(prefix);
-}
-
-/** Deduplicate only the current run's completion text that is already in worker.result. */
-function eventForProduction(event: WorkerEvent, options: EventViewOptions = {}) {
-  let data = eventDataForProduction(event.data);
-  if (
-    options.currentRun &&
-    data &&
-    "text" in data &&
-    completionTextIsCurrentResult(event, options.currentRun)
-  ) {
-    const { text: _text, truncated: _truncated, ...rest } = data;
-    data = Object.keys(rest).length > 0 ? rest : undefined;
-  }
+function sessionRefOf(ref: NonNullable<WorkerSummary["session"]["ref"]>) {
   return {
-    seq: event.seq,
-    ts: event.ts,
-    type: event.type,
-    ...(data ? { data } : {}),
+    runtime: ref.runtime,
+    runtimeInstanceRef: ref.runtimeInstanceRef,
+    ...(ref.sessionId !== undefined ? { sessionId: ref.sessionId } : {}),
+    ...(ref.sessionLocator !== undefined ? { sessionLocator: ref.sessionLocator } : {}),
+    ...(ref.cwd !== undefined ? { cwd: ref.cwd } : {}),
+    ...(ref.capabilitiesObservedAt !== undefined
+      ? { capabilitiesObservedAt: ref.capabilitiesObservedAt }
+      : {}),
   };
 }
 
-function eventsForProduction(events: WorkerEvent[], options: EventViewOptions = {}) {
-  return events.map((event) => eventForProduction(event, options));
+function sessionDevelopmentOf(session: WorkerSummary["session"]) {
+  return {
+    available: session.available,
+    restorable: session.restorable,
+    ...(session.reason !== undefined ? { reason: session.reason } : {}),
+    ...(session.ref ? { ref: sessionRefOf(session.ref) } : {}),
+  };
+}
+
+function notificationBindingView(worker: WorkerSummary) {
+  if (!worker.notificationBinding) return undefined;
+  return {
+    ...worker.notificationBinding,
+    target: targetOf(worker.notificationBinding.target),
+  };
+}
+
+/**
+ * Development worker view: explicit diagnostic fields, never a raw WorkerSummary.
+ * The prompt and promptPreview stay hidden in both modes.
+ */
+export function presentWorkerDevelopment(worker: WorkerSummary): Record<string, unknown> {
+  const binding = notificationBindingView(worker);
+  return {
+    id: worker.id,
+    runtime: worker.runtime,
+    ...(worker.name !== undefined ? { name: worker.name } : {}),
+    ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
+    cwd: worker.cwd,
+    status: worker.status,
+    ...(worker.statusReason !== undefined ? { statusReason: worker.statusReason } : {}),
+    createdAt: worker.createdAt,
+    ...(worker.firstStartedAt !== undefined ? { firstStartedAt: worker.firstStartedAt } : {}),
+    ...(worker.startedAt !== undefined ? { startedAt: worker.startedAt } : {}),
+    ...(worker.endedAt !== undefined ? { endedAt: worker.endedAt } : {}),
+    persistence: worker.persistence,
+    lifecycle: worker.lifecycle,
+    ...(worker.session ? { session: sessionDevelopmentOf(worker.session) } : {}),
+    lastSeq: worker.lastSeq,
+    eventCount: worker.eventCount,
+    resumeCount: worker.resumeCount,
+    resumeAvailable: worker.resumeAvailable,
+    pidAlive: worker.pidAlive,
+    ...(worker.pid !== undefined ? { pid: worker.pid } : {}),
+    ...(worker.exit !== undefined ? { exit: { ...worker.exit } } : {}),
+    ...adminFields(worker),
+    ...(worker.result ? { result: resultOf(worker.result) } : {}),
+    ...(worker.error !== undefined ? { error: worker.error } : {}),
+    ...(worker.pendingInput ? { pendingInput: fullPendingInput(worker.pendingInput) } : {}),
+    ...(worker.notifyTarget ? { notifyTarget: targetOf(worker.notifyTarget) } : {}),
+    ...(binding ? { notificationBinding: binding } : {}),
+  };
 }
 
 function sessionOf(session: WorkerSummary["session"]) {
@@ -189,15 +184,6 @@ function sessionOf(session: WorkerSummary["session"]) {
 }
 
 /** New fields stay absent when an older daemon did not report them. */
-function persistenceFields(worker: WorkerSummary): Record<string, unknown> {
-  return {
-    ...(worker.persistence !== undefined ? { persistence: worker.persistence } : {}),
-    ...(worker.lifecycle !== undefined ? { lifecycle: worker.lifecycle } : {}),
-    ...(worker.session !== undefined ? { session: sessionOf(worker.session) } : {}),
-    ...adminFields(worker),
-  };
-}
-
 function adminFields(worker: WorkerSummary): Record<string, unknown> {
   return {
     ...(worker.pinned === true ? { pinned: true } : {}),
@@ -208,7 +194,7 @@ function adminFields(worker: WorkerSummary): Record<string, unknown> {
 
 /** Pin/archive/retire result: identity plus management flags only. */
 export function presentWorkerAdmin(worker: WorkerSummary, mode: McpPresentationMode): unknown {
-  if (mode === "development") return worker;
+  if (mode === "development") return presentWorkerDevelopment(worker);
   return {
     id: worker.id,
     status: worker.status,
@@ -218,48 +204,52 @@ export function presentWorkerAdmin(worker: WorkerSummary, mode: McpPresentationM
   };
 }
 
-function statusWorkerForProduction(worker: WorkerSummary) {
+function workerBaseForProduction(worker: WorkerSummary) {
   return {
     id: worker.id,
     runtime: worker.runtime,
     ...(worker.name !== undefined ? { name: worker.name } : {}),
     ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
-    cwd: worker.cwd,
     status: worker.status,
-    ...persistenceFields(worker),
+    ...(worker.persistence !== undefined ? { persistence: worker.persistence } : {}),
+    ...(worker.lifecycle !== undefined ? { lifecycle: worker.lifecycle } : {}),
+    ...(worker.session ? { session: sessionOf(worker.session) } : {}),
     lastSeq: worker.lastSeq,
-    createdAt: worker.createdAt,
-    ...(worker.firstStartedAt !== undefined ? { firstStartedAt: worker.firstStartedAt } : {}),
-    ...(worker.startedAt !== undefined ? { startedAt: worker.startedAt } : {}),
-    ...(worker.endedAt !== undefined ? { endedAt: worker.endedAt } : {}),
-    resumeCount: worker.resumeCount,
+    resumeAvailable: worker.resumeAvailable,
+  };
+}
+
+/** Wait carries the outcome: full result/error and the full pending input. */
+function waitWorkerForProduction(worker: WorkerSummary) {
+  return {
+    ...workerBaseForProduction(worker),
     ...(worker.statusReason !== undefined ? { statusReason: worker.statusReason } : {}),
     ...(worker.result ? { result: resultOf(worker.result) } : {}),
     ...(worker.pendingInput ? { pendingInput: pendingOf(worker.pendingInput) } : {}),
     ...(worker.error !== undefined ? { error: worker.error } : {}),
-    resumeAvailable: worker.resumeAvailable,
   };
 }
 
 /** spawn/resume: acceptance plus (when already known) the actionable outcome. */
 export function presentAcceptedWorker(worker: WorkerSummary, mode: McpPresentationMode): unknown {
-  if (mode === "development") return worker;
+  if (mode === "development") {
+    return { ...presentWorkerDevelopment(worker), accepted: true };
+  }
   const out: Record<string, unknown> = {
     id: worker.id,
+    accepted: true,
     runtime: worker.runtime,
     status: worker.status,
-    ...persistenceFields(worker),
+    ...(worker.persistence !== undefined ? { persistence: worker.persistence } : {}),
+    ...(worker.lifecycle !== undefined ? { lifecycle: worker.lifecycle } : {}),
+    ...(worker.session ? { session: sessionOf(worker.session) } : {}),
     lastSeq: worker.lastSeq,
     notifyTarget: targetOf(worker.notifyTarget),
   };
   if (worker.name !== undefined) out.name = worker.name;
   if (worker.taskId !== undefined) out.taskId = worker.taskId;
-  if (worker.notificationBinding) {
-    out.notificationBinding = {
-      ...worker.notificationBinding,
-      target: targetOf(worker.notificationBinding.target),
-    };
-  }
+  const binding = notificationBindingView(worker);
+  if (binding) out.notificationBinding = binding;
   if (isTerminal(worker.status) || worker.status === "awaiting_input") {
     if (worker.result) out.result = resultOf(worker.result);
     if (worker.pendingInput) out.pendingInput = pendingOf(worker.pendingInput);
@@ -272,194 +262,318 @@ export function presentAcceptedWorker(worker: WorkerSummary, mode: McpPresentati
 export function presentStatus(
   result: WorkerStatusResult,
   mode: McpPresentationMode,
-  options: { includeRecentEvents: boolean },
+  options: { includeRecentEvents?: boolean; includeInput?: boolean } = {},
 ): unknown {
-  if (mode === "development") return result;
-  const out: Record<string, unknown> = {
-    worker: statusWorkerForProduction(result.worker),
-    ...(result.lastProgress ? { lastProgress: result.lastProgress } : {}),
-    ...(result.timeline ? { timeline: result.timeline } : {}),
-    ...(result.inputState ? { inputState: result.inputState } : {}),
-  };
-  if (options.includeRecentEvents) {
-    out.recentEvents = eventsForProduction(result.recentEvents);
+  if (mode === "development") {
+    return {
+      worker: presentWorkerDevelopment(result.worker),
+      ...(result.lastProgress ? { lastProgress: result.lastProgress } : {}),
+      ...(result.timeline ? { timeline: result.timeline } : {}),
+      ...(result.inputState ? { inputState: result.inputState } : {}),
+      recentEvents: result.recentEvents,
+      stderrTail: result.stderrTail,
+    };
   }
-  return out;
+  // Production status is a snapshot: no recentEvents, lastProgress, timeline
+  // or inputState. The compactStatus budget still bounds the result preview.
+  // The preview is renamed and annotated after that budget is applied, so the
+  // final response is measured again and the inner budget shrinks to fit.
+  const build = (budgetBytes: number): Record<string, unknown> => {
+    const compacted = compactStatus(result, {
+      budgetBytes,
+      eventLimit: 0,
+      includeRecentEvents: false,
+      includeLastProgress: false,
+      includeTimeline: false,
+      includeInputState: false,
+      includeInput: options.includeInput === true,
+    });
+    const worker = compacted.worker as Record<string, unknown>;
+    const resultView = worker.result;
+    const errorView = worker.error;
+    delete worker.result;
+    delete worker.error;
+    delete worker.cwd;
+    if (resultView) {
+      worker.resultPreview = resultView;
+      worker.resultAvailable = true;
+    } else {
+      worker.resultAvailable = false;
+    }
+    if (errorView) {
+      worker.errorPreview = errorView;
+      worker.errorAvailable = true;
+    } else {
+      worker.errorAvailable = false;
+    }
+    const last = [...result.recentEvents]
+      .reverse()
+      .find((event) => isProductionEventType(event.type));
+    if (last) worker.lastEvent = { seq: last.seq, type: last.type };
+    if (compacted.budgetExceeded) return { worker, budgetExceeded: true };
+    return { worker };
+  };
+
+  let budget = STATUS_BUDGET_BYTES;
+  let view = build(budget);
+  while (jsonBytes(view) > STATUS_BUDGET_BYTES && budget > 512) {
+    budget = Math.max(512, budget - (jsonBytes(view) - STATUS_BUDGET_BYTES + 64));
+    view = build(budget);
+  }
+  return view;
 }
 
 export function presentWait(
   result: WaitResult,
-  compacted: { events: WorkerEvent[]; eventsOmitted: number },
+  compacted: { events: WorkerEvent[]; eventsOmitted: number; progressOmitted?: number },
   mode: McpPresentationMode,
+  options: { includeEvents?: boolean } = {},
 ): unknown {
   if (mode === "development") {
-    return { ...result, events: compacted.events, eventsOmitted: compacted.eventsOmitted };
+    return {
+      worker: presentWorkerDevelopment(result.worker),
+      events: compacted.events,
+      eventsOmitted: compacted.eventsOmitted,
+      nextSeq: result.nextSeq,
+      hasMore: result.hasMore,
+      timedOut: result.timedOut,
+      terminal: result.terminal,
+      ...(result.lastProgress ? { lastProgress: result.lastProgress } : {}),
+      ...(result.timeline ? { timeline: result.timeline } : {}),
+      ...(result.inputState ? { inputState: result.inputState } : {}),
+    };
+  }
+  const out: Record<string, unknown> = {
+    worker: waitWorkerForProduction(result.worker),
+    terminal: result.terminal,
+    timedOut: result.timedOut,
+    nextSeq: result.nextSeq,
+    hasMore: result.hasMore,
+  };
+  // A timeout is a status check, not an event dump. Lifecycle events are only
+  // an explicit `until=event` result; completion/failure/input are carried by
+  // worker.result, worker.error and worker.pendingInput.
+  if (!result.timedOut && options.includeEvents) {
+    const visible = compacted.events.filter((event) => isProductionEventType(event.type));
+    // until=event can carry the whole scanned window; bound it like worker_events
+    // so a long batch cannot turn a wait into an event dump.
+    const packed = packCompactEvents(visible, result.worker, {
+      limit: MAX_COMPACT_EVENTS,
+      budgetBytes: EVENTS_BUDGET_BYTES,
+    });
+    out.events = packed.events;
+    out.eventsOmitted =
+      compacted.eventsOmitted +
+      (compacted.events.length - visible.length) +
+      packed.omitted;
+    out.progressOmitted = compacted.progressOmitted ?? 0;
+  }
+  return out;
+}
+
+/** Development event read: full stored events behind the explicit worker whitelist. */
+export function presentEventsDevelopment(result: ReadEventsResult): unknown {
+  return {
+    worker: presentWorkerDevelopment(result.worker),
+    events: result.events,
+    nextSeq: result.nextSeq,
+    hasMore: result.hasMore,
+  };
+}
+
+export function presentWorkerList(
+  workers: WorkerSummary[],
+  mode: McpPresentationMode,
+  page: { nextCursor: string | null; hasMore: boolean } = {
+    nextCursor: null,
+    hasMore: false,
+  },
+): unknown {
+  if (mode === "development") {
+    return {
+      workers: workers.map(presentWorkerDevelopment),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+    };
   }
   return {
-    worker: statusWorkerForProduction(result.worker),
-    events: eventsForProduction(compacted.events, { currentRun: result.worker }),
-    eventsOmitted: compacted.eventsOmitted,
-    nextSeq: result.nextSeq,
-    hasMore: result.hasMore,
-    timedOut: result.timedOut,
-    terminal: result.terminal,
-    ...(result.lastProgress ? { lastProgress: result.lastProgress } : {}),
-    ...(result.timeline ? { timeline: result.timeline } : {}),
-    ...(result.inputState ? { inputState: result.inputState } : {}),
+    workers: workers.map((worker) => ({
+      id: worker.id,
+      ...(worker.name !== undefined ? { name: worker.name } : {}),
+      ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
+      runtime: worker.runtime,
+      status: worker.status,
+      persistence: worker.persistence,
+      lifecycle: worker.lifecycle,
+      needsInput: worker.status === "awaiting_input",
+      lastSeq: worker.lastSeq,
+    })),
+    nextCursor: page.nextCursor,
+    hasMore: page.hasMore,
   };
-}
-
-export function presentEvents(result: ReadEventsResult, mode: McpPresentationMode): unknown {
-  if (mode === "development") return result;
-  return {
-    worker: {
-      id: result.worker.id,
-      status: result.worker.status,
-      lastSeq: result.worker.lastSeq,
-    },
-    events: eventsForProduction(result.events),
-    nextSeq: result.nextSeq,
-    hasMore: result.hasMore,
-  };
-}
-
-export function presentWorkerList(workers: WorkerSummary[], mode: McpPresentationMode): unknown {
-  if (mode === "development") return workers;
-  return workers.map((worker) => ({
-    id: worker.id,
-    ...(worker.name !== undefined ? { name: worker.name } : {}),
-    ...(worker.taskId !== undefined ? { taskId: worker.taskId } : {}),
-    runtime: worker.runtime,
-    status: worker.status,
-    ...persistenceFields(worker),
-    lastSeq: worker.lastSeq,
-  }));
 }
 
 /** send/answer/cancel: the operation result and current state, never a completion claim. */
 export function presentWorkerAction(worker: WorkerSummary, mode: McpPresentationMode): unknown {
-  if (mode === "development") return worker;
+  if (mode === "development") {
+    return {
+      ...presentWorkerDevelopment(worker),
+      accepted: true,
+      terminal: isTerminal(worker.status),
+    };
+  }
   return {
     id: worker.id,
+    accepted: true,
     status: worker.status,
+    terminal: isTerminal(worker.status),
     lastSeq: worker.lastSeq,
     ...(worker.statusReason !== undefined ? { statusReason: worker.statusReason } : {}),
   };
 }
 
-const PRODUCTION_RUNTIME_NOTES: Record<string, string> = {
-  pi: "Native Pi RPC. Steering/follow-ups use Pi queues. Cancel uses abort. Resume loads a persisted session. Idle continuation verified with a real 3-Turn session.",
-  qoder:
-    "Qoder CLI stream-json. Steer/follow-up messages are accepted by the stream, but a real 1.1.76 run did not apply an accepted steer to the running turn: unverified effect. Cancel was validated (interrupt + process termination). Permission prompts surface as awaiting_input; AskUserQuestion was validated, allow/deny for Bash calls was not exercised end to end. Resume uses --resume and verifies the returned session id. Idle continuation: ACP L3, stream-json L2.",
-  mcode:
-    "MiniMax Code ACP over ndJSON stdio. Steering is verified inside an active turn (the agent acted on it); a steer sent after the turn ended is dropped, so the turn must still be alive. Follow-ups are queued through the agent's queue extension. Cancel was validated on a real run. Permission prompts surface as awaiting_input and are answered with the offered option. Resume loads the recorded ACP session id. Idle continuation verified with a real 3-Turn session.",
-  dsh:
-    "DeepSeek Harness ACP (dsh --profile acp). Spawn/prompt, model and reasoning config, resume via session/resume, workspace writes, outside-workspace approval and cancel were verified against the desktop-bundled CLI. Resume needs the same absolute cwd. DSH defaults to workspace-write with approval ask; HARNESS_SUPERVISOR_DSH_PERMISSION_MODE selects read-only, workspace-write or danger-full-access. Permission requests carry only a tool call id. No steer/follow-up, plan, terminal, client fs or elicitation. usage_update is context occupancy, not billed tokens. Idle continuation verified with a real 3-Turn session.",
-};
-
-/**
- * A runtime the production table does not know about must not fall back to the
- * adapter's own note: those run to over a thousand characters, and the
- * production mode exists to keep the response small. The full notes stay
- * available in development mode and through the CLI.
- */
-const UNREGISTERED_RUNTIME_NOTE =
-  "Runtime adapter; its capability details are available in development mode and through the CLI.";
-
 export function presentInfo(
   info: SupervisorInfo,
   mode: McpPresentationMode,
   mcpMode: McpPresentationMode,
+  mcpModeSource: ResolvedMcpMode["source"] = "default",
 ): unknown {
-  if (mode === "development") return info;
+  if (mode === "development") {
+    return {
+      version: info.version,
+      mcpMode,
+      mcpModeSource,
+      running: true,
+      pid: info.pid,
+      stateDir: info.stateDir,
+      supervisorId: info.supervisorId,
+      startedAt: info.startedAt,
+      uptimeMs: info.uptimeMs,
+      limits: { ...info.limits },
+      wake: { ...info.wake },
+      ...(info.codexSteer
+        ? {
+            codexSteer: {
+              status: info.codexSteer.status,
+              verified: { ...info.codexSteer.verified },
+              reason: info.codexSteer.reason,
+            },
+          }
+        : {}),
+      runtimes: info.runtimes.map((runtime) => ({
+        runtime: runtime.runtime,
+        steer: runtime.steer,
+        followUp: runtime.followUp,
+        cancel: runtime.cancel,
+        resume: runtime.resume,
+        pause: runtime.pause,
+        interactiveInput: runtime.interactiveInput,
+        ...(runtime.idleContinue !== undefined ? { idleContinue: runtime.idleContinue } : {}),
+        notes: runtime.notes,
+      })),
+      ...(info.storage
+        ? {
+            storage: {
+              workers: info.storage.workers,
+              eventBytes: info.storage.eventBytes,
+              largestEventFileBytes: info.storage.largestEventFileBytes,
+              ...(info.storage.largestEventWorkerId !== undefined
+                ? { largestEventWorkerId: info.storage.largestEventWorkerId }
+                : {}),
+              activeWorkers: info.storage.activeWorkers,
+              idleWorkers: info.storage.idleWorkers,
+              otherWorkers: info.storage.otherWorkers,
+              startup: {
+                totalMs: info.storage.startup.totalMs,
+                storeInitMs: info.storage.startup.storeInitMs,
+                store: { ...info.storage.startup.store },
+              },
+            },
+          }
+        : {}),
+    };
+  }
   return {
     version: info.version,
     mcpMode,
-    limits: {
-      maxWorkers: info.limits.maxWorkers,
-      maxWaitMs: info.limits.maxWaitMs,
-      defaultWaitMs: info.limits.defaultWaitMs,
-      maxResultBytes: info.limits.maxResultBytes,
-      maxEventStringBytes: info.limits.maxEventStringBytes,
-    },
-    wake: {
-      proactive: info.wake.proactive,
-      channel: info.wake.channel,
-      ...(info.wake.codexThreadId !== undefined
-        ? { codexThreadId: info.wake.codexThreadId }
-        : {}),
-      note:
-        "Pull-based reads; this is the default route for NEW workers and each worker/event keeps its own snapshot. codex-queue delivery can start a turn only while the host has that thread loaded. Delivery is at-least-once and does not prove wake-up.",
-    },
-    ...(info.codexSteer
-      ? {
-          codexSteer: {
-            status: info.codexSteer.status,
-            verified: info.codexSteer.verified,
-            reason: "HS does not steer the Codex Desktop turn; use codex-queue notifications.",
-          },
-        }
-      : {}),
+    running: true,
     runtimes: info.runtimes.map((runtime) => ({
       runtime: runtime.runtime,
-      steer: runtime.steer,
-      followUp: runtime.followUp,
-      cancel: runtime.cancel,
-      resume: runtime.resume,
-      pause: runtime.pause,
-      interactiveInput: runtime.interactiveInput,
-      ...(runtime.idleContinue !== undefined ? { idleContinue: runtime.idleContinue } : {}),
-      notes: PRODUCTION_RUNTIME_NOTES[runtime.runtime] ?? UNREGISTERED_RUNTIME_NOTE,
+      available: true,
     })),
     ...(info.storage
       ? {
-          storage: {
-            workers: info.storage.workers,
-            eventBytes: info.storage.eventBytes,
-            largestEventFileBytes: info.storage.largestEventFileBytes,
-            activeWorkers: info.storage.activeWorkers,
-            idleWorkers: info.storage.idleWorkers,
-            otherWorkers: info.storage.otherWorkers,
-            startupMs: info.storage.startup.totalMs,
+          workers: {
+            active: info.storage.activeWorkers,
+            total: info.storage.workers,
           },
         }
-      : {}),
+      : { workersKnown: false }),
   };
 }
 
-function notificationForProduction(record: NotificationRecord, includeDelivery = false) {
+function summaryOf(record: NotificationRecord) {
+  return {
+    ...(record.summary.status !== undefined ? { status: record.summary.status } : {}),
+    ...(record.summary.text !== undefined ? { text: record.summary.text } : {}),
+    ...(record.summary.requestId !== undefined
+      ? { requestId: record.summary.requestId }
+      : {}),
+    ...(record.summary.method !== undefined ? { method: record.summary.method } : {}),
+    ...(record.summary.options !== undefined ? { options: [...record.summary.options] } : {}),
+  };
+}
+
+function notificationForProduction(record: NotificationRecord) {
   return {
     id: record.id,
     workerId: record.workerId,
+    seq: record.seq,
+    eventType: record.eventType,
     kind: record.kind,
-    summary: {
-      ...(record.summary.status !== undefined ? { status: record.summary.status } : {}),
-      ...(record.summary.text !== undefined ? { text: record.summary.text } : {}),
-      ...(record.summary.requestId !== undefined
-        ? { requestId: record.summary.requestId }
-        : {}),
-      ...(record.summary.method !== undefined ? { method: record.summary.method } : {}),
-      ...(record.summary.options !== undefined ? { options: [...record.summary.options] } : {}),
-    },
+    createdAt: record.createdAt,
+    summary: summaryOf(record),
+    deliveryState: record.delivery.state,
     acked: Boolean(record.ackAt),
-    ...(includeDelivery ? {
-      createdAt: record.createdAt,
-      ...(record.ackAt ? { ackAt: record.ackAt } : {}),
-      delivery: { ...record.delivery },
-      ...(record.target ? { target: { ...record.target } } : {}),
-    } : {}),
-    ...(record.delivery.state === "superseded" ? { actionable: false } : {}),
+    actionable: !record.ackAt && record.delivery.state !== "superseded",
+  };
+}
+
+function notificationForDevelopment(record: NotificationRecord) {
+  return {
+    id: record.id,
+    workerId: record.workerId,
+    runtime: record.runtime,
+    seq: record.seq,
+    eventType: record.eventType,
+    kind: record.kind,
+    createdAt: record.createdAt,
+    summary: summaryOf(record),
+    delivery: { ...record.delivery },
+    ...(record.target ? { target: { ...record.target } } : {}),
+    acked: Boolean(record.ackAt),
+    ...(record.ackAt ? { ackAt: record.ackAt } : {}),
+    ...(record.ackBy ? { ackBy: record.ackBy } : {}),
+    actionable: !record.ackAt && record.delivery.state !== "superseded",
   };
 }
 
 export function presentNotifications(
   result: NotificationsResult,
   mode: McpPresentationMode,
-  includeDelivery = false,
 ): unknown {
-  if (mode === "development") return result;
+  if (mode === "development") {
+    return {
+      notifications: result.notifications.map(notificationForDevelopment),
+      counts: result.counts,
+      ...(result.filteredCounts ? { filteredCounts: result.filteredCounts } : {}),
+      ...(result.globalCounts ? { globalCounts: result.globalCounts } : {}),
+      ...(result.scope ? { scope: result.scope } : {}),
+      target: { ...result.target },
+    };
+  }
   return {
-    notifications: result.notifications.map(record => notificationForProduction(record, includeDelivery)),
+    notifications: result.notifications.map(notificationForProduction),
     // `counts` is the legacy whole-inbox view. The two explicit fields below
     // make the distinction visible; `scope` says what `filteredCounts` covers.
     // On an older daemon only `counts` exists; do not relabel it as filtered.
@@ -472,8 +586,209 @@ export function presentNotifications(
 }
 
 export function presentNotifyTarget(target: NotifyTarget, mode: McpPresentationMode): unknown {
-  if (mode === "development") return target;
-  return targetOf(target);
+  const base = {
+    channel: target.channel,
+    ...(target.codexThreadId !== undefined
+      ? { codexThreadId: target.codexThreadId }
+      : {}),
+    configured: target.channel !== "none" && target.codexThreadId !== undefined,
+  };
+  if (mode === "development") {
+    return {
+      ...base,
+      ...(target.updatedAt !== undefined ? { updatedAt: target.updatedAt } : {}),
+    };
+  }
+  return base;
+}
+
+export function presentNotificationAck(
+  result: { acked: number; missing: string[] },
+  mode: McpPresentationMode,
+  requestedIds: string[],
+  by?: string,
+): unknown {
+  const out = {
+    requested: requestedIds.length,
+    acked: result.acked,
+    missing: [...result.missing],
+    ...(by !== undefined ? { by } : {}),
+  };
+  if (mode === "development") {
+    return { ...out, requestedIds: [...requestedIds] };
+  }
+  return out;
+}
+
+export function presentForgetResult(
+  result: { workerId: string; forgotten: boolean; sessionPreserved: true; note: string },
+  _mode: McpPresentationMode,
+): unknown {
+  return {
+    workerId: result.workerId,
+    forgotten: result.forgotten,
+    sessionPreserved: result.sessionPreserved,
+    note: result.note,
+  };
+}
+
+function taskSummaryForProduction(task: TaskRecord) {
+  return {
+    taskId: task.id,
+    title: task.title,
+    ...(task.category !== undefined ? { category: task.category } : {}),
+    createdAt: task.createdAt,
+    workerIds: [...task.workerIds],
+    ...(task.parentSessionRef !== undefined ? { parentSessionRef: task.parentSessionRef } : {}),
+  };
+}
+
+function taskForDevelopment(task: TaskRecord) {
+  return {
+    schemaVersion: task.schemaVersion,
+    id: task.id,
+    title: task.title,
+    ...(task.category !== undefined ? { category: task.category } : {}),
+    executionMode: task.executionMode,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    workerIds: [...task.workerIds],
+    ...(task.parentSessionRef !== undefined ? { parentSessionRef: task.parentSessionRef } : {}),
+    acceptanceStatus: task.acceptanceStatus,
+    ...(task.firstAcceptancePassed !== undefined
+      ? { firstAcceptancePassed: task.firstAcceptancePassed }
+      : {}),
+    ...(task.reworkCount !== undefined ? { reworkCount: task.reworkCount } : {}),
+    ...(task.interventionCount !== undefined
+      ? { interventionCount: task.interventionCount }
+      : {}),
+    createdBy: task.createdBy,
+  };
+}
+
+export function presentTaskCreated(task: TaskRecord, mode: McpPresentationMode): unknown {
+  if (mode === "development") return taskForDevelopment(task);
+  return taskSummaryForProduction(task);
+}
+
+function taskWorkerView(
+  worker: TaskMetrics["workers"][number],
+  mode: McpPresentationMode,
+) {
+  if (mode === "production") {
+    return {
+      workerId: worker.workerId,
+      missing: worker.missing,
+      ...(worker.status !== undefined ? { status: worker.status } : {}),
+      ...(worker.runMs !== undefined ? { runMs: worker.runMs } : {}),
+      ...(worker.runMsUnknownReason !== undefined
+        ? { runMsUnknownReason: worker.runMsUnknownReason }
+        : {}),
+    };
+  }
+  return {
+    workerId: worker.workerId,
+    missing: worker.missing,
+    ...(worker.runtime !== undefined ? { runtime: worker.runtime } : {}),
+    ...(worker.status !== undefined ? { status: worker.status } : {}),
+    ...(worker.createdAt !== undefined ? { createdAt: worker.createdAt } : {}),
+    ...(worker.firstStartedAt !== undefined ? { firstStartedAt: worker.firstStartedAt } : {}),
+    ...(worker.startedAt !== undefined ? { startedAt: worker.startedAt } : {}),
+    ...(worker.endedAt !== undefined ? { endedAt: worker.endedAt } : {}),
+    ...(worker.resumeCount !== undefined ? { resumeCount: worker.resumeCount } : {}),
+    ...(worker.runMs !== undefined ? { runMs: worker.runMs } : {}),
+    ...(worker.runMsUnknownReason !== undefined
+      ? { runMsUnknownReason: worker.runMsUnknownReason }
+      : {}),
+  };
+}
+
+export function presentTaskMetrics(metrics: TaskMetrics, mode: McpPresentationMode): unknown {
+  const out: Record<string, unknown> = {
+    task: mode === "development"
+      ? taskForDevelopment(metrics.task)
+      : taskSummaryForProduction(metrics.task),
+    status: metrics.status,
+    timing: { ...metrics.timing },
+    workers: metrics.workers.map((worker) => taskWorkerView(worker, mode)),
+    usageSummary: {
+      worker: { ...metrics.usageSummary.worker },
+      parentAttributable: { ...metrics.usageSummary.parentAttributable },
+      parentSessionLevel: { ...metrics.usageSummary.parentSessionLevel },
+      unverified: { ...metrics.usageSummary.unverified },
+    },
+    warnings: [...metrics.warnings],
+    unknownFields: [...metrics.unknownFields],
+  };
+  if (mode === "development") {
+    out.usage = metrics.usage.map((record) => presentUsageRecord(record, "development"));
+  }
+  return out;
+}
+
+export function presentUsageRecord(record: UsageRecord, mode: McpPresentationMode): unknown {
+  const base = {
+    usageId: record.id,
+    taskId: record.taskId,
+    role: record.role,
+    ...(record.workerId !== undefined ? { workerId: record.workerId } : {}),
+    recordedAt: record.recordedAt,
+    confidence: record.confidence,
+    attribution: record.attribution,
+    ...(record.provider !== undefined ? { provider: record.provider } : {}),
+    ...(record.modelId !== undefined ? { modelId: record.modelId } : {}),
+    ...(record.harness !== undefined ? { harness: record.harness } : {}),
+  };
+  if (mode === "production") return base;
+  return {
+    ...base,
+    schemaVersion: record.schemaVersion,
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    cacheReadTokens: record.cacheReadTokens,
+    cacheWriteTokens: record.cacheWriteTokens,
+    reportedTotalTokens: record.reportedTotalTokens,
+    usageSource: record.usageSource,
+    ...(record.note !== undefined ? { note: record.note } : {}),
+  };
+}
+
+export function presentMetricsReport(report: MetricsReport, mode: McpPresentationMode): unknown {
+  const out: Record<string, unknown> = {
+    generatedAt: report.generatedAt,
+    period: { ...report.period },
+    taskCount: report.taskCount,
+    workerCount: report.workerCount,
+    counts: { ...report.counts },
+    usageCoverage: { ...report.usageCoverage },
+    knownWorkerUsage: { ...report.knownWorkerUsage },
+    knownParentUsage: { ...report.knownParentUsage },
+    sessionLevelParentUsage: { ...report.sessionLevelParentUsage },
+    unverifiedUsage: { ...report.unverifiedUsage },
+    durationStats: {
+      endToEnd: { ...report.durationStats.endToEnd },
+      workerRun: { ...report.durationStats.workerRun },
+      waiting: { ...report.durationStats.waiting },
+      note: report.durationStats.note,
+    },
+    notTracked: { ...report.notTracked },
+    unknownFields: [...report.unknownFields],
+    dataQualityWarnings: [...report.dataQualityWarnings],
+    ...(report.tasksTruncated !== undefined ? { tasksTruncated: report.tasksTruncated } : {}),
+  };
+  if (report.tasks) {
+    out.tasks = mode === "development"
+      ? report.tasks.map((task) => presentTaskMetrics(task, "development"))
+      : report.tasks.map((task) => ({
+          taskId: task.task.id,
+          title: task.task.title,
+          status: task.status,
+          createdAt: task.task.createdAt,
+          workerCount: task.workers.length,
+          endToEndMs: task.timing.endToEndMs,
+        }));
+  }
+  return out;
 }
 
 /**

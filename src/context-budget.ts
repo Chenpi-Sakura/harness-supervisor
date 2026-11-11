@@ -164,10 +164,16 @@ export function compactEvent(
   event: WorkerEvent,
   worker: WorkerSummary,
   summaryChars: number,
+  options: { dedupeResult?: boolean } = {},
 ): CompactEvent {
   const out: CompactEvent = { seq: event.seq, ts: event.ts, type: event.type };
   const source = eventSummarySource(event);
-  if (source === undefined || repeatsResult(event, worker)) return out;
+  if (
+    source === undefined ||
+    (options.dedupeResult !== false && repeatsResult(event, worker))
+  ) {
+    return out;
+  }
   const preview = textPreview(source, summaryChars);
   if (preview.preview.trim()) out.summary = preview.preview;
   return out;
@@ -227,6 +233,23 @@ export function packCompactEvents(
  * total is reported. Used by the default status view and by an explicit result
  * read, which must not also turn the input into full text.
  */
+/** Full pending input under an explicit field whitelist, for development reads. */
+export function fullPendingInput(input: PendingInput | undefined) {
+  if (!input) return undefined;
+  return {
+    requestId: input.requestId,
+    ...(input.seq !== undefined ? { seq: input.seq } : {}),
+    method: input.method,
+    ...(input.title !== undefined ? { title: input.title } : {}),
+    ...(input.message !== undefined ? { message: input.message } : {}),
+    ...(input.options !== undefined ? { options: [...input.options] } : {}),
+    ...(input.placeholder !== undefined ? { placeholder: input.placeholder } : {}),
+    ...(input.prefill !== undefined ? { prefill: input.prefill } : {}),
+    createdAt: input.createdAt,
+    ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+  };
+}
+
 export function compactPendingInput(input: PendingInput | undefined, messageChars: number) {
   if (!input) return undefined;
   const options = input.options?.slice(0, MAX_PENDING_OPTIONS);
@@ -312,6 +335,12 @@ export function compactTimeline(
 interface CompactStatusOptions {
   budgetBytes: number;
   eventLimit: number;
+  includeRecentEvents?: boolean;
+  includeLastProgress?: boolean;
+  includeTimeline?: boolean;
+  includeInputState?: boolean;
+  /** Full pending input instead of the bounded preview. */
+  includeInput?: boolean;
 }
 
 /**
@@ -325,10 +354,13 @@ export function compactStatus(
 ): Record<string, unknown> {
   const worker = result.worker;
   const body = worker.result?.text ?? worker.error ?? "";
+  const includeRecentEvents = options.includeRecentEvents !== false;
   const candidates = lifecycleEvents(result.recentEvents);
   const wanted = Math.min(options.eventLimit, MAX_COMPACT_EVENTS);
-  let events = candidates.slice(Math.max(0, candidates.length - wanted));
-  let omitted = result.recentEvents.length - events.length;
+  let events = includeRecentEvents
+    ? candidates.slice(Math.max(0, candidates.length - wanted))
+    : [];
+  let omitted = includeRecentEvents ? result.recentEvents.length - events.length : 0;
 
   const build = (chars: number, list: WorkerEvent[]): Record<string, unknown> => {
     const reason =
@@ -364,22 +396,36 @@ export function compactStatus(
             ? { error: textPreview(worker.error, chars) }
             : {}),
         ...(worker.pendingInput
-          ? { pendingInput: compactPendingInput(worker.pendingInput, MAX_PENDING_MESSAGE_CHARS) }
+          ? {
+              pendingInput: options.includeInput
+                ? fullPendingInput(worker.pendingInput)
+                : compactPendingInput(worker.pendingInput, MAX_PENDING_MESSAGE_CHARS),
+            }
           : {}),
         resumeAvailable: worker.resumeAvailable,
       },
-      recentEvents: list.map((event) => compactEvent(event, worker, Math.min(chars, MAX_EVENT_SUMMARY_CHARS))),
-      ...(result.lastProgress
+      ...(includeRecentEvents
+        ? {
+            recentEvents: list.map((event) =>
+              compactEvent(event, worker, Math.min(chars, MAX_EVENT_SUMMARY_CHARS)),
+            ),
+          }
+        : {}),
+      ...(options.includeLastProgress !== false && result.lastProgress
         ? {
             lastProgress: compactLastProgress(result.lastProgress, chars, {
               omitFinalText: worker.status === "completed" && worker.result !== undefined,
             }),
           }
         : {}),
-      ...(result.timeline ? { timeline: compactTimeline(result.timeline) } : {}),
-      ...(result.inputState ? { inputState: result.inputState } : {}),
+      ...(options.includeTimeline !== false && result.timeline
+        ? { timeline: compactTimeline(result.timeline) }
+        : {}),
+      ...(options.includeInputState !== false && result.inputState
+        ? { inputState: result.inputState }
+        : {}),
     };
-    if (omitted > 0) out.eventsOmitted = omitted;
+    if (includeRecentEvents && omitted > 0) out.eventsOmitted = omitted;
     return out;
   };
 
@@ -422,6 +468,18 @@ export function singleEventView(worker: WorkerSummary, event: WorkerEvent) {
   };
 }
 
+/** One event by sequence number in production: identity plus one summary line. */
+export function singleProductionEventView(
+  worker: WorkerSummary,
+  event: WorkerEvent,
+  summaryChars = MAX_EVENT_SUMMARY_CHARS,
+) {
+  return {
+    worker: { id: worker.id, status: worker.status, lastSeq: worker.lastSeq },
+    event: compactEvent(event, worker, summaryChars, { dedupeResult: false }),
+  };
+}
+
 export interface CompactEventsResult {
   worker: { id: string; status: string; lastSeq: number };
   events: CompactEvent[];
@@ -435,16 +493,23 @@ export interface CompactEventsResult {
 /**
  * Compact event read.
  *
- * Without `sinceSeq` this is a tail snapshot: the newest lifecycle events are
+ * Without `sinceSeq` this is a tail snapshot: the newest visible events are
  * what a caller needs after a wake-up, and scanning back from the tail avoids
  * returning the oldest 100 events (which are usually pure progress).
- * With `sinceSeq` it keeps strict cursor semantics and only filters progress.
+ * With `sinceSeq` it keeps strict cursor semantics. The default filter hides
+ * progress; production passes the narrower allowlist from event-policy.
  */
 export async function readCompactEvents(
   read: (options: { sinceSeq: number; limit: number }) => Promise<ReadEventsResult>,
-  options: { sinceSeq?: number; limit?: number; budgetBytes: number },
+  options: {
+    sinceSeq?: number;
+    limit?: number;
+    budgetBytes: number;
+    eventFilter?: (event: WorkerEvent) => boolean;
+  },
 ): Promise<CompactEventsResult> {
   const snapshot = options.sinceSeq === undefined;
+  const visible = options.eventFilter ?? ((event: WorkerEvent) => !isProgressEvent(event));
   // The default snapshot is capped at MAX_COMPACT_EVENTS; an explicit cursor
   // keeps its own limit so existing incremental reads are not silently shrunk.
   const limit = snapshot
@@ -454,14 +519,17 @@ export async function readCompactEvents(
   let scanned: ReadEventsResult | undefined;
   let collected: WorkerEvent[] = [];
   let progressOmitted = 0;
+  let filteredOmitted = 0;
 
   if (options.sinceSeq !== undefined) {
     // Strict cursor reads must not over-fetch: the returned `nextSeq` is the
     // caller's next cursor, so the window has to match the requested limit.
     const result = await read({ sinceSeq: options.sinceSeq, limit });
     scanned = result;
-    collected = [...result.events];
-    progressOmitted = result.events.filter(isProgressEvent).length;
+    collected = result.events.filter(visible);
+    const hidden = result.events.filter((event) => !visible(event));
+    progressOmitted = hidden.filter(isProgressEvent).length;
+    filteredOmitted = hidden.length - progressOmitted;
   } else {
     const head = await read({ sinceSeq: 0, limit: 1 });
     const lastSeq = head.worker.lastSeq;
@@ -474,44 +542,53 @@ export async function readCompactEvents(
       // so a window must never be expressed as `lastSeq - start + 1`.
       const window = await read({ sinceSeq: start, limit: COMPACT_SCAN_WINDOW + 1 });
       // The newest window supplies worker/nextSeq/hasMore; later pages only add
-      // older lifecycle events, so scanning back must not overwrite it.
+      // older visible events, so scanning back must not overwrite it.
       scanned ??= window;
       for (const event of window.events) seen.set(event.seq, event);
-      if (countLifecycle(seen) >= limit || start === 0) break;
+      if (countVisible(seen, visible) >= limit || start === 0) break;
       start = Math.max(0, start - COMPACT_SCAN_WINDOW);
     }
     const all = [...seen.values()].sort((a, b) => a.seq - b.seq);
-    collected = lifecycleEvents(all);
-    progressOmitted = all.length - collected.length;
+    collected = all.filter(visible);
+    const hidden = all.filter((event) => !visible(event));
+    progressOmitted = hidden.filter(isProgressEvent).length;
+    filteredOmitted = hidden.length - progressOmitted;
   }
   if (!scanned) scanned = await read({ sinceSeq: 0, limit: 1 });
   const page = scanned;
 
-  const envelope = (events: CompactEvent[], omitted: number): CompactEventsResult => ({
+  const envelope = (
+    events: CompactEvent[],
+    omitted: number,
+    policyOmitted = filteredOmitted,
+  ): CompactEventsResult => ({
     worker: {
       id: page.worker.id,
       status: page.worker.status,
       lastSeq: page.worker.lastSeq,
     },
     events,
-    eventsOmitted: omitted,
+    eventsOmitted: omitted + policyOmitted,
     progressOmitted,
     nextSeq: page.nextSeq,
     hasMore: page.hasMore,
   });
 
-  const packed = packCompactEvents(lifecycleEvents(collected), scanned.worker, {
+  const packed = packCompactEvents(collected, scanned.worker, {
     limit,
     budgetBytes: options.budgetBytes,
     // Measure the whole response, not just the event array.
-    wrap: envelope,
+    wrap: (events, omitted) => envelope(events, omitted),
   });
   const value = envelope(packed.events, packed.omitted);
   return packed.overflow ? { ...value, budgetExceeded: true } : value;
 }
 
-function countLifecycle(events: Map<number, WorkerEvent>): number {
+function countVisible(
+  events: Map<number, WorkerEvent>,
+  visible: (event: WorkerEvent) => boolean,
+): number {
   let count = 0;
-  for (const event of events.values()) if (!isProgressEvent(event)) count += 1;
+  for (const event of events.values()) if (visible(event)) count += 1;
   return count;
 }

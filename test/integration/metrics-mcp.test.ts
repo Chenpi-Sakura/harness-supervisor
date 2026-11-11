@@ -19,11 +19,15 @@ function parseTool(result: ToolResult): unknown {
   return JSON.parse(text);
 }
 
-async function connectMcp(t: TestContext, stateDir: string): Promise<Client> {
+async function connectMcp(
+  t: TestContext,
+  stateDir: string,
+  mode?: "production" | "development",
+): Promise<Client> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [MCP_ENTRY, "--state-dir", stateDir],
-    env: { ...process.env, HARNESS_SUPERVISOR_MCP_MODE: "" },
+    env: { ...process.env, HARNESS_SUPERVISOR_MCP_MODE: mode ?? "" },
     stderr: "pipe",
   });
   const mcp = new Client({ name: "hs-metrics-mcp-test", version: "1.0.0" });
@@ -46,41 +50,60 @@ test("MCP exposes task creation, worker linking, usage recording and reports", a
   const client: SupervisorClient = await daemon.start();
   const cwd = await makeWorkspace("hs-metrics-mcp-work-");
   const mcp = await connectMcp(t, daemon.stateDir);
+  const development = await connectMcp(t, daemon.stateDir, "development");
 
   const task = (await call(mcp, "metrics_task_create", {
     title: "MCP metrics task",
     category: "coding",
-  })) as TaskRecord;
+  })) as unknown as { taskId: string; title: string; category?: string };
   assert.equal(task.title, "MCP metrics task");
-  assert.equal(task.createdBy, "mcp");
+  assert.equal(task.category, "coding");
+  assert.equal(
+    "createdBy" in task,
+    false,
+    "production task summaries omit metrics diagnostics",
+  );
+  const taskId = task.taskId;
+  assert.ok(taskId);
 
   const accepted = (await call(mcp, "worker_spawn", {
     cwd,
     prompt: "MCP metrics worker",
     name: "MCP metrics worker",
-    taskId: task.id,
+    taskId,
   })) as WorkerSummary;
-  assert.equal(accepted.taskId, task.id);
+  assert.equal(accepted.taskId, taskId);
   await waitTerminal(client, accepted.id, 30_000);
 
-  const shown = (await call(mcp, "metrics_task_show", { taskId: task.id })) as TaskMetrics;
+  const shown = (await call(mcp, "metrics_task_show", { taskId })) as TaskMetrics;
   assert.equal(shown.status, "completed");
   assert.deepEqual(shown.task.workerIds, [accepted.id]);
-  assert.equal(shown.usage.length, 1);
-  assert.equal(shown.usage[0]?.inputTokens, 10);
-  assert.equal(shown.usage[0]?.confidence, "partial");
+  assert.equal(
+    "usage" in shown,
+    false,
+    "production task metrics return summaries, not raw usage records",
+  );
+
+  const shownDevelopment = (await call(development, "metrics_task_show", {
+    taskId,
+  })) as TaskMetrics;
+  assert.equal(shownDevelopment.task.createdBy, "mcp");
+  assert.equal(shownDevelopment.usage.length, 1);
+  assert.equal(shownDevelopment.usage[0]?.inputTokens, 10);
+  assert.equal(shownDevelopment.usage[0]?.confidence, "partial");
 
   const usage = (await call(mcp, "metrics_record_usage", {
-    taskId: task.id,
+    taskId,
     role: "parent_agent",
     usageId: "mcp-parent-1",
     inputTokens: 77,
     outputTokens: 11,
     attribution: "incremental",
     confidence: "partial",
-  })) as UsageRecord;
-  assert.equal(usage.inputTokens, 77);
+  })) as unknown as { usageId: string; attribution: string };
+  assert.equal(usage.usageId, "manual:mcp-parent-1");
   assert.equal(usage.attribution, "incremental");
+  assert.equal("inputTokens" in usage, false, "production usage records omit token details");
 
   const report = (await call(mcp, "metrics_report", {
     includeTasks: true,
@@ -91,5 +114,20 @@ test("MCP exposes task creation, worker linking, usage recording and reports", a
   assert.equal(report.knownParentUsage.inputTokens.value, 77);
   assert.equal(report.usageCoverage.tasksWithAttributableParentUsage, 1);
   assert.equal(report.notTracked.intervention.includes("Not collected"), true);
-  assert.equal(report.tasks?.[0]?.task.id, task.id);
+  const reportTask = (report.tasks?.[0] ?? {}) as unknown as Record<string, unknown>;
+  assert.equal(reportTask.taskId, taskId);
+  assert.equal("usage" in reportTask, false);
+
+  const developmentReport = (await call(development, "metrics_report", {
+    includeTasks: true,
+  })) as MetricsReport;
+  assert.equal(developmentReport.tasks?.[0]?.task.id, taskId);
+  assert.equal(
+    developmentReport.tasks?.[0]?.usage.some(
+      (record) =>
+        (record as unknown as { usageId: string }).usageId === "manual:mcp-parent-1" &&
+        record.inputTokens === 77,
+    ),
+    true,
+  );
 });

@@ -1391,15 +1391,33 @@ export class Supervisor {
     }
   }
 
-  list(filter?: { statuses?: WorkerStatus[]; limit?: number; includeArchived?: boolean }): WorkerSummary[] {
+  list(filter?: {
+    statuses?: WorkerStatus[];
+    limit?: number;
+    includeArchived?: boolean;
+    after?: { createdAt: string; id: string };
+  }): WorkerSummary[] {
     this.assertInitialized();
     const statuses = filter?.statuses ? new Set(filter.statuses) : null;
     const limit = clampInt(filter?.limit ?? 100, 1, 500);
+    const after = filter?.after;
     return this.store
       .listWorkers()
       .filter((record) => !statuses || statuses.has(record.status))
       .filter((record) => filter?.includeArchived === true || !record.archived)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      // Keyset order is (createdAt DESC, id ASC). Comparing the pair rather
+      // than a row position keeps the page stable when the cursor record is
+      // deleted, archived, or when newer workers arrive between pages.
+      .filter((record) => {
+        if (!after) return true;
+        const byCreatedAt = record.createdAt.localeCompare(after.createdAt);
+        if (byCreatedAt !== 0) return byCreatedAt < 0;
+        return record.id.localeCompare(after.id) > 0;
+      })
+      .sort((a, b) => {
+        const byCreatedAt = b.createdAt.localeCompare(a.createdAt);
+        return byCreatedAt !== 0 ? byCreatedAt : a.id.localeCompare(b.id);
+      })
       .slice(0, limit)
       .map((record) => this.summary(record));
   }

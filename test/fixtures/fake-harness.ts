@@ -241,6 +241,16 @@ async function runPrompt(prompt) {
     await sleep(Math.max(step * 50, 1000));
     if (token !== runToken || aborted) return;
   }
+  if (scenario === "delayed-progress") {
+    // Progress arrives well after the waiter's initial snapshot, while the run
+    // stays non-terminal long enough to prove it did not wake the wait.
+    await sleep(500);
+    if (token !== runToken || aborted) return;
+    const progress = assistantMessage("DELAYED_PROGRESS_FROM_WORKER");
+    emit({ type: "message_end", message: progress });
+    await sleep(3_000);
+    if (token !== runToken || aborted) return;
+  }
   if (scenario === "ask") {
     const uiId = `ui-${randomBytes(4).toString("hex")}`;
     lastUiRequest = { id: uiId, answer: undefined };

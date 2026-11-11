@@ -197,4 +197,15 @@ The added regression coverage:
 - Evidence source: maintainer deployment record for the target environment. The default state directory on this development machine is a separate 15-worker / 5.2 MB instance (0.9.0 PID 72752); it was not used for the 331 MB conclusion, and the backup was not found locally.
 - See [docs/2026-11-10-0.9.0-production-deployment.md](../docs/2026-11-10-0.9.0-production-deployment.md).
 
+## 20. 0.9.1 MCP response contract: real Qoder and MiniMax Code (executed 2026-11-10)
+
+- Command: `MCP_REAL=1 MCP_REAL_RUNTIMES=qoder,mcode node scripts/e2e-mcp-runtimes.mjs`; isolated temporary state/workspace, production daemon untouched.
+- Harnesses: Qoder CLI 1.1.82 (ACP, normal `~/.qoder` login) and MiniMax Code 0.7.0 (ACP).
+- Flow per runtime: production MCP `worker_spawn -> worker_wait -> worker_status -> worker_events`, one minimal text-only task.
+- Response bytes: Qoder spawn 536 / wait 355 / status 406 / events 544 / development status 7,211; MiniMax Code 536 / 355 / 406 / 544 / 7,367. The complete 19-character result arrived once in `worker_wait` with `truncated=false`.
+- Qoder produced 37 real `run.progress` events including `thinking` and assistant-message chunks; MiniMax Code produced 24 (including `thinking`). Production exposed none, returned no event `data`, and leaked no banned diagnostic keys. Development status remained the only path that carried the full raw history. Progress counts vary between runs because model streaming is non-deterministic.
+- `worker_wait` carried no events and `worker_status` carried no recentEvents/timeline/lastProgress/inputState, matching the 0.9.1 contract.
+- Limits: one minimal text-only task per runtime; no Desktop-model run, persistent multi-turn, steering or permission flow; Pi and DSH were not part of this round.
+- See [mcp-runtime-acceptance-261110/README.md](mcp-runtime-acceptance-261110/README.md) and [result.json](mcp-runtime-acceptance-261110/result.json).
+
 > Note: the original temp state/work directories may be cleaned up; the artifacts relevant to each run are copied into these evidence folders.

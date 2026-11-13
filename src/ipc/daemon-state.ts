@@ -1,3 +1,4 @@
+import { readFileSync, unlinkSync } from "node:fs";
 import { open, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { SupervisorError } from "../errors.js";
@@ -106,6 +107,26 @@ export function describeLockRefusal(
   return `A live process (pid ${decision.pid}) holds the daemon lock ${lockPath} but its identity could not be verified; refusing to recycle the lock. ${hint}`;
 }
 
+/**
+ * Release the daemon lock synchronously.
+ *
+ * The daemon exit handler runs after the event loop is gone, so it may only do
+ * synchronous work. The lock is removed only when it still carries the given
+ * pid, so a lock that another daemon has taken over is never deleted. Every
+ * error is swallowed: a missing, unreadable or corrupt lock file must never
+ * break the exit path.
+ */
+export function releaseDaemonLockSync(lockPath: string, pid: number): void {
+  try {
+    const raw = readFileSync(lockPath, "utf8");
+    const current = JSON.parse(raw) as LockInfo | null;
+    if (!current || current.pid !== pid) return;
+    unlinkSync(lockPath);
+  } catch {
+    // The lock is missing, unreadable or corrupt: there is nothing to release.
+  }
+}
+
 export async function acquireDaemonLock(stateDir: string): Promise<DaemonLock> {
   await ensureDir(stateDir);
   const lockPath = path.join(stateDir, "daemon.lock");
@@ -123,10 +144,7 @@ export async function acquireDaemonLock(stateDir: string): Promise<DaemonLock> {
         path: lockPath,
         pid: process.pid,
         async release() {
-          const current = await readJsonFile<LockInfo>(lockPath).catch(() => null);
-          if (current?.pid === process.pid) {
-            await unlink(lockPath).catch(() => undefined);
-          }
+          releaseDaemonLockSync(lockPath, process.pid);
         },
       };
     } catch (error) {

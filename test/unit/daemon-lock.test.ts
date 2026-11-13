@@ -11,8 +11,13 @@ import {
   evaluateLockHolder,
   isPidReuse,
   PID_REUSE_TOLERANCE_MS,
+  releaseDaemonLockSync,
 } from "../../src/ipc/daemon-state.js";
 import type { ProcessIdentity } from "../../src/util/process.js";
+
+/** Built modules the exit-path child process imports. */
+const daemonStateUrl = new URL("../../src/ipc/daemon-state.js", import.meta.url).href;
+const daemonUrl = new URL("../../src/daemon.js", import.meta.url).href;
 
 async function tempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), prefix));
@@ -373,4 +378,64 @@ test("a lock that may still belong to a live holder is refused", async (t) => {
   } finally {
     await rm(lockPath, { force: true });
   }
+});
+
+test("the synchronous release removes our own lock", async () => {
+  const stateDir = await tempDir("hs-lock-sync-own-");
+  const lock = await acquireDaemonLock(stateDir);
+  releaseDaemonLockSync(lock.path, process.pid);
+  await assert.rejects(() => access(lock.path), /ENOENT/);
+});
+
+test("the synchronous release keeps a lock owned by another pid", async () => {
+  const stateDir = await tempDir("hs-lock-sync-other-");
+  const lockPath = path.join(stateDir, "daemon.lock");
+  const otherPid = process.pid + 1;
+  await writeLock(stateDir, { pid: otherPid, startedAt: new Date().toISOString(), stateDir });
+  releaseDaemonLockSync(lockPath, process.pid);
+  assert.equal(JSON.parse(await readFile(lockPath, "utf8")).pid, otherPid);
+});
+
+test("the synchronous release tolerates a missing or corrupt lock file", async () => {
+  const stateDir = await tempDir("hs-lock-sync-corrupt-");
+  const lockPath = path.join(stateDir, "daemon.lock");
+  // A missing lock is not an error: there is nothing to release.
+  releaseDaemonLockSync(lockPath, process.pid);
+  // A corrupt lock is not ours: it must survive and must not throw.
+  await writeFile(lockPath, "not-json\n", "utf8");
+  releaseDaemonLockSync(lockPath, process.pid);
+  assert.equal(await readFile(lockPath, "utf8"), "not-json\n");
+});
+
+test("the daemon releases the lock when the process exits", async () => {
+  const stateDir = await tempDir("hs-lock-exit-");
+  const scriptPath = path.join(stateDir, "exit-holder.mjs");
+  // The child uses the real daemon wiring: it acquires the lock, registers the
+  // exit handler and ends the process the way the hard exit timer, the second
+  // signal and a throw during startup do.
+  await writeFile(
+    scriptPath,
+    [
+      `import { acquireDaemonLock } from ${JSON.stringify(daemonStateUrl)};`,
+      `import { registerDaemonLockExitRelease } from ${JSON.stringify(daemonUrl)};`,
+      `const lock = await acquireDaemonLock(process.argv[2]);`,
+      `registerDaemonLockExitRelease(lock);`,
+      `process.exit(7);`,
+    ].join("\n"),
+    "utf8",
+  );
+  const child = spawn(process.execPath, [scriptPath, stateDir], {
+    stdio: ["ignore", "ignore", "pipe"],
+    windowsHide: true,
+  });
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  const code = await new Promise<number | null>((resolve) => {
+    child.once("exit", (exitCode) => resolve(exitCode));
+    child.once("error", () => resolve(null));
+  });
+  assert.equal(code, 7, `the child did not exit as expected: ${stderr}`);
+  await assert.rejects(() => access(path.join(stateDir, "daemon.lock")), /ENOENT/);
 });

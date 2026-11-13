@@ -10,7 +10,9 @@ import {
   acquireDaemonLock,
   ensureIpcToken,
   removeEndpointInfoIfOwned,
+  releaseDaemonLockSync,
   writeEndpointInfo,
+  type DaemonLock,
 } from "./ipc/daemon-state.js";
 import { ipcEndpoint, resolveStateDir } from "./ipc/protocol.js";
 import { Store } from "./store.js";
@@ -38,6 +40,20 @@ function intEnv(name: string, fallback: number, min: number, max: number): numbe
   return clampInt(parsed, min, max);
 }
 
+/**
+ * Release the daemon lock when the process exits.
+ *
+ * The graceful shutdown releases the lock, but the hard exit timer, a second
+ * signal and a throw during startup end the process without running it. The
+ * exit handler covers those paths: it only performs synchronous work, it never
+ * throws and it never removes a lock that belongs to another pid.
+ */
+export function registerDaemonLockExitRelease(lock: DaemonLock): void {
+  process.on("exit", () => {
+    releaseDaemonLockSync(lock.path, lock.pid);
+  });
+}
+
 export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   const stateDir = resolveStateDir(options.stateDir);
   await ensureDir(stateDir);
@@ -45,6 +61,9 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     options.logger ?? createLogger(path.join(stateDir, "daemon.log"), options.foreground === true);
   const done = new Deferred<void>();
   const lock = await acquireDaemonLock(stateDir);
+  // Every exit path has to release the lock, including the ones that skip the
+  // graceful shutdown (hard exit timer, second signal, throw during startup).
+  registerDaemonLockExitRelease(lock);
   const token = await ensureIpcToken(stateDir);
   const endpoint = ipcEndpoint(stateDir);
   const supervisorId = randomUUID();
@@ -236,6 +255,9 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     name: TOOL_NAME,
     version: VERSION,
     pid: process.pid,
+    // The parent pid identifies the process tree that started the daemon; it is
+    // the missing evidence when a daemon dies without a trace.
+    ppid: process.ppid,
     endpoint,
     stateDir,
   });

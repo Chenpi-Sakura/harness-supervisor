@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { inspectProcess, readProcessCommandLine } from "../../src/util/process.js";
+import { inspectProcess, readProcessCommandLine, readProcessDetails } from "../../src/util/process.js";
 
 test("reads the command line of a live process", async () => {
   const commandLine = await readProcessCommandLine(process.pid);
@@ -30,4 +30,32 @@ test("verifies identity against tokens that belong to the worker", async () => {
   const missing = await inspectProcess(undefined, ["anything"]);
   assert.equal(missing.alive, false);
   assert.equal(missing.verified, null);
+  assert.equal(missing.startedAt, null);
+});
+
+test("reads the creation time of a live process", async () => {
+  const identity = await inspectProcess(process.pid, []);
+  assert.equal(identity.alive, true);
+  if (process.platform === "win32" || process.platform === "linux") {
+    assert.notEqual(identity.startedAt, null, "the creation time must be readable on this platform");
+  }
+  if (identity.startedAt !== null) {
+    const started = Date.parse(identity.startedAt);
+    assert.ok(Number.isFinite(started), `unparsable start time: ${identity.startedAt}`);
+    assert.ok(started <= Date.now() + 1000, "the creation time must not be in the future");
+    const age = Date.now() - started;
+    assert.ok(
+      Math.abs(age - process.uptime() * 1000) < 10_000,
+      `creation time ${identity.startedAt} disagrees with the process uptime (${process.uptime()}s)`,
+    );
+  }
+});
+
+test("reads command line and creation time with one query", async () => {
+  const details = await readProcessDetails(process.pid);
+  if (process.platform === "win32" || process.platform === "linux") {
+    assert.notEqual(details.startedAt, null, "the creation time must be readable on this platform");
+  }
+  const invalid = await readProcessDetails(-1);
+  assert.deepEqual(invalid, { commandLine: null, startedAt: null });
 });

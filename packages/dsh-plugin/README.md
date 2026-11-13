@@ -1,6 +1,6 @@
 # DSH Harness Supervisor
 
-将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护，配套 HS `0.10.4`。插件不声明 DSH 宿主版本限制，通过运行时接口检查兼容性；已在 DSH `0.2.2-rc.1` 验证，其他版本尚需验收。
+将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护，配套 HS `0.10.5`。插件不声明 DSH 宿主版本限制，通过运行时接口检查兼容性；已在 DSH `0.2.2-rc.1` 验证，其他版本尚需验收。
 
 [项目仓库](https://github.com/Chenpi-Sakura/harness-supervisor) · [完整项目 README](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/README.md) · [npm](https://www.npmjs.com/package/dsh-harness-supervisor)
 
@@ -55,7 +55,7 @@ dsh plugin --profile desktop add dsh-harness-supervisor@latest
 npm run build:plugin
 npm run test:plugin
 npm run pack:core
-npm --prefix packages/dsh-plugin run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.4.tgz
+npm --prefix packages/dsh-plugin run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.5.tgz
 ```
 
 核心必须先完成当前版本的 `npm run build`。插件打包解包固定核心 `.tgz`，对照 `production-lock.json` 验证生产依赖，再用 `bundleDependencies` 生成独立安装包；安装时不重新编译。DSH SDK、React 等宿主能力不重复打包。

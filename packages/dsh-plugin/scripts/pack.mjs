@@ -8,8 +8,8 @@ import { verifyProductionTree } from "../../../scripts/verify-production-tree.mj
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const arg = process.argv.indexOf("--core-tarball");
-if (arg >= 0 && !process.argv[arg + 1]) throw new Error("Usage: node scripts/pack.mjs [--core-tarball <harness-supervisor-0.10.4.tgz>]");
-const tarball = path.resolve(arg >= 0 ? process.argv[arg + 1] : path.join(root, "../../.artifacts/harness-supervisor-0.10.4.tgz"));
+if (arg >= 0 && !process.argv[arg + 1]) throw new Error("Usage: node scripts/pack.mjs [--core-tarball <harness-supervisor-0.10.5.tgz>]");
+const tarball = path.resolve(arg >= 0 ? process.argv[arg + 1] : path.join(root, "../../.artifacts/harness-supervisor-0.10.5.tgz"));
 const output = path.join(root, ".artifacts");
 await mkdir(output, { recursive: true });
 await import("./build.mjs");

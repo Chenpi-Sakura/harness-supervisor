@@ -8,7 +8,7 @@ import {
   type WorkerEventType,
   type WorkerRecord,
 } from "./types.js";
-import { appendTextCapped, atomicWriteJson, atomicWriteText, ensureDir, readTail } from "./util/fsx.js";
+import { appendTextCapped, atomicWriteJson, atomicWriteText, ensureDir, readJsonFile, readTail } from "./util/fsx.js";
 import type { Logger } from "./util/logger.js";
 import { redactText, redactValue, safeText } from "./util/redact.js";
 
@@ -423,6 +423,21 @@ export class Store {
 
   workerDir(workerId: string): string {
     return path.join(this.workersDir, workerId);
+  }
+
+  /** Keep human-readable prompts outside the bounded model-facing summaries. */
+  savePrompt(record: WorkerRecord, prompt: string): Promise<void> {
+    const saved = { startedAt: record.startedAt, text: redactText(prompt) };
+    return this.enqueue(record.id, () => atomicWriteJson(path.join(this.workerDir(record.id), "prompt.json"), saved));
+  }
+
+  async readPrompt(workerId: string): Promise<{ text: string; available: boolean }> {
+    await this.flush(workerId);
+    const record = this.records.get(workerId);
+    if (!record) throw new Error("Worker not found");
+    const saved = await readJsonFile<{ startedAt?: string; text?: string }>(path.join(this.workerDir(workerId), "prompt.json"));
+    if (saved && saved.startedAt === record.startedAt && typeof saved.text === "string") return { text: saved.text, available: true };
+    return { text: record.promptPreview, available: false };
   }
 
   async createWorker(record: WorkerRecord): Promise<void> {

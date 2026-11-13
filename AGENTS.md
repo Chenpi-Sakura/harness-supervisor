@@ -309,7 +309,8 @@ HS 允许通过 HS 启动的 Worker 参与开发 HS 本身，但必须保持运�
 - 发布前核对核心 `package.json`、`package-lock.json`（顶层及根包）与 `src/version.ts`；同步核对 `packages/dsh-plugin/package.json` 的版本和核心依赖、插件 `src/index.js` 的 `EXPECTED_CORE_VERSION` / `pluginVersion`，以及客户端显示与打包脚本中的版本。以实际源码和 `.github/scripts/npm-release.mjs` 的校验为准，不假设存在自动 bump 命令。
 - 从当前构建生成核心 `.tgz`，再用它生成插件包；核心的 `production-lock.json` 由根锁文件生成，插件打包必须验证固定核心、依赖版本与归档完整性，不重新解析浮动依赖。
 - 当前正式发布由核心标签 `v<coreVersion>` 触发 `.github/workflows/npm-publish.yml`，通过 GitHub Actions / OIDC 发布两包；以两包版本和完整性均能从 npm 公开核验为交付完成。普通 `main` / 文档推送不发布，`workflow_dispatch` 仅构建验证；发布不自动升级本地实例。
-- npm 安装或更新只更新客户端/安装包并提供候选核心，不等于切换运行中的共享 daemon。应用配套核心仍须走受控排空、验证与切换流程，并遵守生产实例升级授权。
+- DSH 插件默认使用 `<DSH_HOME>/harness-supervisor` 的独立实例与配套核心，不继承全局 `HARNESS_SUPERVISOR_HOME`；CLI/MCP 的默认实例与其分离。插件禁用不终止其 Worker，已有全局记录不自动迁移。
+- npm 安装或更新只更新客户端/安装包并提供候选核心，不等于切换运行中的 daemon。应用配套核心仍须走受控排空、验证与切换流程，并遵守生产实例升级授权。
 
 ## 9. 最终原则
 

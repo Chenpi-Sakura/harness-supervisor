@@ -71,7 +71,7 @@ export function evaluateLockHolder(
   // The holder looks like a daemon. When the command line could not be read the
   // identity stays unverified, but the creation time still proves PID reuse: a
   // process created after the lock was written cannot be the daemon that wrote it.
-  if (identity.verified !== true && isPidReuse(existing.startedAt, identity.startedAt)) {
+  if (isPidReuse(existing.startedAt, identity.startedAt)) {
     return { outcome: "recycle", pid, reason: "pid-reused" };
   }
   return {

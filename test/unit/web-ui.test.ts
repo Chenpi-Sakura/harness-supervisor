@@ -18,7 +18,7 @@ function fakeSupervisor() {
   let answers = 0;
   let cancels = 0;
   const supervisor = {
-    store: { getWorker: (id: string) => workers.get(id) },
+    store: { getWorker: (id: string) => workers.get(id), readPrompt: async (id: string) => ({ text: `# Full prompt for ${id}\n${"details ".repeat(100)}`, available: true }) },
     list: (filter: { ownerRef?: string; limit?: number }) => [...workers.values()].filter(worker => filter.ownerRef === undefined || worker.ownerRef === filter.ownerRef).slice(0, filter.limit ?? 100),
     status: async (id: string) => ({ worker: workers.get(id), recentEvents: [], stderrTail: "" }),
     events: async (id: string, options: { sinceSeq: number }) => ({ worker: workers.get(id), events: options.sinceSeq < 2 ? [{ seq: 2, workerId: id, type: "run.needs_input", ts: "2026-11-11T00:00:00Z" }] : [], nextSeq: Math.max(2, options.sinceSeq), hasMore: false }),
@@ -96,7 +96,7 @@ test("WebUI enforces owner scope on list, status, events, usage, answer and canc
   const list = await fetch(`${launch.origin}/api/workers`, { headers }).then(r => r.json()) as { workers: WorkerSummary[] };
   assert.deepEqual(list.workers.map(w => w.id), ["worker-a"]);
   for (const id of ["worker-b", "worker-legacy", "nonexistent"]) {
-    for (const action of ["status", "events", "usage"]) {
+    for (const action of ["status", "events", "usage", "prompt"]) {
       assert.equal((await fetch(`${launch.origin}/api/workers/${id}/${action}`, { headers })).status, 404);
     }
     for (const action of ["answer", "cancel"]) {
@@ -104,6 +104,9 @@ test("WebUI enforces owner scope on list, status, events, usage, answer and canc
     }
   }
   assert.deepEqual(counts(), { answers: 0, cancels: 0 });
+  const prompt = await fetch(`${launch.origin}/api/workers/worker-a/prompt`, { headers }).then(r => r.json()) as { text: string; available: boolean };
+  assert.equal(prompt.available, true);
+  assert.ok(prompt.text.length > 500);
   const usage = await fetch(`${launch.origin}/api/workers/worker-a/usage`, { headers }).then(r => r.json());
   assert.deepEqual(usage, { available: true, usage: [{ workerId: "worker-a", role: "worker", inputTokens: 42 }] });
   const events = await fetch(`${launch.origin}/api/workers/worker-a/events?sinceSeq=2`, { headers }).then(r => r.json()) as { events: unknown[]; nextSeq: number };

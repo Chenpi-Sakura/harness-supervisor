@@ -1,5 +1,4 @@
 import path from "node:path";
-import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import * as mcpClient from "@deepseek-ai/dsh-mcp-client";
@@ -7,6 +6,7 @@ import z from "@deepseek-ai/schemastery";
 import { SupervisorClient, prepareManagedRuntime } from "harness-supervisor";
 import { AgentBridge, createRpcHandler, createFetchRoutes } from "./bridge.js";
 import { resolveNodeExecutable } from "./node-runtime.js";
+import { resolvePluginState } from "./state-dir.js";
 
 export const name = "harness-supervisor";
 export const inject = ["agents", "connection", "webServer"];
@@ -16,12 +16,12 @@ export const Config = z.object({
 });
 
 const coreRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve("harness-supervisor"))), "../..");
-const EXPECTED_CORE_VERSION = "0.10.5";
+const EXPECTED_CORE_VERSION = "0.10.6";
 
 export function assertCapabilities(info) {
   const required = ["ownerScope", "webUi", "managedRuntime", "drain"];
   if (!info?.capabilities || required.some((key) => info.capabilities[key] !== true)) {
-    throw new Error(`The shared HS daemon (${info?.version ?? "unknown"}) lacks required capabilities. Migrate it in a maintenance window; the plugin will not replace it or use global model access.`);
+    throw new Error(`The DSH-owned HS daemon (${info?.version ?? "unknown"}) lacks required capabilities. Apply the plugin's bundled core after its tasks have finished.`);
   }
 }
 
@@ -29,17 +29,16 @@ export async function apply(ctx, config) {
   if (!ctx.agents?.list || !ctx.agents?.get || !ctx.connection?.fetch?.register || typeof ctx.effect !== "function") {
     throw new Error("DSH 0.2.2-rc.1 Agent and Connection APIs are required");
   }
-  const stateDir = path.resolve(config.stateDir || process.env.HARNESS_SUPERVISOR_HOME || path.join(os.homedir(), ".harness-supervisor"));
-  const namespace = path.resolve(process.env.DSH_HOME || path.join(os.homedir(), ".dsh"));
+  const { stateDir, namespace } = resolvePluginState(config);
   const nodeExecutable = resolveNodeExecutable(config.nodeExecutable);
   // Stage before auto-start: plugin removal must not remove a live daemon's code.
-  // An existing daemon still wins its normal lock and is checked, never replaced.
+  // Only DSH's private instance is reused. Its cached core survives plugin removal.
   const bundledRuntime = await prepareManagedRuntime(stateDir, coreRoot);
   const client = new SupervisorClient({ stateDir, daemonEntry: path.join(bundledRuntime.root, "dist/src/daemon-entry.js"), nodeExecutable });
   const connections = new Map();
   const request = async (method, params = {}) => client.request(method, params, { timeoutMs: 120_000 });
   ctx.effect(() => () => client.close(), "HS operator IPC connection");
-  // The daemon's own managed resolver selects the active core. No host install is changed.
+  // The private instance retains its verified bundled core until a drained update.
   const info = await request("info");
   assertCapabilities(info);
 
@@ -72,7 +71,7 @@ export async function apply(ctx, config) {
   const rpc = createRpcHandler({
     agents: ctx.agents, namespace, request,
     status: async () => ({
-      pluginVersion: "0.1.5", pairedCoreVersion: EXPECTED_CORE_VERSION,
+      pluginVersion: "0.1.6", pairedCoreVersion: EXPECTED_CORE_VERSION,
       supervisor: await request("info"), update: await request("runtime_update_status"),
       sessions: [...connections].map(([agent, status]) => ({ sessionId: agent.id, ...status })),
     }),

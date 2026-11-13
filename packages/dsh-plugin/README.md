@@ -1,6 +1,6 @@
 # DSH Harness Supervisor
 
-将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护，配套 HS `0.10.5`。插件不声明 DSH 宿主版本限制，通过运行时接口检查兼容性；已在 DSH `0.2.2-rc.1` 验证，其他版本尚需验收。
+将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护，配套 HS `0.10.6`。插件不声明 DSH 宿主版本限制，通过运行时接口检查兼容性；已在 DSH `0.2.2-rc.1` 验证，其他版本尚需验收。
 
 [项目仓库](https://github.com/Chenpi-Sakura/harness-supervisor) · [完整项目 README](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/README.md) · [npm](https://www.npmjs.com/package/dsh-harness-supervisor)
 
@@ -26,11 +26,13 @@ dsh plugin --profile desktop add dsh-harness-supervisor@latest
 
 等待期间仍可回答输入、取消 Worker 或取消此次更新，没有隐式强杀期限。已登记的更新由 HS 继续执行，不要求设置页一直打开；切换后需重新打开 WebUI。
 
-更新作用于同一状态目录中的共享核心，不覆盖源码仓库或全局安装文件。仅更新 npm 包不等于切换运行核心。旧 `0.9.2` 等缺少所需能力的实例，首次迁入须先安排维护窗口、处理活动 Worker 并停止旧 daemon。
+插件拥有独立 daemon，各 DSH 会话共用该实例。配套核心会复制到持久缓存，更新仍通过排空与验证完成。仅更新 npm 包不等于立即切换运行核心。
 
 ## 配置与边界
 
-默认复用 `HARNESS_SUPERVISOR_HOME` 或 `~/.harness-supervisor`。可在插件配置中设置 `stateDir`、`nodeExecutable`；不同状态目录属于不同实例，更新不会跨实例生效。
+默认状态目录为 `$DSH_HOME/harness-supervisor`，未设置 `DSH_HOME` 时使用 `~/.dsh/harness-supervisor`。插件从内置核心建立自己的持久运行时缓存，不继承独立 CLI/Codex 的 `HARNESS_SUPERVISOR_HOME` 和运行时指针。可用 `stateDir` 指定另一个独立目录，`nodeExecutable` 指定 Node。
+
+从旧版共享实例升级时，旧任务和记录保留在原状态目录，可由原 CLI/MCP 继续访问；新插件面板展示专属实例的任务。若曾把插件 `stateDir` 配成全局 HS 目录，请清除该配置，使用新的默认目录。现有任务的迁移需要另行安排维护窗口。
 
 每个真实 DSH Agent 复用一个 MCP 连接，固定会话归属与通知策略。模型只能查询和操作所属会话的 Worker 与通知 ACK，不能修改共享通知目标或执行升级。旧 Worker 不自动归入 DSH 会话。会话归属与 `cwd` 是路由和工作目录约定，不是操作系统沙箱。
 
@@ -55,7 +57,7 @@ dsh plugin --profile desktop add dsh-harness-supervisor@latest
 npm run build:plugin
 npm run test:plugin
 npm run pack:core
-npm --prefix packages/dsh-plugin run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.5.tgz
+npm --prefix packages/dsh-plugin run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.6.tgz
 ```
 
 核心必须先完成当前版本的 `npm run build`。插件打包解包固定核心 `.tgz`，对照 `production-lock.json` 验证生产依赖，再用 `bundleDependencies` 生成独立安装包；安装时不重新编译。DSH SDK、React 等宿主能力不重复打包。

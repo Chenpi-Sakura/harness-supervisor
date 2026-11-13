@@ -175,7 +175,46 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .detail-subline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 24px; font-size: 13px; font-weight: 400; line-height: 24px; }
 .detail-subline time { color: var(--secondary); }
 .badge { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 13px; }
-.task-description { margin: 0 0 20px; line-height: 1.8; color: var(--secondary); font-size: 15px; font-weight: 400; overflow-wrap: anywhere; }
+.task-description { display: block; width: 100%; height: 135px; margin: 0 0 20px; padding: 0; border: 0; background: transparent; line-height: 1.8; color: var(--secondary); font-size: 15px; font-weight: 400; text-align: left; overflow: hidden; overflow-wrap: anywhere; }
+.task-description > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; line-clamp: 5; overflow: hidden; white-space: pre-wrap; }
+.task-description:hover { color: var(--text); }
+
+.prompt-dialog { position: fixed; inset: 0; box-sizing: border-box; width: min(760px, calc(100vw - 40px)); height: min(560px, calc(100dvh - 48px)); max-width: none; max-height: none; margin: auto; padding: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--background); color: var(--text); box-shadow: 0 24px 90px rgb(0 0 0 / 25%); overflow: hidden; }
+.prompt-dialog[open] { display: flex; flex-direction: column; animation: prompt-enter 180ms ease-out; }
+.prompt-dialog::backdrop { background: rgb(0 0 0 / 25%); -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px); }
+.prompt-dialog-header { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: 18px 24px; border-bottom: 1px solid var(--line); }
+.prompt-dialog-header h3 { font-size: 16px; font-weight: 500; }
+.prompt-dialog-header button { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--secondary); font-size: 24px; }
+.prompt-dialog-header button:hover { background: var(--hover); color: var(--text); }
+.prompt-dialog-body { flex: 1; min-height: 0; padding: 24px; overflow: auto; overscroll-behavior: contain; }
+.prompt-history-note { margin-top: 24px; font-size: 12px; }
+@keyframes prompt-enter { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+
+.markdown { line-height: 1.8; font-size: 15px; overflow-wrap: anywhere; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p, .markdown ul, .markdown ol, .markdown pre, .markdown blockquote, .markdown table { margin: 0 0 16px; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 24px 0 12px; line-height: 1.4; font-weight: 600; letter-spacing: normal; }
+.markdown h1 { font-size: 26px; } .markdown h2 { font-size: 23px; } .markdown h3 { font-size: 20px; }
+.markdown pre { padding: 16px; border-radius: 8px; background: var(--surface); white-space: pre; overflow: auto; }
+.markdown code { padding: 2px 5px; border-radius: 4px; background: var(--surface); font-size: .9em; }
+.markdown pre code { padding: 0; background: transparent; }
+.markdown blockquote { margin-left: 0; padding-left: 16px; border-left: 3px solid var(--line); color: var(--secondary); }
+.markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.markdown th, .markdown td { padding: 8px 12px; border: 1px solid var(--line); text-align: left; }
+.markdown a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.markdown hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+.markdown-image { color: var(--secondary); }
+
+.app { transition: background-color 220ms ease, color 220ms ease; }
+::view-transition-old(root) { animation: theme-out 220ms ease both; }
+::view-transition-new(root) { animation: theme-in 220ms ease both; }
+@keyframes theme-out { to { opacity: 0; } }
+@keyframes theme-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .app, .app * { transition-duration: 0s !important; animation: none !important; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+}
 .metadata { font-size: 12px; font-weight: 400; color: var(--secondary); }
 .metadata-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0; border: 0; background: none; color: inherit; font-size: 13px; font-weight: 400; line-height: 24px; }
 .metadata-toggle:hover, .metadata.is-open .metadata-toggle { color: var(--text); }

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { Markdown } from "./Markdown";
 import { buildTimelineEntries, eventDataJson, presentTimelineEntry, timelineEntrySearchText, type EventCategory, type TimelineEntry } from "./event-presentation";
 import { eventHistoryStatus, type EventHistory } from "./event-pages";
 
@@ -39,7 +40,7 @@ function TimelineRow({ entry }: { entry: TimelineEntry }) {
       <p><code>{first.type}</code>{typeof first.data?.kind === "string" && <> · <code>{first.data.kind}</code></>} · {seq} · {entry.events.length} 条原始事件</p>
       {thinking && <p>本页已记录的思考片段；相邻流式片段按原文拼接，跨页部分请翻页查看。</p>}
       {truncated && <p>部分文本在记录前已被截断；更早的完整内容请查阅原生 Harness Session。</p>}
-      {entry.recordedText !== undefined && <pre className="trace-output">{entry.recordedText}</pre>}
+      {entry.recordedText !== undefined && <div className="trace-output"><Markdown text={entry.recordedText} /></div>}
       <details className="trace-raw" onToggle={event => setRawOpen(event.currentTarget.open)}>
         <summary>查看原始事件{merged ? `（${entry.events.length} 条）` : ""}</summary>
         {rawOpen && entry.events.map(event => <div key={event.seq}><p>#{event.seq} · <time dateTime={event.ts}>{event.ts}</time></p><pre>{eventDataJson(event)}</pre></div>)}

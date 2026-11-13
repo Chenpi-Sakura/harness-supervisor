@@ -1,5 +1,8 @@
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Markdown } from "./Markdown";
+import { TaskPrompt, type PromptDetail } from "./TaskPrompt";
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { HarnessIcon } from "./harness-icons";
 import { EventTimeline } from "./EventTimeline";
 import { emptyEventHistory, EventPager, type EventPage } from "./event-pages";
@@ -25,6 +28,7 @@ interface Worker {
   status: string;
   lifecycle: string;
   createdAt: string;
+  startedAt?: string;
   updatedAt: string;
   cwd: string;
   promptPreview: string;
@@ -95,6 +99,15 @@ function App() {
   const paging = useRef(false);
   const detailRef = useRef<Worker | null>(null);
   const preferredOwnerRef = session?.preferredOwnerRef ?? session?.ownerRef ?? undefined;
+
+  function toggleTheme() {
+    const update = () => flushSync(() => setTheme(value => value === "light" ? "dark" : "light"));
+    if (document.startViewTransition && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const transition = document.startViewTransition(update);
+      // A newer click or an inactive document may skip the visual transition.
+      void transition.ready.catch(() => undefined);
+    } else update();
+  }
 
   function expire(message: string) {
     persistToken(null);
@@ -301,6 +314,11 @@ function App() {
     } finally { paging.current = false; setBusy(false); }
   }
 
+  const loadPrompt = useCallback((signal: AbortSignal) => {
+    if (!token || !detail) return Promise.reject(new Error("请先连接并选择 Worker"));
+    return request<PromptDetail>(`/workers/${encodeURIComponent(detail.id)}/prompt`, token, undefined, signal);
+  }, [token, detail?.id]);
+
   return <div className="app" data-theme={theme}>
     <main className={`workspace${navigationCollapsed ? " navigation-collapsed" : ""}`}>
       <aside className="workers" aria-label="Worker 列表">
@@ -316,7 +334,7 @@ function App() {
         </div>
         <header className="page-heading" aria-label="Harness Supervisor">
           <div className="brand"><span className="brand-mark" aria-hidden="true">HS</span><h1 className="sidebar-copy" aria-hidden={navigationCollapsed}>Harness Supervisor</h1></div>
-          <div className="header-actions"><span className={`connection sidebar-copy ${token ? "connected" : ""}`} aria-hidden={navigationCollapsed}><span aria-hidden="true" />{connecting ? "连接中" : token ? "本机已连接" : "未连接"}</span><button className="theme-toggle" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label={theme === "light" ? "切换深色外观" : "切换浅色外观"}><span className="theme-label">{theme === "light" ? "深色" : "浅色"}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{theme === "dark" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />}</svg></button></div>
+          <div className="header-actions"><span className={`connection sidebar-copy ${token ? "connected" : ""}`} aria-hidden={navigationCollapsed}><span aria-hidden="true" />{connecting ? "连接中" : token ? "本机已连接" : "未连接"}</span><button className="theme-toggle" onClick={toggleTheme} aria-label={theme === "light" ? "切换深色外观" : "切换浅色外观"}><span className="theme-label">{theme === "light" ? "深色" : "浅色"}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{theme === "dark" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />}</svg></button></div>
           <div className="scope sidebar-copy" inert={navigationCollapsed} aria-hidden={navigationCollapsed}>
             <strong>{session ? session.ownerRef ? "当前会话 Worker" : "本机全部 Worker" : "等待认证"}</strong>
             {session?.ownerRef ? <span className="scope-reference" title={session.ownerRef}>{session.ownerRef}</span> : preferredOwnerRef && <span title={preferredOwnerRef}>默认展开当前会话</span>}
@@ -330,7 +348,7 @@ function App() {
           <div className="detail-overview">
             <div className="detail-heading"><div className="worker-identity"><div className="eyebrow harness-caption"><HarnessIcon runtime={detail.runtime} />{harnessName(detail.runtime)}<span aria-hidden="true"> / </span>{detail.persistence === "persistent" ? "持续会话" : "单次任务"}</div><h2>{detail.name ?? detail.id}</h2></div><div className="detail-subline"><span className={`badge ${detail.status}`}><span className={`status-dot ${detail.status}`} aria-hidden="true" />{label(detail.status)}</span><time>{new Date(detail.updatedAt).toLocaleString()}</time></div></div>
             <div className="task-context">
-              <p className="task-description">{detail.promptPreview}</p>
+              <TaskPrompt key={`${detail.id}:${detail.startedAt ?? ""}:${detail.promptPreview}`} preview={detail.promptPreview} load={loadPrompt} />
               <RuntimeInformation worker={detail} />
             </div>
           </div>
@@ -346,7 +364,7 @@ function App() {
             <button id="tab-result" role="tab" aria-controls="panel-result" aria-selected={panel === "result"} tabIndex={panel === "result" ? 0 : -1} onClick={() => setPanel("result")}>结果</button>
             <button id="tab-events" role="tab" aria-controls="panel-events" aria-selected={panel === "events"} tabIndex={panel === "events" ? 0 : -1} onClick={() => setPanel("events")}>轨迹</button>
           </div>
-          {panel === "result" ? <div className="result-panel" id="panel-result" role="tabpanel" aria-labelledby="tab-result" tabIndex={0}>{detail.result ? <><pre>{detail.result.text}</pre>{detail.result.truncated && <p className="muted">结果已被存储上限截断，完整内容请查阅原生 Harness Session。</p>}</> : <div className="empty small"><h3>{ACTIVE.has(detail.status) ? "任务正在执行" : detail.status === "cancelled" ? "任务已取消" : "暂无最终结果"}</h3><p>{ACTIVE.has(detail.status) ? "最终答复会显示在这里。运行过程可在轨迹中查看。" : "可在轨迹中查看已记录的执行过程。"}</p></div>}{detail.error && detail.status !== "cancelled" && <p className="notice error" role="alert">{detail.error}</p>}</div> : <div className="events-panel" id="panel-events" role="tabpanel" aria-labelledby="tab-events" tabIndex={0}><EventTimeline key={detail.id} history={eventHistory} runtime={detail.runtime} onPage={direction => { void pageEvents(direction); }} /></div>}
+          {panel === "result" ? <div className="result-panel" id="panel-result" role="tabpanel" aria-labelledby="tab-result" tabIndex={0}>{detail.result ? <><Markdown text={detail.result.text} />{detail.result.truncated && <p className="muted">结果已被存储上限截断，完整内容请查阅原生 Harness Session。</p>}</> : <div className="empty small"><h3>{ACTIVE.has(detail.status) ? "任务正在执行" : detail.status === "cancelled" ? "任务已取消" : "暂无最终结果"}</h3><p>{ACTIVE.has(detail.status) ? "最终答复会显示在这里。运行过程可在轨迹中查看。" : "可在轨迹中查看已记录的执行过程。"}</p></div>}{detail.error && detail.status !== "cancelled" && <p className="notice error" role="alert">{detail.error}</p>}</div> : <div className="events-panel" id="panel-events" role="tabpanel" aria-labelledby="tab-events" tabIndex={0}><EventTimeline key={detail.id} history={eventHistory} runtime={detail.runtime} onPage={direction => { void pageEvents(direction); }} /></div>}
           {ACTIVE.has(detail.status) && <div className="danger-zone">{cancelConfirm ? <><p>取消此 Worker 的当前任务？此操作会请求终止执行。</p><div className="actions"><button className="danger" disabled={busy} onClick={() => { void act("cancel", {}); }}>{busy ? "正在处理…" : "确认取消任务"}</button><button disabled={busy} onClick={() => setCancelConfirm(false)}>继续运行</button></div></> : <button className="subtle-danger" disabled={busy} onClick={() => setCancelConfirm(true)}>取消当前任务</button>}</div>}
         </>}
       </section>

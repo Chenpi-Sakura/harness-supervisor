@@ -394,7 +394,7 @@ export class WebUiServer {
       });
       return;
     }
-    const match = url.pathname.match(/^\/api\/workers\/([^/]+)\/(status|events|usage|answer|cancel)$/);
+    const match = url.pathname.match(/^\/api\/workers\/([^/]+)\/(status|events|usage|prompt|answer|cancel)$/);
     if (!match) throw new SupervisorError("NOT_FOUND", "Route not found");
     let workerId: string;
     try {
@@ -404,7 +404,9 @@ export class WebUiServer {
     }
     const worker = await this.worker(workerId, credential);
     const action = match[2];
-    if (action === "status" && req.method === "GET") {
+    if (action === "prompt" && req.method === "GET") {
+      this.json(res, await supervisor.store.readPrompt(workerId));
+    } else if (action === "status" && req.method === "GET") {
       this.json(res, await supervisor.status(workerId, 0));
     } else if (action === "events" && req.method === "GET") {
       const limit = queryInt(url, "limit", 100, 500);

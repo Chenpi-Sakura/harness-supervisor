@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.10.5-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.10.6-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -60,7 +60,7 @@ harness-sup wait <workerId> --timeout-ms 60000
 
 需要与 Worker 通信、取消、恢复或续接时，查看 `harness-sup help` 和下方接口说明。`down` 会关闭 daemon 并取消活动 Worker，结束查看时不必执行它。
 
-默认状态目录为 `~/.harness-supervisor`，可用 `--state-dir <dir>` 或 `HARNESS_SUPERVISOR_HOME` 选择实例。同一个实例的 CLI、MCP 与插件应使用相同目录。另一台机器同样从 npm 安装，并配置本机 Harness；账号登录态、运行进程与任务记录不会随安装包迁移。
+独立 CLI/MCP 默认状态目录为 `~/.harness-supervisor`，可用 `--state-dir <dir>` 或 `HARNESS_SUPERVISOR_HOME` 选择实例。DSH 插件使用其数据目录下的 `harness-supervisor` 专属实例，由插件携带的核心启动。另一台机器同样从 npm 安装，并配置本机 Harness；账号登录态、运行进程与任务记录不会随安装包迁移。
 
 ### 在 DSH 中使用
 

@@ -981,6 +981,11 @@ export class Supervisor {
         return this.summary(record);
       }
       const disposition = await this.requireSession(runtime).prompt(initialPrompt);
+      if (disposition.disposition !== "handled" && (runtime.cancelRequested || isTerminal(record.status))) {
+        await this.store.savePrompt(record, input.prompt).catch((error: unknown) => {
+          this.logger.warn("Failed to save task prompt for WebUI", { workerId: id, error: errorMessage(error) });
+        });
+      }
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -1001,6 +1006,9 @@ export class Supervisor {
         disposition: disposition.disposition,
       });
       this.ensureDurationTimer(runtime);
+      await this.store.savePrompt(record, input.prompt).catch((error: unknown) => {
+        this.logger.warn("Failed to save task prompt for WebUI", { workerId: id, error: errorMessage(error) });
+      });
       await this.store.saveWorker(record);
       await this.store.flush(id);
       return this.summary(record);
@@ -1376,6 +1384,13 @@ export class Supervisor {
         return this.summary(record);
       }
       const disposition = await this.requireSession(runtime).prompt(initialPrompt);
+      if (disposition.disposition !== "handled" && (runtime.cancelRequested || isTerminal(record.status))) {
+        record.promptPreview = safeText(input.prompt, 500);
+        await this.store.savePrompt(record, input.prompt).catch((error: unknown) => {
+          this.logger.warn("Failed to save task prompt for WebUI", { workerId, error: errorMessage(error) });
+        });
+        await this.store.saveWorker(record);
+      }
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -1391,6 +1406,9 @@ export class Supervisor {
       record.startedAt = new Date().toISOString();
       record.firstStartedAt ??= record.startedAt;
       record.promptPreview = safeText(input.prompt, 500);
+      await this.store.savePrompt(record, input.prompt).catch((error: unknown) => {
+        this.logger.warn("Failed to save task prompt for WebUI", { workerId, error: errorMessage(error) });
+      });
       record.status = record.pendingInput ? "awaiting_input" : "running";
       record.statusReason = record.pendingInput ? "harness requested input" : undefined;
       this.store.appendEvent(workerId, "run.accepted", {

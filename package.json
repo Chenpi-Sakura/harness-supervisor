@@ -1,6 +1,6 @@
 {
   "name": "harness-supervisor",
-  "version": "0.10.5",
+  "version": "0.10.6",
   "description": "A small lifecycle and messaging layer for native AI agent harnesses (Pi first).",
   "type": "module",
   "license": "MIT",
@@ -34,7 +34,7 @@
     "build:web": "vite build --config web/vite.config.ts",
     "build:plugin": "npm --prefix packages/dsh-plugin run build",
     "test:plugin": "npm --prefix packages/dsh-plugin test",
-    "test:web": "node --test web/test/*.test.mjs",
+    "test:web": "node --import tsx --test web/test/*.test.mjs",
     "pack:core": "node scripts/pack-core.mjs",
     "test": "npm run build && node test/run.mjs",
     "test:unit": "npm run build && node test/run.mjs unit",
@@ -68,6 +68,8 @@
     "@types/react-dom": "^19.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vite": "^8.3.7"

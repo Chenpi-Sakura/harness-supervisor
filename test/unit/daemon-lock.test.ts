@@ -168,7 +168,7 @@ test("a live daemon-shaped process that started before the lock was written is r
   assert.equal(decision.reason, "live-daemon");
 });
 
-test("a verified daemon is never treated as a recycled PID", () => {
+test("a daemon-shaped command line does not override creation-time proof of PID reuse", () => {
   const decision = evaluateLockHolder(
     { pid: 4242, startedAt: "2026-11-12T06:48:43.917Z" },
     identity({
@@ -178,8 +178,8 @@ test("a verified daemon is never treated as a recycled PID", () => {
       startedAt: "2026-11-12T07:00:00.000Z",
     }),
   );
-  assert.equal(decision.outcome, "refuse");
-  assert.equal(decision.reason, "live-daemon");
+  assert.equal(decision.outcome, "recycle");
+  assert.equal(decision.reason, "pid-reused");
 });
 
 test("an unverifiable holder without a start time is still refused", () => {

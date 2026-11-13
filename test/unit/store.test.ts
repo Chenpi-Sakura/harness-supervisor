@@ -36,6 +36,26 @@ function makeRecord(id: string): WorkerRecord {
   };
 }
 
+test("full UI prompts survive reload and never become worker summary fields", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-prompt-"));
+  const store = new Store(dir);
+  await store.init();
+  const record = makeRecord("w-prompt");
+  record.startedAt = "2026-11-13T00:00:00Z";
+  await store.createWorker(record);
+  assert.deepEqual(await store.readPrompt(record.id), { text: "test", available: false });
+  const prompt = "# Instructions\n\n" + "Long task paragraph. ".repeat(150);
+  await store.savePrompt(record, prompt);
+  assert.deepEqual(await store.readPrompt(record.id), { text: prompt, available: true });
+  assert.equal("prompt" in store.getWorker(record.id)!, false);
+  const reloaded = new Store(dir);
+  await reloaded.init();
+  assert.equal((await reloaded.readPrompt(record.id)).text, prompt);
+  record.startedAt = "2026-11-13T00:01:00Z";
+  await store.saveWorker(record);
+  assert.equal((await store.readPrompt(record.id)).available, false, "an earlier turn must not masquerade as this turn's full prompt");
+});
+
 test("persists records and events and reloads them with a valid cursor", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hs-store-"));
   const store = new Store(dir);

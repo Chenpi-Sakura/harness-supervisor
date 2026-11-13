@@ -16,7 +16,7 @@
     "./client": "./dist/client.js",
     "./package.json": "./package.json"
   },
-  "engines": { "node": ">=22.19.0", "dsh": "0.2.2-rc.1" },
+  "engines": { "node": ">=22.19.0" },
   "files": ["dist", "cordis.patch.yml", "README.md", "LICENSE"],
   "scripts": {
     "build": "node scripts/build.mjs",

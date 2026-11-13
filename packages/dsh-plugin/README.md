@@ -1,6 +1,6 @@
 # DSH Harness Supervisor
 
-将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护，支持 DSH `0.2.2-rc.1`，配套 HS `0.10.4`；其他 DSH 版本尚需验收。
+将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护，配套 HS `0.10.4`。插件不声明 DSH 宿主版本限制，通过运行时接口检查兼容性；已在 DSH `0.2.2-rc.1` 验证，其他版本尚需验收。
 
 [项目仓库](https://github.com/Chenpi-Sakura/harness-supervisor) · [完整项目 README](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/README.md) · [npm](https://www.npmjs.com/package/dsh-harness-supervisor)
 

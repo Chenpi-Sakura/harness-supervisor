@@ -63,7 +63,7 @@ dsh plugin --profile desktop add dsh-harness-supervisor@latest
 npm run build:plugin
 npm run test:plugin
 npm run pack:core
-npm --prefix packages/dsh-plugin run pack:release -- --core-tarball ../../.artifacts/harness-supervisor-0.10.6.tgz
+npm --prefix packages/dsh-plugin run pack:release
 ```
 
 核心必须先完成当前版本的 `npm run build`。插件打包解包固定核心 `.tgz`，对照 `production-lock.json` 验证生产依赖，再用 `bundleDependencies` 生成独立安装包；安装时不重新编译。DSH SDK、React 等宿主能力不重复打包。

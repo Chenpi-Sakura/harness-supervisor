@@ -9,6 +9,9 @@ exports.apply = function apply(ctx) {
   const panelKey = `dsh-main-${crypto.randomUUID()}`;
   const viewGenerations = new Map();
   const controllers = new Set();
+  // DSH controllers expose prototype methods that require their receiver.
+  const subscribeCurrent = listener => ctx.uiSession.current.subscribe(listener);
+  const currentSnapshot = () => ctx.uiSession.current.getSnapshot();
   const call = async (method, payload = {}, abort = new AbortController()) => {
     if (disposed) throw new Error("HS 插件已关闭");
     controllers.add(abort);
@@ -87,7 +90,7 @@ exports.apply = function apply(ctx) {
         h("a", { href: "https://gitcode.com/chenpi_1/harness-supervisor/blob/main/README.md", target: "_blank", rel: "noopener noreferrer" }, "完整 README")));
   }
   function MainView() {
-    const binding = React.useSyncExternalStore(ctx.uiSession.current.subscribe, ctx.uiSession.current.getSnapshot);
+    const binding = React.useSyncExternalStore(subscribeCurrent, currentSnapshot, currentSnapshot);
     // The actual current session determines only the initially expanded group.
     return h(SessionView, { key: binding.key ?? "global", sessionId: binding.key });
   }
@@ -118,7 +121,8 @@ exports.apply = function apply(ctx) {
 
   function Settings() {
     const form = React.useMemo(() => ctx.configForms.get("harness-supervisor"), []);
-    const snapshot = React.useSyncExternalStore(form.subscribe, form.getSnapshot, form.getSnapshot);
+    const store = React.useMemo(() => ({ subscribe: listener => form.subscribe(listener), getSnapshot: () => form.getSnapshot() }), [form]);
+    const snapshot = React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
     const [draft, setDraft] = React.useState(null);
     const [data, setData] = React.useState();
     const [error, setError] = React.useState("");
@@ -147,7 +151,7 @@ exports.apply = function apply(ctx) {
       h("label", { htmlFor: "hs-core-source", style: { display: "block", marginBottom: 8 } }, "使用哪个 HS 核心"),
       h("select", { id: "hs-core-source", value: value.coreSource, disabled, style: inputStyle, onChange: event => edit("coreSource", event.target.value) },
         h("option", { value: "bundled" }, "插件内置 HS"), h("option", { value: "npm" }, "全局 npm 安装的 HS"), h("option", { value: "custom" }, "自定义安装目录")),
-      h("p", { style: { opacity: .7, fontSize: 13 } }, value.coreSource === "npm" ? "自动查找 npm install -g harness-supervisor 的安装位置。" : value.coreSource === "custom" ? "选择包含 package.json 和已构建 dist/ 的 HS 安装目录。" : "使用插件携带的 HS 核心，无需额外安装。"),
+      h("p", { style: { opacity: .7, fontSize: 13 } }, value.coreSource === "npm" ? "自动查找 npm install -g harness-supervisor 的安装位置。" : value.coreSource === "custom" ? "选择包含 package.json 和已构建 dist/ 的 HS 安装目录。" : "使用插件携带的 HS。插件更新后等待已有任务结束，再应用配套核心；无需额外安装。"),
       value.coreSource === "custom" && h("div", { style: { margin: "16px 0" } },
         h("label", { htmlFor: "hs-core-path", style: { display: "block", marginBottom: 8 } }, "HS 安装目录"),
         h("input", { id: "hs-core-path", value: value.corePath || "", disabled, style: inputStyle, placeholder: "HS 安装目录的绝对路径", onChange: event => edit("corePath", event.target.value) })),
@@ -168,6 +172,8 @@ exports.apply = function apply(ctx) {
         button("刷新状态", refresh)),
       snapshot.status === "unavailable" && h("p", { role: "alert" }, "宿主尚未提供 HS 配置表单，请确认已更新插件并重新启用。"),
       notice && h("p", { role: "status" }, notice),
+      data?.supervisor && h("p", null, `运行 HS v${data.supervisor.version} · 配套 HS v${data.pairedCoreVersion}`),
+      data?.update?.intent && ["draining", "switching", "verifying"].includes(data.update.intent.phase) && h("p", { role: "status" }, "配套核心正在受控升级；已有任务会继续，完成后重新打开 Worker 面板。"),
       error && h("p", { role: "alert", style: { color: "var(--dsw-alias-state-error-primary, #d66)", overflowWrap: "anywhere" } }, error),
       h("details", { style: { marginTop: 24 } }, h("summary", { style: { cursor: "pointer" } }, "诊断详情"),
         h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12 } }, JSON.stringify(data ?? { state: "尚未读取运行状态" }, null, 2))));

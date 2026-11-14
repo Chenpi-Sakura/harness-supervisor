@@ -127,16 +127,26 @@ test("conversation tab captures the preferred session and aborts stale replies w
 
 test("right sidebar retains its lease while settings edits core source without embedding WebUI", async () => {
   const slots = [], calls = [], cleanups = [], tabTypes = [], disposedTypes = [], saved = [];
-  const form = { subscribe: () => () => {}, getSnapshot: () => ({ status: "ready", writable: true, revision: 7, value: { coreSource: "bundled", corePath: "" } }), mutate: async (ops, revision) => { saved.push({ ops, revision }); return true; } };
+  class Controller {
+    constructor(snapshot) { this.snapshot = snapshot; this.listeners = new Set(); }
+    subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+    getSnapshot() { return this.snapshot; }
+    async mutate(ops, revision) { saved.push({ ops, revision }); return true; }
+  }
+  const form = new Controller({ status: "ready", writable: true, revision: 7, value: { coreSource: "bundled", corePath: "" } });
   const tabs = { register: (definition) => { tabTypes.push(definition); return () => disposedTypes.push(definition.id); } };
   let binding = {};
-  const current = { subscribe: () => () => {}, getSnapshot: () => binding };
+  const current = new Controller(binding);
+  current.getSnapshot = function () { assert.ok(this instanceof Controller); return binding; };
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children }),
     useSyncExternalStore: (subscribe, getSnapshot) => {
-      assert.ok(subscribe === current.subscribe || subscribe === form.subscribe);
-      assert.ok(getSnapshot === current.getSnapshot || getSnapshot === form.getSnapshot);
-      return getSnapshot();
+      const dispose = subscribe(() => {});
+      const snapshot = getSnapshot();
+      assert.equal(snapshot, getSnapshot(), "native stores return stable snapshots");
+      dispose();
+      assert.equal(current.listeners.size + form.listeners.size, 0, "subscriptions clean up with the original receiver");
+      return snapshot;
     },
   };
   const ctx = {

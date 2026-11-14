@@ -9,6 +9,7 @@ import { resolveNodeExecutable } from "./node-runtime.js";
 import { resolvePluginState } from "./state-dir.js";
 import { findGlobalCore, validateCoreRoot } from "./core-source.js";
 import { createSourceBinding } from "./source-binding.js";
+import { syncPairedCore } from "./paired-update.js";
 
 export const name = "harness-supervisor";
 export const inject = ["agents", "connection", "webServer"];
@@ -20,7 +21,7 @@ export const Config = z.object({
 });
 
 const coreRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve("harness-supervisor"))), "../..");
-const EXPECTED_CORE_VERSION = "0.12.1";
+const EXPECTED_CORE_VERSION = "0.12.2";
 
 export function assertCapabilities(info) {
   const required = ["ownerScope", "webUi", "managedRuntime", "drain"];
@@ -88,6 +89,7 @@ async function mount(ctx, config, state) {
   ctx.on("agent/created", async ({ agent }) => bridge.attachAgent(agent));
   ctx.on("agent/disposed", ({ agent }) => { connections.delete(agent); return bridge.detachAgent(agent); });
   let applying;
+  let pairedUpdate;
   const applyCore = () => applying ??= (async () => {
     if (external) throw new Error("独立 HS 请通过其自身安装方式更新，插件不会应用内置核心");
     const current = await request("runtime_update_status");
@@ -99,7 +101,8 @@ async function mount(ctx, config, state) {
     return request("runtime_update", { intentId, runtimeId: selectedRuntime.id });
   })().finally(() => { applying = undefined; });
   const status = async () => ({
-      pluginVersion: "0.3.1", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
+      pluginVersion: "0.3.2", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
+      pairedUpdate,
       supervisor: await request("info"), update: await request("runtime_update_status"),
       sessions: [...connections].map(([agent, status]) => ({ sessionId: agent.id, ...status })),
     });
@@ -114,4 +117,11 @@ async function mount(ctx, config, state) {
     ctx.effect(() => ctx.connection.fetch.register(route), `HS owner-only ${route.path}`);
   }
   await Promise.all(ctx.agents.list().map((agent) => bridge.attachAgent(agent)));
+  try {
+    pairedUpdate = await syncPairedCore({ external, candidate: selectedRuntime, request,
+      isCurrent: () => state.desired === config, intentId: `plugin-${randomUUID()}` });
+  } catch (error) {
+    pairedUpdate = { state: "unconfirmed", message: error.message };
+    ctx.logger.warn(`HS paired update could not be confirmed: ${error.message}`);
+  }
 }

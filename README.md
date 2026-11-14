@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.12.1-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.12.2-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -135,7 +135,7 @@ Codex、Claude Code 与其他 Harness 共用侧栏、关系图和详情，显示
 
 ### DSH 用户
 
-按当前 DSH 自带插件管理器的提示，卸载旧版第三方插件后重新添加 `dsh-harness-supervisor@latest`，再在 **设置 → Harness Supervisor → 应用配套 HS 核心** 中应用。卸载插件不会停止共享 Worker；安装新版只准备候选核心，不会立即替换运行实例。
+按 DSH 插件管理器更新 `dsh-harness-supervisor@latest`。使用“插件内置 HS”时，新插件会为支持托管更新的旧核心自动登记受控升级：停止接收新任务，等待已有任务结束，备份并验证后切换。外部 npm／自定义核心不自动替换；不会降级或自动重试已取消、失败的同一候选。可在设置中刷新状态、查看诊断，切换完成后重新打开 Worker 面板。
 
 ### 独立 CLI / MCP 用户
 

@@ -133,7 +133,7 @@ export function createRpcHandler({ agents, namespace, request, status, applyCore
           value = await request("ui_start", { ...(preferredOwnerRef === undefined ? {} : { preferredOwnerRef }), frameOrigin, ...(payload.viewKey === undefined ? {} : { viewKey: payload.viewKey }), ...(payload.viewGeneration === undefined ? {} : { viewGeneration: payload.viewGeneration }) });
         } catch (error) {
           if (["BAD_REQUEST", "UNSUPPORTED"].includes(error?.code)) {
-            throw new Error("当前运行的 HS 核心尚不支持顶部面板。请在设置 → Harness Supervisor → 应用配套 HS 核心后，重新打开标签页。");
+            throw new Error("当前运行的 HS 核心尚不支持顶部面板。请在设置 → Harness Supervisor 确认使用插件内置 HS 并保存，刷新状态查看升级进度；完成后重新打开标签页。");
           }
           throw error;
         }

@@ -110,7 +110,7 @@ test("an older compatible core reports how to enable the new conversation view",
     request: async () => { throw Object.assign(new Error("Invalid params for method ui_start"), { code: "BAD_REQUEST" }); } });
   const reply = await handler("open-ui", { sessionId: current.id, applicationOrigin: "dsh-app://app", viewKey: "main-panel" }, new AbortController().signal, { principal: { kind: "owner" } });
   assert.equal(reply.ok, false);
-  assert.match(reply.error.message, /应用配套 HS 核心/);
+  assert.match(reply.error.message, /插件内置 HS/);
 });
 
 test("exact owner-only Fetch routes preserve native RPC correlation and reject mismatched methods", async () => {

@@ -1,5 +1,6 @@
 import { harnessName, modelDisplay } from "./harness-catalog";
 import { VERSION } from "../../src/version";
+import { BuildVersions } from "./BuildVersions";
 import { UiIcon } from "./UiIcon";
 import { ResizeHandle } from "./ResizeHandle";
 import { WorkerRelations, demoRelationWorkers } from "./WorkerRelations";
@@ -416,7 +417,8 @@ function App({ demo = false }: { demo?: boolean }) {
           <div className="scope sidebar-copy" inert={navigationCollapsed} aria-hidden={navigationCollapsed}>
             <strong>{session ? session.ownerRef ? "当前会话 Worker" : "本机全部 Worker" : "等待认证"}</strong>
             {session?.ownerRef ? <span className="scope-reference" title={session.ownerRef}>{session.ownerRef}</span> : preferredOwnerRef && <span title={preferredOwnerRef}>默认展开当前会话</span>}
-            {session && <small>v{session.version} · {session.ownerRef ? "仅此会话" : "全局管理"}</small>}
+            <BuildVersions coreVersion={session?.version} />
+            {session && <small>{session.ownerRef ? "仅此会话" : "全局管理"}</small>}
           </div>
         </header>
       {!navigationCollapsed && <ResizeHandle label="调整会话栏宽度" width={sidebarWidth} onWidth={setSidebarWidth} max={520} />}

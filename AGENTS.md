@@ -309,6 +309,7 @@ HS 允许通过 HS 启动的 Worker 参与开发 HS 本身，但必须保持运�
 - 当前正式发布由核心标签 `v<coreVersion>` 触发 `.github/workflows/npm-publish.yml`，通过 GitHub Actions / OIDC 发布两包；以两包版本和完整性均能从 npm 公开核验为交付完成。普通 `main` / 文档推送不发布，`workflow_dispatch` 仅构建验证；发布不自动升级本地实例。
 - DSH 插件默认使用 `<DSH_HOME>/harness-supervisor` 的独立实例与配套核心，不继承全局 `HARNESS_SUPERVISOR_HOME`；CLI/MCP 的默认实例与其分离。插件禁用不终止其 Worker，已有全局记录不自动迁移。
 - npm 安装或更新只更新客户端/安装包并提供候选核心，不等于切换运行中的 daemon。应用配套核心仍须走受控排空、验证与切换流程，并遵守生产实例升级授权。
+- 插件内置来源在安装、更新或重新启用时，仅为兼容且已托管的较新稳定核心登记受控升级；不降级、不覆盖其他更新、不自动重试同一候选的取消或失败。外部 npm／自定义来源不自动应用内置核心。WebUI 构建版本与运行核心版本分开显示。
 
 ## 9. 最终原则
 

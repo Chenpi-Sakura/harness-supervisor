@@ -3,10 +3,16 @@ import { spawn } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { availableParallelism } from "node:os";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const filter = process.argv[2];
 const extraArgs = process.argv.slice(filter ? 3 : 2);
+const concurrency = process.env.HARNESS_SUPERVISOR_TEST_CONCURRENCY ?? String(Math.min(2, availableParallelism()));
+if (!/^[1-8]$/.test(concurrency)) {
+  console.error("HARNESS_SUPERVISOR_TEST_CONCURRENCY must be an integer from 1 to 8");
+  process.exit(1);
+}
 
 async function walk(dir) {
   let entries;
@@ -35,7 +41,7 @@ if (files.length === 0) {
 files.sort();
 const child = spawn(
   process.execPath,
-  ["--test", "--test-concurrency=1", ...extraArgs, ...files],
+  ["--test", `--test-concurrency=${concurrency}`, ...extraArgs, ...files],
   { stdio: "inherit", windowsHide: true },
 );
 child.on("exit", (code, signal) => {

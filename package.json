@@ -1,6 +1,6 @@
 {
   "name": "harness-supervisor",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "description": "A small lifecycle and messaging layer for native AI agent harnesses (Pi first).",
   "type": "module",
   "license": "MIT",

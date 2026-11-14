@@ -26,6 +26,7 @@ import { prepareWorkerGuard } from "./worker-guard.js";
 import { VERSION, TOOL_NAME } from "./version.js";
 import { WebUiServer } from "./web-ui.js";
 import { RuntimeUpdater } from "./runtime-updater.js";
+import { watchDshHosts } from "./dsh-host-lifecycle.js";
 
 export interface DaemonOptions {
   stateDir?: string;
@@ -161,9 +162,11 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   let updater: RuntimeUpdater;
   let shuttingDown = false;
   let hardExitTimer: NodeJS.Timeout | undefined;
+  let stopHostWatch: (() => void) | undefined;
   const shutdown = async (reason: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopHostWatch?.();
     updater?.close();
     logger.info("Supervisor daemon shutting down", { reason });
     hardExitTimer = setTimeout(() => {
@@ -273,6 +276,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     endpoint,
     stateDir,
   });
+  if (!shuttingDown) stopHostWatch = watchDshHosts(stateDir, logger, () => shutdown("dsh_hosts_closed"));
 
   let signalCount = 0;
   const onSignal = (signal: string) => {

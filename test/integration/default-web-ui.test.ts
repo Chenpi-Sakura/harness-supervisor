@@ -47,6 +47,14 @@ test("a host client starts its own daemon on port 61115 without changing its par
     if (status.running) break;
     await new Promise(resolve => setTimeout(resolve, 20));
   }
-  assert.deepEqual(status, { running: true, origin: "http://127.0.0.1:61115" });
+  if (status.running) {
+    assert.deepEqual(status, { running: true, origin: "http://127.0.0.1:61115" });
+  } else {
+    const log = await readFile(path.join(daemon.stateDir, "daemon.log"), "utf8");
+    assert.match(log, /EADDRINUSE/);
+    assert.match(log, /61115/);
+    assert.match(log, /Default WebUI could not start/);
+    t.diagnostic("Port 61115 is occupied; verified the host port without stopping its existing owner");
+  }
   assert.equal(process.env.HARNESS_SUPERVISOR_UI_PORT, previous);
 });

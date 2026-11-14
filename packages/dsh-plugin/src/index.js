@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import * as mcpClient from "@deepseek-ai/dsh-mcp-client";
 import z from "@deepseek-ai/schemastery";
-import { SupervisorClient, prepareManagedRuntime } from "harness-supervisor";
+import { SupervisorClient, prepareRetainedRuntime, registerDshHost, claimIndependentState } from "harness-supervisor";
 import { AgentBridge, createRpcHandler, createFetchRoutes } from "./bridge.js";
 import { resolveNodeExecutable } from "./node-runtime.js";
 import { resolvePluginState } from "./state-dir.js";
@@ -21,7 +21,7 @@ export const Config = z.object({
 });
 
 const coreRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve("harness-supervisor"))), "../..");
-const EXPECTED_CORE_VERSION = "0.12.2";
+const EXPECTED_CORE_VERSION = "0.12.3";
 
 export function assertCapabilities(info) {
   const required = ["ownerScope", "webUi", "managedRuntime", "drain"];
@@ -58,9 +58,14 @@ async function mount(ctx, config, state) {
   if (![undefined, "bundled", "npm", "custom"].includes(config.coreSource)) throw new Error("未知 HS 核心来源");
   const selectedRoot = config.coreSource === "npm" ? findGlobalCore(nodeExecutable)
     : config.coreSource === "custom" ? validateCoreRoot(config.corePath) : coreRoot;
+  if (!external) await registerDshHost(stateDir);
+  else await claimIndependentState(stateDir);
   // Stage before auto-start: plugin removal must not remove a live daemon's code.
   // The selected install is copied before use; npm updates cannot remove live code.
-  const selectedRuntime = await prepareManagedRuntime(stateDir, selectedRoot);
+  const retained = await prepareRetainedRuntime(stateDir, selectedRoot);
+  const selectedRuntime = retained.runtime;
+  let bridge;
+  ctx.effect(() => async () => { await bridge?.dispose(); await retained.release(); }, "HS cached runtime consumer");
   if (state.desired !== config) return;
   const uiPort = external ? 61114 : 61115;
   const client = new SupervisorClient({ stateDir, daemonEntry: path.join(selectedRuntime.root, "dist/src/daemon-entry.js"), nodeExecutable, uiPort });
@@ -72,7 +77,7 @@ async function mount(ctx, config, state) {
   if (state.desired !== config) return;
   assertCapabilities(info);
 
-  const bridge = new AgentBridge({
+  bridge = new AgentBridge({
     namespace,
     attach: (agent, ownerRef) => agent.ctx.plugin(mcpClient, {
       transport: "stdio", serverName: "harness_supervisor", command: nodeExecutable,
@@ -85,7 +90,6 @@ async function mount(ctx, config, state) {
       if (status.state === "failed") ctx.logger.warn(`HS session connection failed: ${status.message}`);
     },
   });
-  ctx.effect(() => () => bridge.dispose(), "HS session MCP fibers");
   ctx.on("agent/created", async ({ agent }) => bridge.attachAgent(agent));
   ctx.on("agent/disposed", ({ agent }) => { connections.delete(agent); return bridge.detachAgent(agent); });
   let applying;
@@ -101,7 +105,7 @@ async function mount(ctx, config, state) {
     return request("runtime_update", { intentId, runtimeId: selectedRuntime.id });
   })().finally(() => { applying = undefined; });
   const status = async () => ({
-      pluginVersion: "0.3.2", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
+      pluginVersion: "0.3.3", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
       pairedUpdate,
       supervisor: await request("info"), update: await request("runtime_update_status"),
       sessions: [...connections].map(([agent, status]) => ({ sessionId: agent.id, ...status })),

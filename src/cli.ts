@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { retainCurrentRuntime } from "./runtime-cache.js";
 import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
 import { runDaemon } from "./daemon.js";
@@ -557,6 +558,7 @@ async function waitLoop(
 }
 
 async function main(): Promise<void> {
+  await retainCurrentRuntime(import.meta.url);
   let parsed;
   try {
     parsed = parseArgs({
@@ -651,6 +653,7 @@ async function main(): Promise<void> {
     return;
   }
   const stateDir = resolveStateDir(stringArg(values["state-dir"], "state-dir"));
+  await retainCurrentRuntime(import.meta.url, stateDir);
   const json = boolArg(values.json);
 
   if (command === "daemon") {

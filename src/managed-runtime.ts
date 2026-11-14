@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SupervisorError } from "./errors.js";
 import { atomicWriteJson, readJsonFile } from "./util/fsx.js";
+import { retainRuntime, withRuntimeCache } from "./runtime-cache.js";
 import { SCHEMA_VERSION } from "./types.js";
 
 export const MANAGED_RUNTIME_SCHEMA = 1;
@@ -61,6 +62,9 @@ export async function readUpdateIntent(stateDir: string): Promise<RuntimeUpdateI
   return value;
 }
 export async function writeUpdateIntent(stateDir: string, value: RuntimeUpdateIntent): Promise<void> {
+  return withRuntimeCache(stateDir, () => writeUpdateIntentUnlocked(stateDir, value));
+}
+async function writeUpdateIntentUnlocked(stateDir: string, value: RuntimeUpdateIntent): Promise<void> {
   value.updatedAt = new Date().toISOString();
   await atomicWriteJson(intentFile(stateDir), value);
 }
@@ -71,10 +75,16 @@ export async function readActiveRuntime(stateDir: string): Promise<ActiveRuntime
     throw new SupervisorError("INVALID_STATE", "Managed runtime pointer is invalid");
   }
   runtimeRoot(stateDir, active.runtimeId);
+  if (active.previousRuntimeId !== undefined) runtimeRoot(stateDir, active.previousRuntimeId);
   return active;
 }
 export async function commitActiveRuntime(stateDir: string, runtimeId: string, previousRuntimeId?: string): Promise<void> {
+  return withRuntimeCache(stateDir, () => commitActiveRuntimeUnlocked(stateDir, runtimeId, previousRuntimeId));
+}
+async function commitActiveRuntimeUnlocked(stateDir: string, runtimeId: string, previousRuntimeId?: string): Promise<void> {
   await readManagedRuntime(stateDir, runtimeId);
+  const current = await readActiveRuntime(stateDir);
+  previousRuntimeId ??= current?.runtimeId === runtimeId ? current.previousRuntimeId : current?.runtimeId;
   await atomicWriteJson(path.join(stateDir, "active-runtime.json"), {
     schemaVersion: 1, runtimeId, previousRuntimeId, committedAt: new Date().toISOString(),
   } satisfies ActiveRuntime);
@@ -176,6 +186,9 @@ async function copyProductionDependencies(source: string, destination: string): 
 
 /** Copy a complete production install before exposing its immutable cache name. */
 export async function prepareManagedRuntime(stateDir: string, sourceRoot: string): Promise<ManagedRuntime> {
+  return withRuntimeCache(stateDir, () => prepareManagedRuntimeUnlocked(stateDir, sourceRoot));
+}
+async function prepareManagedRuntimeUnlocked(stateDir: string, sourceRoot: string): Promise<ManagedRuntime> {
   const source = path.resolve(sourceRoot);
   const pkg = await readJsonFile<{ name?: string; version?: string }>(path.join(source, "package.json"));
   if (pkg?.name !== "harness-supervisor" || typeof pkg.version !== "string") {
@@ -244,4 +257,20 @@ export async function resolveManagedDaemonEntry(stateDir: string, fallback: () =
   }
   const active = await readActiveRuntime(stateDir);
   return active ? path.join((await readManagedRuntime(stateDir, active.runtimeId)).root, "dist/src/daemon-entry.js") : fallback();
+}
+
+/** Copy and pin atomically: DSH may launch session MCP clients long after mounting. */
+export async function prepareRetainedRuntime(stateDir: string, sourceRoot: string): Promise<{ runtime: ManagedRuntime; release: () => Promise<void> }> {
+  return withRuntimeCache(stateDir, async () => {
+    const runtime = await prepareManagedRuntime(stateDir, sourceRoot);
+    return { runtime, release: await retainRuntime(stateDir, runtime.root) };
+  });
+}
+
+export async function resolveRetainedDaemonEntry(stateDir: string, fallback: () => string): Promise<{ entry: string; release: () => Promise<void> }> {
+  return withRuntimeCache(stateDir, async () => {
+    const entry = await resolveManagedDaemonEntry(stateDir, fallback);
+    const root = path.resolve(path.dirname(entry), "../..");
+    return { entry, release: await retainRuntime(stateDir, root) };
+  });
 }

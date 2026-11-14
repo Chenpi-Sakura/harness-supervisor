@@ -1,6 +1,8 @@
+import { withRuntimeCache } from "./runtime-cache.js";
+import { pruneManagedRuntimes } from "./runtime-retention.js";
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { cp, mkdir } from "node:fs/promises";
+import { cp, lstat, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { SupervisorError, errorMessage } from "./errors.js";
 import {
@@ -9,7 +11,7 @@ import {
   type ManagedRuntime, type RuntimeUpdateIntent,
 } from "./managed-runtime.js";
 import type { Supervisor } from "./supervisor.js";
-import { readJsonFile } from "./util/fsx.js";
+import { atomicWriteJson, readJsonFile } from "./util/fsx.js";
 import type { Logger } from "./util/logger.js";
 import { VERSION } from "./version.js";
 
@@ -103,6 +105,7 @@ export class RuntimeUpdater {
       // Recovered drains may be quiescent immediately. Do not launch a helper
       // until the daemon has finished initialization and owns a live endpoint.
       if (this.intent?.phase === "draining") this.arm();
+      else void pruneManagedRuntimes(this.options.stateDir, this.options.logger);
       return;
     }
     const intent = this.intent!;
@@ -128,8 +131,22 @@ export class RuntimeUpdater {
       intent.targetPid = process.pid;
     }
     await writeUpdateIntent(this.options.stateDir, intent);
+    // The previous core may predate backup metadata. Its persisted handoff
+    // intent is enough to identify this one backup without guessing history.
+    if (intent.backupDir) {
+      try {
+        const expected = path.join(path.resolve(this.options.stateDir), "runtime-backups", intent.id.replaceAll(":", "_"));
+        const normalized = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+        if (normalized(path.resolve(intent.backupDir)) !== normalized(expected) ||
+          (await lstat(expected)).isSymbolicLink() || normalized(await realpath(expected)) !== normalized(expected)) throw Error("Backup path is redirected");
+        await atomicWriteJson(path.join(expected, "runtime-backup.json"), {
+          schemaVersion: 1, sourceRuntimeId: intent.sourceRuntimeId, targetRuntimeId: intent.targetRuntimeId, intentId: intent.id,
+        });
+      } catch (error) { this.options.logger.warn("Runtime backup identification deferred", { intentId: intent.id, error: String(error) }); }
+    }
     this.options.supervisor.cancelDrain(intent.id);
     this.startupGate = false;
+    void pruneManagedRuntimes(this.options.stateDir, this.options.logger);
     this.options.logger.info(rollback ? "Previous managed core restored" : "Managed core activated", {
       intentId: intent.id, runtimeId,
     });
@@ -160,7 +177,7 @@ export class RuntimeUpdater {
   }
 
   async apply(input: { intentId: string; runtimeId: string }): Promise<RuntimeUpdateIntent> {
-    return this.exclusive(async () => {
+    return this.exclusive(() => withRuntimeCache(this.options.stateDir, async () => {
       if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/.test(input.intentId)) {
         throw new SupervisorError("BAD_REQUEST", "Invalid update intent ID");
       }
@@ -185,7 +202,7 @@ export class RuntimeUpdater {
       this.intent = intent;
       this.arm();
       return structuredClone(intent);
-    });
+    }));
   }
 
   async cancel(intentId: string): Promise<RuntimeUpdateIntent> {
@@ -236,6 +253,9 @@ export class RuntimeUpdater {
     await readManagedRuntime(this.options.stateDir, intent.targetRuntimeId);
     const backupDir = path.join(this.options.stateDir, "runtime-backups", intent.id.replaceAll(":", "_"));
     await mkdir(backupDir, { recursive: true });
+    await atomicWriteJson(path.join(backupDir, "runtime-backup.json"), {
+      schemaVersion: 1, sourceRuntimeId: intent.sourceRuntimeId, targetRuntimeId: intent.targetRuntimeId, intentId: intent.id,
+    });
     for (const name of ["workers", "sessions", "metrics", "notifications.jsonl", "notify-target.json", "idempotency.jsonl"]) {
       try { await cp(path.join(this.options.stateDir, name), path.join(backupDir, name), { recursive: true, dereference: false, errorOnExist: false }); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }

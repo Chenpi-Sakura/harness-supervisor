@@ -6,7 +6,7 @@
 
 ## 安装与使用
 
-默认使用插件内置 HS，WebUI 随 daemon 启动，监听 `127.0.0.1:61115`。在 **设置 → Harness Supervisor** 中，**HS 核心来源**可选择“全局 npm 安装的 HS”，自动查找 `npm install -g harness-supervisor` 的安装位置；无需手填路径。也可选择“自定义安装目录”，填写含 `package.json` 和已构建 `dist/` 的目录后保存。保存会重新连接所选实例，旧 Worker 不会停止；连接结果可用“刷新状态”和“诊断详情”查看。
+默认使用插件内置 HS，WebUI 随 daemon 启动，监听 `127.0.0.1:61115`。默认专属实例在最后一个 DSH 宿主退出后正常关闭，同时取消尚在运行的 Worker；仅禁用插件不触发关闭。独立 npm／自定义 HS 保持独立运行，两种生命周期模式不能复用同一个状态目录。在 **设置 → Harness Supervisor** 中，**HS 核心来源**可选择“全局 npm 安装的 HS”，自动查找 `npm install -g harness-supervisor` 的安装位置；无需手填路径。也可选择“自定义安装目录”，填写含 `package.json` 和已构建 `dist/` 的目录后保存。保存会重新连接所选实例，旧 Worker 不会停止；连接结果可用“刷新状态”和“诊断详情”查看。
 
 独立模式默认连接独立 HS 的状态目录（`HARNESS_SUPERVISOR_HOME` 或 `~/.harness-supervisor`），没有运行实例时可代为启动，默认 WebUI 端口为 `61114`。可用 `stateDir` 指定其他目录。已有 daemon 或已验证的托管核心优先复用，选择安装来源不会强行切换它们，也不会在独立模式应用内置核心；更新由独立 HS 自身管理。
 

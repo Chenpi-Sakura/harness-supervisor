@@ -8,7 +8,7 @@ import type { Logger } from "../util/logger.js";
 import { ensureDir } from "../util/fsx.js";
 import { JsonlDecoder, serializeJsonLine } from "../util/jsonl.js";
 import { sleep } from "../util/async.js";
-import { resolveManagedDaemonEntry } from "../managed-runtime.js";
+import { resolveRetainedDaemonEntry } from "../managed-runtime.js";
 import { readIpcToken } from "./daemon-state.js";
 import {
   IPC_VERSION,
@@ -335,7 +335,12 @@ export class SupervisorClient {
 
   private async startDaemon(): Promise<void> {
     await ensureDir(this.stateDir);
-    const entry = await resolveManagedDaemonEntry(this.stateDir, () => this.options.daemonEntry ? path.resolve(this.options.daemonEntry) : resolveDaemonEntry());
+    const retained = await resolveRetainedDaemonEntry(this.stateDir, () => this.options.daemonEntry ? path.resolve(this.options.daemonEntry) : resolveDaemonEntry());
+    try { await this.startDaemonEntry(retained.entry); }
+    finally { await retained.release(); }
+  }
+
+  private async startDaemonEntry(entry: string): Promise<void> {
     const logPath = path.join(this.stateDir, "daemon.out.log");
     const out = openSync(logPath, "a");
     try {

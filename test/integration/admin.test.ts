@@ -16,7 +16,7 @@ function rejectionCode(error: unknown): string | undefined {
   return error instanceof SupervisorError ? error.code : undefined;
 }
 
-test("pin protects a terminal worker from prune, and archive only hides it", async (t) => {
+test("pin, archive and retire manage one persistent worker without losing its native session", async (t) => {
   const daemon = await TestDaemon.create("hs-admin-flags-");
   t.after(async () => {
     await daemon.stop().catch(() => undefined);
@@ -67,21 +67,6 @@ test("pin protects a terminal worker from prune, and archive only hides it", asy
   });
   assert.equal(unarchived.archived, undefined);
   assert.equal((await client.request<WorkerSummary[]>("list", {})).some((item) => item.id === worker.id), true);
-});
-
-test("retire blocks new Turns until unretire", async (t) => {
-  const daemon = await TestDaemon.create("hs-admin-retire-");
-  t.after(async () => {
-    await daemon.stop().catch(() => undefined);
-  });
-  const cwd = await makeWorkspace();
-  const client = await daemon.start();
-
-  const worker = await spawnWorker(client, cwd, "retire me", {
-    persistence: "persistent",
-  });
-  await waitTerminal(client, worker.id);
-
   const retired = await client.request<WorkerSummary>("admin", {
     workerId: worker.id,
     action: "retire",

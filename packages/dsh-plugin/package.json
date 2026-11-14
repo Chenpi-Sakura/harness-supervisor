@@ -1,6 +1,6 @@
 {
   "name": "dsh-harness-supervisor",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "DSH Master access and shared browser UI for Harness Supervisor.",
   "homepage": "https://gitcode.com/chenpi_1/harness-supervisor",
   "repository": {
@@ -23,7 +23,7 @@
     "test": "node --test test/*.test.mjs",
     "pack:release": "node scripts/pack.mjs"
   },
-  "dependencies": { "harness-supervisor": "0.12.2" },
+  "dependencies": { "harness-supervisor": "0.12.3" },
   "bundleDependencies": ["harness-supervisor"],
   "dsh": {
     "manifestVersion": 1,

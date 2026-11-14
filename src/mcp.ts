@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { retainCurrentRuntime } from "./runtime-cache.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -1341,6 +1342,7 @@ process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
 
 async function main(): Promise<void> {
+  await retainCurrentRuntime(import.meta.url, stateDir);
   await client.connect();
   await assessDaemonCompatibility();
   const transport = new StdioServerTransport();

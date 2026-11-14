@@ -81,6 +81,9 @@ test("two self-contained cached cores hand off after draining and preserve nativ
   assert.notEqual(nextInfo.pid, firstInfo.pid);
   assert.equal(isPidAlive(firstInfo.pid), false, "old process must actually exit before activation");
   assert.equal((await readActiveRuntime(stateDir))?.runtimeId, targetId);
+  const metadata = JSON.parse(await readFile(path.join(stateDir, "runtime-backups/real-handoff/runtime-backup.json"), "utf8"));
+  assert.equal(metadata.sourceRuntimeId, baseline.id);
+  assert.equal(metadata.targetRuntimeId, targetId);
   const second = await client.request<{ worker: WorkerSummary }>("status", { workerId: first.id });
   assert.equal(second.worker.status, "completed");
   assert.equal(second.worker.sessionId, first.sessionId);

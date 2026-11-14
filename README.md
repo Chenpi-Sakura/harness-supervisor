@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.12.2-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.12.3-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -60,7 +60,7 @@ harness-sup wait <workerId> --timeout-ms 60000
 
 需要与 Worker 通信、取消、恢复或续接时，查看 `harness-sup help` 和下方接口说明。`down` 会关闭 daemon 并取消活动 Worker，结束查看时不必执行它。
 
-独立 CLI/MCP 默认状态目录为 `~/.harness-supervisor`，可用 `--state-dir <dir>` 或 `HARNESS_SUPERVISOR_HOME` 选择实例。DSH 插件使用其数据目录下的 `harness-supervisor` 专属实例，由插件携带的核心启动。另一台机器同样从 npm 安装，并配置本机 Harness；账号登录态、运行进程与任务记录不会随安装包迁移。
+独立 CLI/MCP 默认状态目录为 `~/.harness-supervisor`，可用 `--state-dir <dir>` 或 `HARNESS_SUPERVISOR_HOME` 选择实例。DSH 插件使用其数据目录下的 `harness-supervisor` 专属实例，由插件携带的核心启动。默认专属实例在最后一个 DSH 宿主退出后正常关闭，同时取消尚在运行的 Worker；仅禁用插件不触发关闭。独立 npm／自定义 HS 保持独立运行，两种生命周期模式不能复用同一个状态目录。另一台机器同样从 npm 安装，并配置本机 Harness；账号登录态、运行进程与任务记录不会随安装包迁移。
 
 ### 在 DSH 中使用
 
@@ -152,6 +152,8 @@ harness-sup runtime status
 安装新版 npm 包不等于切换正在运行的核心。上述命令需要指向现有实例的同一 `--state-dir`；HS 会暂停接收新任务，等待已有任务和队列结束，再切换并验证新核心。等待期间仍可回答输入、取消 Worker，也可用 `harness-sup runtime cancel --intent-id <同一标识>` 取消更新。切换完成后，使用该状态目录的受支持客户端共用新核心，WebUI 需重新打开。
 
 从旧 `0.9.2` 等缺少受控更新能力的实例首次迁入时，须先安排维护窗口、处理活动 Worker 并停止旧 daemon。无法确认进程退出时自动切换会停止；不要删除锁或并行拉起旧核心。状态目录中的 `runtime-update.json`、`runtime-update.log` 与 `runtime-backups/` 保留恢复线索。
+
+托管核心在启动或升级验收完成后默认清理旧缓存，保留当前核心和上一个已验证核心；正在使用、更新尚未完成或无法确认引用的版本暂缓清理。淘汰旧核心时同步删除带版本归属记录的对应状态备份，删除中断会在后续启动时继续；历史无归属信息的备份保守保留。首次迁入清理机制时，旧 CLI/MCP 客户端及 DeepSeek Harness 宿主需重启后才能安全释放其历史引用。版本不低于当前核心的更新候选不作为旧版本删除。
 
 <details>
 <summary>离线安装备用方式</summary>
@@ -517,7 +519,7 @@ npm run test:plugin
 npm test
 ```
 
-`npm test` 包含构建与核心套件；真实 Harness 验收另需相应运行时、账号及测试开关。开发结束后，可用 `node dist/src/cli.js down --state-dir $hsDevState` 关闭自己的开发实例；该命令会取消其中的活动 Worker。
+`npm test` 包含构建与核心套件，默认同时运行 2 个独立测试文件（单核机器为 1）；可用 `HARNESS_SUPERVISOR_TEST_CONCURRENCY=1` 串行排障，或设置为 `1`–`8` 调整并行度。日常迭代优先运行受影响文件，完整套件用于阶段验收和发版。真实 Harness 验收另需相应运行时、账号及测试开关。开发结束后，可用 `node dist/src/cli.js down --state-dir $hsDevState` 关闭自己的开发实例；该命令会取消其中的活动 Worker。
 
 发布包由 `npm run pack:core` 生成固定生产依赖的核心 `.tgz`，DSH 插件打包见[插件开发说明](https://github.com/Chenpi-Sakura/harness-supervisor/tree/main/packages/dsh-plugin#开发与打包)。
 

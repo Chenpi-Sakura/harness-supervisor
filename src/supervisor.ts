@@ -2464,6 +2464,10 @@ export class Supervisor {
     if (!session) return;
     try {
       const state = await withTimeout(session.getState(), 1500, "session state refresh timed out");
+      if (state.runtimeInfo && JSON.stringify(state.runtimeInfo) !== JSON.stringify(record.runtimeInfo)) {
+        record.runtimeInfo = state.runtimeInfo;
+        await this.store.saveWorker(record);
+      }
       if (state.sessionId) record.sessionId = state.sessionId;
       if (
         state.sessionFile &&
@@ -2999,6 +3003,7 @@ export class Supervisor {
       }
       record.sessionId = state.sessionId;
       record.sessionFile = state.sessionFile;
+      record.runtimeInfo = state.runtimeInfo;
       this.syncSessionRef(record, runtime.adapter);
       this.store.appendEvent(record.id, "worker.session", {
         sessionId: state.sessionId,

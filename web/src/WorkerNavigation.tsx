@@ -1,3 +1,4 @@
+import { harnessName } from "./harness-catalog";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { WorkerFilters, defaultNavigationFilter } from "./WorkerFilters";
 import { navigationDirection } from "./navigation-direction";
@@ -23,9 +24,7 @@ function statusLabel(status: string) {
   return ({ starting: "启动中", running: "正在工作", awaiting_input: "等待输入", completed: "已完成", failed: "失败", cancelled: "已取消", crashed: "进程异常", orphaned: "失去控制", interrupted: "已中断" } as Record<string, string>)[status] ?? status;
 }
 
-function harnessName(runtime: string) {
-  return ({ pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DeepSeek Harness", codex: "Codex", claude: "Claude Code" } as Record<string, string>)[runtime] ?? runtime;
-}
+
 
 function time(value: string) {
   const date = new Date(value);
@@ -54,7 +53,7 @@ export function WorkerNavigation({ workers, selected, onSelect, preferredOwnerRe
   const filtering = search || Object.values(filters).some(value => value !== "all");
   const visibleWorkers = useMemo(() => workers.filter(worker => {
     const working = ["starting", "running", "awaiting_input"].includes(worker.status);
-    return (!search || [worker.name, worker.id, worker.sessionTitle, worker.ownerRef, worker.runtime, worker.cwd, worker.promptPreview].some(value => value?.toLocaleLowerCase().includes(search)))
+    return (!search || [worker.name, worker.id, worker.sessionTitle, worker.ownerRef, worker.runtime, harnessName(worker.runtime), worker.cwd, worker.promptPreview].some(value => value?.toLocaleLowerCase().includes(search)))
       && (filters.runtime === "all" || worker.runtime === filters.runtime)
       && (filters.persistence === "all" || (worker.persistence ?? "oneshot") === filters.persistence)
       && (filters.status === "all" || (filters.status === "active" ? working : filters.status === "terminal" ? !working : worker.status === filters.status));

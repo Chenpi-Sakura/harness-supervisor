@@ -22,8 +22,12 @@ SOFTWARE.
 
 Source: https://github.com/lobehub/lobe-icons
 Pinned revision: ea434b96e75813517b377825e01c0df61dee8836 (@lobehub/icons-static-svg 1.102.0)
-Assets: pi.svg, qoder.svg, minimax.svg, deepseek.svg (monochrome marks).
+Assets: pi.svg, qoder.svg, minimax.svg, deepseek.svg, openai.svg, claude.svg (monochrome marks).
 SVG path data is unchanged; source/license comments were added and the unused root layout style was removed.
 Pi is Pi Agent (https://pi.dev), as identified by upstream src/Pi/index.mdx.
 The DeepSeek brand mark identifies DeepSeek Harness; MiniMax identifies MiniMax Code.
 Brand names and marks remain the property of their respective owners.
+
+OpenAI identifies Codex; Claude identifies Claude Code (Harness brand, not the configured model provider).
+Claude palette: #D97757, from claude-color.svg in the same pinned upstream package.
+Codex uses neutral theme shades for the monochrome OpenAI mark.

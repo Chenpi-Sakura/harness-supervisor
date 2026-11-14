@@ -15,6 +15,8 @@ if (lock.version !== manifest.version || lock.packages?.[""]?.version !== manife
 const compiledVersion = await readFile(path.join(build, "src/version.js"), "utf8");
 if (!compiledVersion.includes(`VERSION = "${manifest.version}"`)) throw Error("Build the requested core version before packing");
 await readFile(path.join(build, "web/index.html"));
+const iconLicense = await readFile(path.join(build, "web/third-party/harness-icons-LICENSE.txt"), "utf8");
+if (!iconLicense.includes("Copyright (c) 2023 LobeHub") || !iconLicense.includes("Permission is hereby granted")) throw Error("Build must include the complete Harness icon license");
 await mkdir(output, { recursive: true });
 const stage = await mkdtemp(path.join(output, "core-"));
 await mkdir(path.join(stage, "dist"));

@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.12.1-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -128,6 +128,8 @@ harness-sup ui --stop   # 关闭 WebUI，Worker 继续运行
 可在启动 daemon 前设置 `HARNESS_SUPERVISOR_UI=0`，关闭默认监听；之后仍可用 `harness-sup ui` 手动开启。`ui --stop` 会关闭当前监听，直到再次手动开启或 daemon 重启。
 
 浏览器和 DSH 使用同一套界面，可按“工作目录 → 会话 → Worker”查看状态、结果、轨迹和用量，回答输入或取消任务；任务创建与续接由 Master 完成。界面仅监听 `127.0.0.1`，一次性入口兑换独立浏览器凭证，不向网页暴露 IPC Token。刷新不会唤醒模型或自动 ACK；daemon 或 WebUI 重启后需从可信入口重新打开。
+
+Codex、Claude Code 与其他 Harness 共用侧栏、关系图和详情，显示各自的本地图标与品牌色。运行信息优先显示原生会话初始化时上报的模型配置；仅有请求配置时标注“请求”，未上报时保留未知。这些身份信息不是逐轮计费用量。新增运行时的完整检查项见 [Harness 接入指南](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/docs/harness-integration.md)。
 
 ## 更新 HS
 

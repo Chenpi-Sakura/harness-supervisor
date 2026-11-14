@@ -384,8 +384,8 @@ export class WebUiServer {
         id: parse(IdSchema, afterId), createdAt: parse(z.string().min(1).max(100), afterCreatedAt),
       } : undefined;
       const workers = supervisor.list({ limit, ownerRef: credential.ownerRef, after });
-      const summarize = (records: WorkerSummary[]) => records.map(({ id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence, config }) => ({
-        id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence, model: config?.model,
+      const summarize = (records: WorkerSummary[]) => records.map(({ id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence, config, runtimeInfo }) => ({
+        id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence, model: config?.model, runtimeInfo,
       }));
       // Keep the global createdAt cursor intact while making the current
       // conversation visible even when its workers are older than page one.

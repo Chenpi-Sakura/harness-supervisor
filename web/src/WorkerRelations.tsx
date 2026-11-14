@@ -1,3 +1,4 @@
+import { harnessName, modelDisplay, type ModelDisplaySource } from "./harness-catalog";
 import { AnimatePresence, motion, animate as animateValue, useMotionValue, useReducedMotion } from "motion/react";
 import { UiIcon } from "./UiIcon";
 import React, { useState, useEffect, useRef } from "react";
@@ -5,7 +6,7 @@ import { HarnessIcon } from "./harness-icons";
 import { Markdown } from "./Markdown";
 import "./worker-relations.css";
 
-export interface RelationWorker {
+export interface RelationWorker extends ModelDisplaySource {
   id: string; name?: string; ownerRef?: string; runtime: string; status: string; model?: string; sessionTitle?: string;
   lifecycle: string; persistence: string; promptPreview: string; cwd: string;
   result?: { text: string; truncated: boolean };
@@ -15,7 +16,6 @@ export const relationStatus: Record<string, string> = {
   running: "正在工作", starting: "正在启动", awaiting_input: "等待输入", completed: "已完成",
   cancelled: "已取消", failed: "执行失败", crashed: "异常终止", interrupted: "已中断", orphaned: "失去连接",
 };
-const runtimeNames: Record<string, string> = { pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DeepSeek Harness", codex: "Codex", claude: "Claude Code" };
 const active = new Set(["running", "starting", "awaiting_input"]);
 
 function Frame({ status, persistent }: { status: string; persistent: boolean }) {
@@ -153,8 +153,8 @@ export function WorkerRelations({ workers, preferredOwnerRef, onOpen, demo = fal
             })}</svg>}
             <AnimatePresence mode="popLayout" initial={false}>{visible.map((worker, index) => <motion.button layoutDependency={`${positions[index]!.x}:${positions[index]!.y}:${width}`} layout="position" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ layout: { duration: reduceMotion ? 0 : .28, ease: [.2,.7,.2,1] }, opacity: { duration: reduceMotion ? 0 : .1 } }} key={worker.id} data-worker-id={worker.id} className={`relation-worker brand-${worker.runtime} state-${worker.status}${(selectedWorkerId ?? selectedId) === worker.id ? " is-selected" : ""}`} style={{ left: positions[index]!.x, top: positions[index]!.y }} onClick={() => { if (onOpen) onOpen(worker.id); else setSelectedId(worker.id); }} aria-pressed={(selectedWorkerId ?? selectedId) === worker.id}>
               <Frame status={worker.status} persistent={worker.persistence === "persistent"} />
-              <div className="relation-node-top"><span className="relation-brand-mark"><HarnessIcon runtime={worker.runtime} size={24} /></span><span>{runtimeNames[worker.runtime] ?? worker.runtime}</span><small>{worker.persistence === "persistent" ? "持久会话" : "一次性任务"}</small></div>
-              <h3>{worker.name ?? worker.id}</h3><div className="relation-model" title={worker.model}><span>{worker.model ?? "型号未上报"}</span></div><p className="relation-task">{worker.promptPreview}</p>
+              <div className="relation-node-top"><span className="relation-brand-mark"><HarnessIcon runtime={worker.runtime} size={24} /></span><span>{harnessName(worker.runtime)}</span><small>{worker.persistence === "persistent" ? "持久会话" : "一次性任务"}</small></div>
+              <h3>{worker.name ?? worker.id}</h3><div className="relation-model" title={modelDisplay(worker)}><span>{modelDisplay(worker)}</span></div><p className="relation-task">{worker.promptPreview}</p>
               <footer><span className="relation-state"><i />{relationStatus[worker.status] ?? worker.status}</span><span>{worker.persistence === "persistent" && worker.lifecycle === "idle" ? "可续接" : <>查看详情 <UiIcon name="arrowUpRight" size={14} /></>}</span></footer>
             </motion.button>)}</AnimatePresence>
           </>}
@@ -162,7 +162,7 @@ export function WorkerRelations({ workers, preferredOwnerRef, onOpen, demo = fal
         {!visible.length && <p className="relations-no-workers">当前筛选下暂无 Worker</p>}
         </div><div className="relations-scope" aria-label="显示范围">{[["session", "会话"], ["project", "项目"]].map(([value, title]) => <button key={value} aria-pressed={scope === value} onClick={() => setScope(value as "session" | "project")}>{title}</button>)}</div><div className="relations-zoom"><button aria-label="缩小关系图" onClick={() => setZoom(value => Math.max(.4, value - .1))}><UiIcon name="minus" size={16} /></button><span>{Math.round(zoom * 100)}%</span><button aria-label="放大关系图" onClick={() => setZoom(value => Math.min(1.6, value + .1))}><UiIcon name="plus" size={16} /></button><button onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }}>复位</button></div>
       </div>
-      {selected && <aside className="relations-inspector" aria-label="所选 Worker"><div className="relations-inspector-head"><span>WORKER 详情</span><button aria-label="关闭 Worker 详情" onClick={() => setSelectedId(null)}><UiIcon name="close" /></button></div><HarnessIcon runtime={selected.runtime} size={24} /><h3>{selected.name ?? selected.id}</h3><span className={`relation-state state-${selected.status}`}><i />{relationStatus[selected.status] ?? selected.status}</span><dl><div><dt>Harness</dt><dd>{runtimeNames[selected.runtime] ?? selected.runtime}</dd></div><div><dt>LLM</dt><dd>{selected.model ?? "型号未上报"}</dd></div><div><dt>会话类型</dt><dd>{selected.persistence === "persistent" ? "持久会话 · 实线外框" : "一次性任务 · 虚线外框"}</dd></div><div><dt>工作目录</dt><dd>{selected.cwd}</dd></div></dl><h4>委派内容</h4><Markdown text={selected.promptPreview} />{selected.result && <><h4>最终结果</h4><Markdown text={selected.result.text} /></>}{onOpen && <button className="relations-open" onClick={() => onOpen(selected.id)}>打开完整结果与轨迹 ↗</button>}</aside>}
+      {selected && <aside className="relations-inspector" aria-label="所选 Worker"><div className="relations-inspector-head"><span>WORKER 详情</span><button aria-label="关闭 Worker 详情" onClick={() => setSelectedId(null)}><UiIcon name="close" /></button></div><HarnessIcon runtime={selected.runtime} size={24} /><h3>{selected.name ?? selected.id}</h3><span className={`relation-state state-${selected.status}`}><i />{relationStatus[selected.status] ?? selected.status}</span><dl><div><dt>Harness</dt><dd>{harnessName(selected.runtime)}</dd></div><div><dt>模型</dt><dd>{modelDisplay(selected)}</dd></div><div><dt>会话类型</dt><dd>{selected.persistence === "persistent" ? "持久会话 · 实线外框" : "一次性任务 · 虚线外框"}</dd></div><div><dt>工作目录</dt><dd>{selected.cwd}</dd></div></dl><h4>委派内容</h4><Markdown text={selected.promptPreview} />{selected.result && <><h4>最终结果</h4><Markdown text={selected.result.text} /></>}{onOpen && <button className="relations-open" onClick={() => onOpen(selected.id)}>打开完整结果与轨迹 ↗</button>}</aside>}
     </div>
   </section>;
 }
@@ -171,10 +171,10 @@ export const demoRelationWorkers: RelationWorker[] = [
   ["pi", "running", "persistent", "实现服务端接口", "为项目补充分页接口，保持现有鉴权与响应格式。"],
   ["qoder", "running", "oneshot", "构建前端交互", "完成列表筛选与详情交互，并检查窄屏布局。"],
   ["mcode", "awaiting_input", "persistent", "验证集成流程", "运行集成测试；当前等待确认测试环境的访问权限。"],
-  ["qoder", "completed", "persistent", "审查边界条件", "检查并发、取消与恢复路径，给出可复核的审查结论。"],
-  ["pi", "cancelled", "oneshot", "探索替代方案", "比较两种缓存方案；方向调整后已取消本轮任务。"],
+  ["claude", "completed", "persistent", "审查边界条件", "检查并发、取消与恢复路径，给出可复核的审查结论。"],
+  ["codex", "cancelled", "oneshot", "探索替代方案", "比较两种缓存方案；方向调整后已取消本轮任务。"],
   ["dsh", "crashed", "oneshot", "检查运行环境", "核对依赖与运行环境；原生进程异常退出，保留执行记录。"],
-].map(([runtime, status, persistence, name, promptPreview], index) => ({ id: `demo-${index}`, model: ({ pi: "Claude Sonnet 4.5", qoder: "Qwen3-Coder", mcode: "MiniMax-M3.1", dsh: "DeepSeek-V4" } as Record<string, string>)[runtime!] + "（演示）", runtime: runtime!, status: status!, persistence: persistence!, name, promptPreview: promptPreview!, ownerRef: "demo:project-workspace", lifecycle: status === "completed" ? "idle" : status === "running" ? "busy" : "stopped", cwd: "D:/workspace/project", ...(status === "completed" ? { result: { text: "### 审查完成\n\n- 检查了取消与恢复路径。\n- 未发现阻断性问题。\n\n可继续安排验证任务。", truncated: false } } : {}) }));
+].map(([runtime, status, persistence, name, promptPreview], index) => ({ id: `demo-${index}`, runtimeInfo: { modelName: ({ codex: "GPT 6 Luna", claude: "MiniMax-M3.1-Flash", pi: "Claude Sonnet 4.5", qoder: "Qwen3-Coder", mcode: "MiniMax-M3.1", dsh: "DeepSeek-V4" } as Record<string, string>)[runtime!] + "（演示）" }, runtime: runtime!, status: status!, persistence: persistence!, name, promptPreview: promptPreview!, ownerRef: "demo:project-workspace", lifecycle: status === "completed" ? "idle" : status === "running" ? "busy" : "stopped", cwd: "D:/workspace/project", ...(status === "completed" ? { result: { text: "### 审查完成\n\n- 检查了取消与恢复路径。\n- 未发现阻断性问题。\n\n可继续安排验证任务。", truncated: false } } : {}) }));
 
 // Synthetic projects are only used by the development preview entry.
 for (const [projectName, names, ownerRef] of [

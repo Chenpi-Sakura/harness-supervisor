@@ -9,14 +9,14 @@ import { resolveNativeAcpLaunch } from "../../src/adapters/native-acp/launch.js"
 import { NativeAcpSession } from "../../src/adapters/native-acp/session.js";
 import type { HarnessEvent, HarnessSession } from "../../src/types.js";
 const fixture = fileURLToPath(new URL("../fixtures/fake-native-acp.js", import.meta.url));
-async function setup(t: { after: (fn: () => Promise<void>) => void }, runtime: "codex" | "claude" = "codex", extraEnv = {}) {
+async function setup(t: { after: (fn: () => Promise<void>) => void }, runtime: "codex" | "claude" = "codex", extraEnv = {}, nativeDefaults = false) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hs-native-acp-"));
   const owned: HarnessSession[] = [];
   t.after(async () => { for (const session of owned) await session.close({ graceMs: 100 }); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
   const adapter = new NativeAcpAdapter(runtime, { launch: { file: process.execPath, args: [fixture], env: { ...process.env, ...extraEnv }, description: "fake ACP" }, abortTimeoutMs: 200 });
   const events: HarnessEvent[] = [];
   const callbacks = { onEvent: (event: HarnessEvent) => events.push(event), onExit: () => {} };
-  const spec = { workerId: "test", cwd: dir, sessionDir: dir, model: "GPT 6 Luna", thinking: "low" };
+  const spec = { workerId: "test", cwd: dir, sessionDir: dir, model: nativeDefaults ? undefined : "GPT 6 Luna", thinking: nativeDefaults ? undefined : "low" };
   const session = await adapter.spawn(spec, callbacks);
   owned.push(session);
   const wait = async (type: HarnessEvent["type"]) => {
@@ -27,12 +27,26 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }, runtime: "
 }
 for (const runtime of ["codex", "claude"] as const) test(`${runtime} ACP uses exact advertised model/effort and supports repeated prompts`, async t => {
   const { session, wait, events } = await setup(t, runtime);
+  assert.deepEqual((await session.getState()).runtimeInfo, {
+    modelId: "gpt-6-luna", modelName: "GPT 6 Luna", reasoningEffort: "low", adapter: undefined,
+  });
   await session.prompt("one");
   assert.deepEqual((await wait("settled")), { type: "settled", aborted: false, finalText: "DONE one", error: undefined, stopReason: "end_turn" });
   events.length = 0;
   await session.prompt("two");
   const second = await wait("settled");
   assert.equal(second.type === "settled" && second.finalText, "DONE two");
+});
+test("ACP default aliases retain the native description without inventing a model id", async t => {
+  const { session } = await setup(t, "claude", { FAKE_ACP_DEFAULT_MODEL: "1" }, true);
+  const info = (await session.getState()).runtimeInfo;
+  assert.equal(info?.modelId, "default");
+  assert.equal(info?.modelName, "Native configured model (Default (recommended))");
+});
+test("ACP without model configuration leaves native identity unknown", async t => {
+  const { session } = await setup(t, "claude", { FAKE_ACP_NO_CONFIG: "1" }, true);
+  assert.equal((await session.getState()).runtimeInfo?.modelId, undefined);
+  assert.equal((await session.getState()).runtimeInfo?.modelName, undefined);
 });
 test("ACP permission requires a real offered option and repeated answers fail", async t => {
   const { session, wait } = await setup(t);

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { SupervisorError, errorMessage } from "../../errors.js";
-import type { ExtensionUiResponse, HarnessCallbacks, HarnessEvent, HarnessExit, HarnessSession, HarnessSpawnSpec } from "../../types.js";
+import type { ExtensionUiResponse, HarnessCallbacks, HarnessEvent, HarnessExit, HarnessRuntimeInfo, HarnessSession, HarnessSpawnSpec } from "../../types.js";
 import { atomicWriteJson } from "../../util/fsx.js";
 import { safeText } from "../../util/redact.js";
 import { DEFAULT_INPUT_TIMEOUT_MS, resolveRuntimeInputTimeoutMs } from "../../input-timeout.js";
@@ -21,6 +21,7 @@ export class NativeAcpSession implements HarnessSession {
   readonly pid: number | undefined;
   private sessionId = "";
   private sessionFile: string | undefined;
+  private runtimeInfo: HarnessRuntimeInfo = {};
   private active = false;
   private abortRequested = false;
   private assistantText = "";
@@ -68,10 +69,26 @@ export class NativeAcpSession implements HarnessSession {
     };
     await applyOption("model", spec.model);
     await applyOption("thought_level", spec.thinking);
+    const model = config.find(item => item.category === "model" || item.id === "model");
+    const choices: Obj[] = [];
+    const walk = (items: Obj[]) => { for (const item of items) { if (typeof item.value === "string") choices.push(item); walk(array(item.options)); } };
+    walk(array(model?.options));
+    const choice = choices.find(item => item.value === model?.currentValue);
+    const effort = config.find(item => item.category === "thought_level" || ["reasoning_effort", "thinking", "effort"].includes(String(item.id)));
+    const text = (value: unknown) => typeof value === "string" && value.trim() ? safeText(value, 200) : undefined;
+    const agent = object(init.agentInfo);
+    this.runtimeInfo = {
+      modelId: text(model?.currentValue),
+      // Default aliases remain explicit: a description is a native report, not an inferred backend ID.
+      modelName: text(choice?.description) && model?.currentValue === "default"
+        ? text(`${choice?.description} (${choice?.name ?? "default"})`) : text(choice?.name),
+      reasoningEffort: text(effort?.currentValue),
+      adapter: text([text(agent.name), text(agent.version)].filter(Boolean).join(" ")),
+    };
     this.sessionFile = path.join(spec.sessionDir, `${this.options.runtime}-acp-session.json`);
     await atomicWriteJson(this.sessionFile, { runtime: this.options.runtime, protocol: "acp", id: this.sessionId, cwd: spec.cwd });
   }
-  async getState() { return { sessionId: this.sessionId, sessionFile: this.sessionFile }; }
+  async getState() { return { sessionId: this.sessionId, sessionFile: this.sessionFile, runtimeInfo: { ...this.runtimeInfo } }; }
   isAlive() { return this.client.isAlive(); }
   stderrTail() { return this.client.stderrTail(); }
   async prompt(message: string) {

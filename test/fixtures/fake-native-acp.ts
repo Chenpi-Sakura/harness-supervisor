@@ -1,6 +1,6 @@
 import readline from "node:readline";
 let sessionId = "native-session", active: unknown;
-let configOptions = [
+let configOptions: { id: string; category: string; currentValue: string; options: { value: string; name: string; description?: string }[] }[] = [
   { id: "model", category: "model", currentValue: "native-model", options: [{ value: "native-model", name: "Native Model" }, { value: "gpt-6-luna", name: "GPT 6 Luna" }] },
   { id: "reasoning_effort", category: "thought_level", currentValue: "medium", options: [{ value: "low", name: "Low" }, { value: "medium", name: "Medium" }] },
 ];
@@ -11,7 +11,9 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
   switch (request.method) {
     case "initialize": reply(request.id, { protocolVersion: 1, agentCapabilities: { loadSession: process.env.FAKE_ACP_NO_LOAD !== "1" } }); break;
-    case "session/new": reply(request.id, { sessionId, configOptions }); break;
+    case "session/new":
+      if (process.env.FAKE_ACP_DEFAULT_MODEL === "1") configOptions[0] = { ...configOptions[0]!, currentValue: "default", options: [{ value: "default", name: "Default (recommended)", description: "Native configured model" }] };
+      reply(request.id, { sessionId, ...(process.env.FAKE_ACP_NO_CONFIG === "1" ? {} : { configOptions }) }); break;
     case "session/load": sessionId = request.params.sessionId; update("REPLAY_MUST_NOT_ENTER_RESULT"); reply(request.id, { configOptions }); break;
     case "session/set_config_option":
       configOptions = configOptions.map(option => option.id === request.params.configId && process.env.FAKE_ACP_MISMATCH !== "1" ? { ...option, currentValue: request.params.value } : option);

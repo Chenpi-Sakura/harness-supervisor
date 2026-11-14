@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import path from "node:path";
+import { readFile } from "node:fs/promises";
 import type { WorkerSummary } from "../../src/types.js";
 import { TestDaemon, makeWorkspace, waitTerminal, waitForStatus } from "./helpers.js";
 
@@ -13,6 +15,11 @@ for (const runtime of ["codex", "claude"] as const) test(`${runtime} ACP integra
   const worker = await client.request<WorkerSummary>("spawn", { runtime, cwd, prompt: "first", persistence: "persistent", model: "gpt-6-luna", thinking: "low" });
   const first = await waitTerminal(client, worker.id);
   assert.equal(first.worker.result?.text, "DONE first");
+  assert.equal(first.worker.runtimeInfo?.modelId, "gpt-6-luna");
+  assert.equal(first.worker.runtimeInfo?.modelName, "GPT 6 Luna");
+  assert.equal(first.worker.runtimeInfo?.reasoningEffort, "low");
+  const persisted = JSON.parse(await readFile(path.join(daemon.stateDir, "workers", worker.id, "worker.json"), "utf8")) as WorkerSummary;
+  assert.deepEqual(persisted.runtimeInfo, first.worker.runtimeInfo);
   await client.request("continue", { workerId: worker.id, prompt: "approve" });
   const input = await waitForStatus(client, worker.id, ["awaiting_input"]);
   assert.ok(input.pendingInput);

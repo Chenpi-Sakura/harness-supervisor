@@ -8,7 +8,7 @@ import type { WorkerSummary } from "../../src/types.js";
 import { WebUiServer, type WebUiLaunch } from "../../src/web-ui.js";
 
 function fakeSupervisor() {
-  const base = { runtime: "pi", status: "awaiting_input", lifecycle: "awaiting_input", createdAt: "2026-11-11T00:00:00Z", updatedAt: "2026-11-11T00:00:00Z", cwd: "/test", promptPreview: "test", persistence: "persistent", taskId: "shared-task" };
+  const base = { runtime: "pi", runtimeInfo: { modelId: "native-model", modelName: "Native model" }, status: "awaiting_input", lifecycle: "awaiting_input", createdAt: "2026-11-11T00:00:00Z", updatedAt: "2026-11-11T00:00:00Z", cwd: "/test", promptPreview: "test", persistence: "persistent", taskId: "shared-task" };
   type FakeWorker = typeof base & { id: string; ownerRef?: string; pendingInput?: { requestId: string; method: string; title: string } };
   const workers = new Map<string, FakeWorker>([
     ["worker-a", { ...base, id: "worker-a", ownerRef: "dsh:session-a", pendingInput: { requestId: "input-current", method: "confirm", title: "Permission" } }],
@@ -127,6 +127,7 @@ test("WebUI enforces owner scope on list, status, events, usage, answer and canc
   const postHeaders = { ...headers, Origin: launch.origin, "Content-Type": "application/json" };
   const list = await fetch(`${launch.origin}/api/workers`, { headers }).then(r => r.json()) as { workers: WorkerSummary[] };
   assert.deepEqual(list.workers.map(w => w.id), ["worker-a"]);
+  assert.deepEqual(list.workers[0]?.runtimeInfo, { modelId: "native-model", modelName: "Native model" });
   for (const id of ["worker-b", "worker-legacy", "nonexistent"]) {
     for (const action of ["status", "events", "usage", "prompt"]) {
       assert.equal((await fetch(`${launch.origin}/api/workers/${id}/${action}`, { headers })).status, 404);

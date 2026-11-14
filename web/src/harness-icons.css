@@ -17,6 +17,8 @@
 .harness-icon--mcode { -webkit-mask-image: url("./assets/harness/minimax.svg"); mask-image: url("./assets/harness/minimax.svg"); }
 .harness-icon--dsh { -webkit-mask-image: url("./assets/harness/deepseek.svg"); mask-image: url("./assets/harness/deepseek.svg"); }
 .harness-icon--generic { background: none; }
+.harness-icon--codex { -webkit-mask-image: url("./assets/harness/openai.svg"); mask-image: url("./assets/harness/openai.svg"); }
+.harness-icon--claude { -webkit-mask-image: url("./assets/harness/claude.svg"); mask-image: url("./assets/harness/claude.svg"); }
 .harness-icon--16 { width: 16px; height: 16px; }
 .harness-icon--20 { width: 20px; height: 20px; }
 .harness-icon--24 { width: 24px; height: 24px; }

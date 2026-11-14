@@ -1,12 +1,8 @@
 import { UiIcon } from "./UiIcon";
 import "./harness-icons.css";
+import { harnessNames } from "./harness-catalog";
 
-const labels: Record<string, string> = {
-  pi: "Pi",
-  qoder: "Qoder",
-  mcode: "MiniMax Code",
-  dsh: "DeepSeek Harness",
-};
+const labels = harnessNames;
 
 /** Local, decorative brand mark; callers retain the visible Harness label. */
 export function HarnessIcon({ runtime, size = 18 }: { runtime: string; size?: 16 | 18 | 20 | 24 }) {

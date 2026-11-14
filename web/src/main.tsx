@@ -1,3 +1,4 @@
+import { harnessName, modelDisplay } from "./harness-catalog";
 import { VERSION } from "../../src/version";
 import { UiIcon } from "./UiIcon";
 import { ResizeHandle } from "./ResizeHandle";
@@ -25,6 +26,8 @@ interface PendingInput {
   expiresAt?: string;
 }
 interface Worker {
+  runtimeInfo?: { modelId?: string; modelName?: string; reasoningEffort?: string; adapter?: string };
+  config?: { model?: string };
   model?: string;
   id: string;
   name?: string;
@@ -72,9 +75,7 @@ function label(status: string) {
   return ({ starting: "启动中", running: "执行中", awaiting_input: "等待输入", completed: "已完成", failed: "失败", cancelled: "已取消", crashed: "进程异常", orphaned: "失去控制", interrupted: "已中断" } as Record<string, string>)[status] ?? status;
 }
 
-function harnessName(runtime: string) {
-  return ({ pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DeepSeek Harness", codex: "Codex", claude: "Claude Code" } as Record<string, string>)[runtime] ?? runtime;
-}
+
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -471,7 +472,7 @@ function RuntimeInformation({ worker }: { worker: Worker }) {
   return <section className={`metadata${open ? " is-open" : ""}`}>
     <button className="metadata-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(value => !value)}>运行信息<UiIcon name="chevronDown" size={14} className="metadata-chevron" /></button>
     <div className="metadata-content" id={panelId} inert={!open} aria-hidden={!open}><div className="metadata-inner">
-      <dl><div><dt>Worker ID</dt><dd>{worker.id}</dd></div><div><dt>工作目录</dt><dd>{worker.cwd}</dd></div><div><dt>生命周期</dt><dd>{worker.lifecycle}</dd></div>{worker.statusReason && <div><dt>状态说明</dt><dd>{worker.statusReason}</dd></div>}</dl>
+      <dl><div><dt>Harness</dt><dd>{harnessName(worker.runtime)}</dd></div><div><dt>模型</dt><dd>{modelDisplay(worker)}</dd></div>{worker.runtimeInfo?.modelId && <div><dt>模型标识</dt><dd>{worker.runtimeInfo.modelId}</dd></div>}{worker.runtimeInfo?.reasoningEffort && <div><dt>推理强度</dt><dd>{worker.runtimeInfo.reasoningEffort}</dd></div>}{worker.runtimeInfo?.adapter && <div><dt>ACP Adapter</dt><dd>{worker.runtimeInfo.adapter}</dd></div>}<div><dt>Worker ID</dt><dd>{worker.id}</dd></div><div><dt>工作目录</dt><dd>{worker.cwd}</dd></div><div><dt>生命周期</dt><dd>{worker.lifecycle}</dd></div>{worker.statusReason && <div><dt>状态说明</dt><dd>{worker.statusReason}</dd></div>}</dl>
     </div></div>
   </section>;
 }

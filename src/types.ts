@@ -171,6 +171,8 @@ export interface WorkerRecord {
   /** Originating Master session. Routing scope, not an OS security boundary. */
   ownerRef?: string;
   runtime: string;
+  /** Native runtime-reported identity; separate from requested config and usage. */
+  runtimeInfo?: HarnessRuntimeInfo;
   name?: string;
   cwd: string;
   promptPreview: string;
@@ -643,9 +645,17 @@ export interface HarnessExit {
   signal: string | null;
 }
 
+export interface HarnessRuntimeInfo {
+  modelId?: string;
+  modelName?: string;
+  reasoningEffort?: string;
+  adapter?: string;
+}
+
 export interface HarnessStateInfo {
   sessionId?: string;
   sessionFile?: string;
+  runtimeInfo?: HarnessRuntimeInfo;
 }
 
 export interface HarnessUsageReport {

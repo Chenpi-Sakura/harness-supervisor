@@ -334,3 +334,8 @@
 .navigation-search-count { height:18px; min-height:18px; line-height:18px; margin:0; }
 .folder-groups,.directory-content,.worker-list { position:relative; }
 .workspace-error { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 100; max-width: min(600px, 80vw); }
+
+/* OpenAI monochrome and Claude clay; theme-adjusted for translucent surfaces. */
+.app .brand-codex { --brand-color: #d4d4d4; }
+.app .brand-claude { --brand-color: #d97757; }
+.app[data-theme="light"] .brand-codex { --brand-color: #404040; }

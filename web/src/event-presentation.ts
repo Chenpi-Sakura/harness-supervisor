@@ -1,3 +1,5 @@
+import { groupOutputEvents } from "../../src/output-groups.js";
+
 export interface TimelineEvent {
   seq: number;
   ts: string;
@@ -44,29 +46,12 @@ function recordedOutput(event: TimelineEvent): string | undefined {
   return undefined;
 }
 
-function isThinkingDelta(event: TimelineEvent, runtime?: string): boolean {
-  // These adapters map ACP agent_thought_chunk to exactly this shape. Pi does
-  // not record thinking deltas. Other/extended shapes may be snapshots, so do
-  // not guess their semantics (nor those of assistant_message).
-  return ["qoder", "mcode", "dsh"].includes(runtime ?? "") && event.type === "run.progress" &&
-    event.data?.kind === "thinking" && typeof event.data.preview === "string" &&
-    Object.keys(event.data).every(key => ["kind", "preview"].includes(key));
-}
-
 /** Presentation only: source events, sequence numbers and cursors stay intact. */
 export function buildTimelineEntries(events: TimelineEvent[], runtime?: string): TimelineEntry[] {
-  const entries: TimelineEntry[] = [];
-  for (const event of events) {
-    const previous = entries.at(-1);
-    const last = previous?.events.at(-1);
-    if (previous && last && event.seq === last.seq + 1 && isThinkingDelta(last, runtime) && isThinkingDelta(event, runtime)) {
-      previous.events.push(event);
-      previous.recordedText = (previous.recordedText ?? "") + (recordedOutput(event) ?? "");
-    } else {
-      entries.push({ events: [event], recordedText: recordedOutput(event) });
-    }
-  }
-  return entries;
+  return groupOutputEvents(events, runtime).map(group => ({
+    events: group,
+    recordedText: recordedOutput(group[0]!) === undefined ? undefined : group.map(event => recordedOutput(event) ?? "").join(""),
+  }));
 }
 
 export function presentTimelineEntry(entry: TimelineEntry): EventPresentation {

@@ -57,7 +57,7 @@ export interface WebUiLaunch {
 export interface WebUiOptions {
   supervisor: Supervisor;
   staticDir?: string;
-  /** Primarily for isolated tests; production uses an ephemeral loopback port. */
+  /** Defaults to 61114; use 0 for an isolated ephemeral test listener. */
   port?: number;
 }
 
@@ -241,7 +241,7 @@ export class WebUiServer {
     server.maxHeadersCount = 40;
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(this.options.port ?? 0, "127.0.0.1", () => {
+      server.listen(this.options.port ?? 61114, "127.0.0.1", () => {
         server.off("error", reject);
         resolve();
       });
@@ -379,8 +379,8 @@ export class WebUiServer {
         id: parse(IdSchema, afterId), createdAt: parse(z.string().min(1).max(100), afterCreatedAt),
       } : undefined;
       const workers = supervisor.list({ limit, ownerRef: credential.ownerRef, after });
-      const summarize = (records: WorkerSummary[]) => records.map(({ id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence }) => ({
-        id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence,
+      const summarize = (records: WorkerSummary[]) => records.map(({ id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence, config }) => ({
+        id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence, model: config?.model,
       }));
       // Keep the global createdAt cursor intact while making the current
       // conversation visible even when its workers are older than page one.

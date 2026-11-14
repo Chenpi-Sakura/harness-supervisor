@@ -1,3 +1,4 @@
+import { UiIcon } from "./UiIcon";
 import React, { useEffect, useId, useRef, useState } from "react";
 import { Markdown } from "./Markdown";
 
@@ -37,7 +38,7 @@ export function TaskPrompt({ preview, load }: { preview: string; load: (signal: 
       const bounds = event.currentTarget.getBoundingClientRect();
       if (event.target === event.currentTarget && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) setOpen(false);
     }}>
-      <div className="prompt-dialog-header"><h3 id={title}>任务说明</h3><button autoFocus type="button" aria-label="关闭任务说明" onClick={() => setOpen(false)}>×</button></div>
+      <div className="prompt-dialog-header"><h3 id={title}>任务说明</h3><button autoFocus type="button" aria-label="关闭任务说明" onClick={() => setOpen(false)}><UiIcon name="close" /></button></div>
       <div className="prompt-dialog-body" tabIndex={0}>
         {!content && !error && <p className="muted" role="status">正在读取任务说明…</p>}
         {error && <p role="alert">{error}</p>}

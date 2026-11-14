@@ -47,9 +47,17 @@ function fakeSupervisor() {
 
 function setup() {
   const fake = fakeSupervisor();
-  const ui = new WebUiServer({ supervisor: fake.supervisor, staticDir: path.resolve("web") });
+  const ui = new WebUiServer({ supervisor: fake.supervisor, staticDir: path.resolve("web"), port: 0 });
   return { ui, ...fake };
 }
+
+test("WebUI defaults to loopback port 61114", async (t) => {
+  const ui = new WebUiServer({ supervisor: fakeSupervisor().supervisor, staticDir: path.resolve("web") });
+  t.after(() => ui.stop());
+  assert.equal(ui.status().running, false);
+  const launch = await ui.launch();
+  assert.equal(launch.origin, "http://127.0.0.1:61114");
+});
 
 async function exchange(launch: WebUiLaunch) {
   const url = new URL(launch.url);

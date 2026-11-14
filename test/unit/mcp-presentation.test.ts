@@ -1078,3 +1078,23 @@ test("metrics report production tasks are a summary; development keeps task metr
   assert.deepEqual(development.tasks[0].usageSummary, metrics.usageSummary);
   assert.deepEqual(development.durationStats, report.durationStats);
 });
+
+test("development event reads and waits merge ACP output without raw JSON arrays or cursor changes", () => {
+  const worker = { id: "w-group", runtime: "qoder", status: "running" } as WorkerSummary;
+  const events = [1, 2].map(seq => ({ workerId: worker.id, seq, ts: "2026-11-13T00:00:00Z", type: "run.progress", data: { kind: "assistant_message", preview: seq === 1 ? "Hello" : " world" } })) as WorkerEvent[];
+  const source = structuredClone(events);
+  const read = presentEventsDevelopment({ worker, events, nextSeq: 2, hasMore: true } as ReadEventsResult) as any;
+  assert.equal(read.events.length, 1);
+  assert.equal(read.events[0].data.preview, "Hello world");
+  assert.equal(read.events[0].data.firstSeq, 1);
+  assert.equal(read.events[0].data.lastSeq, 2);
+  assert.equal(read.events[0].data.fragmentCount, 2);
+  assert.equal(read.nextSeq, 2);
+  assert.equal(read.hasMore, true);
+  assert.equal(read.events[0].events, undefined);
+  const waited = presentWait({ worker, nextSeq: 2, hasMore: false, timedOut: false, terminal: false } as WaitResult, { events, eventsOmitted: 0 }, "development") as any;
+  assert.deepEqual(waited.events, read.events);
+  assert.deepEqual(events, source);
+  const pi = presentEventsDevelopment({ worker: { ...worker, runtime: "pi" }, events, nextSeq: 2, hasMore: false } as ReadEventsResult) as any;
+  assert.equal(pi.events.length, 2, "Pi messages are complete snapshots, not ACP deltas");
+});

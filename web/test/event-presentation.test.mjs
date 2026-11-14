@@ -91,8 +91,16 @@ test("snapshots, unknown shapes/runtimes and already-truncated records are not b
     assert.equal(entries.length, 3);
   }
   const snapshots = [1, 2].map(seq => ({ ...event("run.progress", { kind: "assistant_message", preview: "whole snapshot" }), seq }));
-  assert.equal(buildTimelineEntries(snapshots, "qoder").length, 2);
+  assert.equal(buildTimelineEntries(snapshots, "pi").length, 2);
   const detailOnly = [1, 2].map(seq => ({ ...event("run.progress", { kind: "thinking", detail: "legacy text" }), seq }));
   assert.equal(buildTimelineEntries(detailOnly, "qoder").length, 2);
   assert.equal(buildTimelineEntries(detailOnly, "qoder")[0].recordedText, "legacy text");
+});
+
+test("ACP model output chunks fold into one markdown entry", () => {
+  const output = (seq, preview) => ({ ...event("run.progress", { kind: "assistant_message", preview }), seq });
+  const rows = buildTimelineEntries([output(1, "# Report\n"), output(2, "\n**Done**"), fragment(3, "think"), output(4, "next")], "qoder");
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].recordedText, "# Report\n\n**Done**");
+  assert.equal(rows[0].events.length, 2);
 });

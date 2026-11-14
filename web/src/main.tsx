@@ -1,11 +1,15 @@
-import React, { useCallback, useEffect, useId, useRef, useState } from "react";
+import { VERSION } from "../../src/version";
+import { UiIcon } from "./UiIcon";
+import { ResizeHandle } from "./ResizeHandle";
+import { WorkerRelations, demoRelationWorkers } from "./WorkerRelations";
+import React, { useCallback, useEffect, useLayoutEffect, useId, useRef, useState } from "react";
 import { Markdown } from "./Markdown";
 import { TaskPrompt, type PromptDetail } from "./TaskPrompt";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { HarnessIcon } from "./harness-icons";
 import { EventTimeline } from "./EventTimeline";
-import { emptyEventHistory, EventPager, type EventPage } from "./event-pages";
+import { emptyEventHistory, EventPager, type EventPage, type EventHistory } from "./event-pages";
 import { WorkerNavigation } from "./WorkerNavigation";
 import { chooseWorkerSelection, mergeWorkerLists, mergeWorkerPages, workerPageCursor, type WorkerListCursor, type WorkerListPage } from "./worker-pages";
 import "./style.css";
@@ -21,6 +25,7 @@ interface PendingInput {
   expiresAt?: string;
 }
 interface Worker {
+  model?: string;
   id: string;
   name?: string;
   ownerRef?: string;
@@ -68,14 +73,14 @@ function label(status: string) {
 }
 
 function harnessName(runtime: string) {
-  return ({ pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DSH" } as Record<string, string>)[runtime] ?? runtime;
+  return ({ pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DeepSeek Harness" } as Record<string, string>)[runtime] ?? runtime;
 }
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
-function App() {
+function App({ demo = false }: { demo?: boolean }) {
   const [token, setToken] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -89,8 +94,66 @@ function App() {
   const [connecting, setConnecting] = useState(true);
   const [busy, setBusy] = useState(false);
   const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const [drawerWidth, setDrawerWidth] = useState(480);
+  const [drawerTop, setDrawerTop] = useState(119);
+  const [displayScope, setDisplayScope] = useState<"session" | "project">("session");
+  const [sceneDirection, setSceneDirection] = useState<-1 | 1>(-1);
+  const [canvasOwnerRef, setCanvasOwnerRef] = useState<string | undefined>();
+  const [projectCwd, setProjectCwd] = useState<string | undefined>();
+  const [drawerLeft, setDrawerLeft] = useState(280);
+  const [drawerMaximized, setDrawerMaximized] = useState(false);
+  const drawerElement = useRef<HTMLElement>(null);
+  const previousDrawerBounds = useRef<DOMRect | null>(null);
+  const resizeAnimation = useRef<Animation | null>(null);
+  const drawerTransitionId = useRef(0);
+  function toggleDrawerSize() {
+    if (document.startViewTransition && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const id = ++drawerTransitionId.current;
+      document.documentElement.classList.add("detail-resizing");
+      const transition = document.startViewTransition(() => flushSync(() => setDrawerMaximized(value => !value)));
+      void transition.ready.catch(() => undefined);
+      void transition.finished.finally(() => { if (drawerTransitionId.current === id) document.documentElement.classList.remove("detail-resizing"); }).catch(() => undefined);
+    } else {
+      previousDrawerBounds.current = drawerElement.current?.getBoundingClientRect() ?? null;
+      setDrawerMaximized(value => !value);
+    }
+  }
+  useLayoutEffect(() => {
+    const element = drawerElement.current;
+    const before = previousDrawerBounds.current;
+    previousDrawerBounds.current = null;
+    if (!element || !before || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    resizeAnimation.current?.cancel();
+    const after = element.getBoundingClientRect();
+    resizeAnimation.current = element.animate([
+      { transform: `translate(${before.left - after.left}px, ${before.top - after.top}px) scale(${before.width / after.width}, ${before.height / after.height})`, transformOrigin: "top left" },
+      { transform: "translate(0, 0) scale(1, 1)", transformOrigin: "top left" },
+    ], { duration: 280, easing: "cubic-bezier(.25,.1,.25,1)" });
+    return () => resizeAnimation.current?.cancel();
+  }, [drawerMaximized]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerMounted, setDrawerMounted] = useState(false);
+  useEffect(() => {
+    if (drawerOpen) { setDrawerMounted(true); return; }
+    const timer = window.setTimeout(() => setDrawerMounted(false), window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 220);
+    return () => window.clearTimeout(timer);
+  }, [drawerOpen]);
+  const view = "relations";
+
   const [panel, setPanel] = useState<"result" | "events">("result");
   const [navigationCollapsed, setNavigationCollapsed] = useState(() => window.matchMedia("(max-width: 620px)").matches);
+  useEffect(() => {
+    if (view !== "relations") return;
+    const toolbar = document.querySelector(".relations-toolbar");
+    if (!toolbar) return;
+    const update = () => { const bounds = toolbar.getBoundingClientRect(); setDrawerTop(bounds.bottom); setDrawerLeft(bounds.left); };
+    const observer = new ResizeObserver(update);
+    observer.observe(toolbar);
+    window.addEventListener("resize", update);
+    update();
+    return () => { observer.disconnect(); window.removeEventListener("resize", update); };
+  }, [view, sidebarWidth, navigationCollapsed, token]);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const eventPager = useRef<EventPager | null>(null);
   const listPages = useRef(1);
@@ -123,6 +186,19 @@ function App() {
   }
 
   async function request<T>(path: string, auth: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    if (demo) {
+      if (body !== undefined) throw new Error("界面预览不执行任务操作");
+      const demoWorkers = demoRelationWorkers.map((worker, index) => ({ ...worker, createdAt: new Date(Date.UTC(2026, 10, 14, 8, index)).toISOString(), updatedAt: "2026-11-14T09:00:00Z" }));
+      const worker = demoWorkers.find(item => item.id === decodeURIComponent(path.split("/")[2] ?? ""));
+      let value: unknown;
+      if (path.startsWith("/workers?")) value = { workers: demoWorkers, hasMore: false, nextCursor: null };
+      else if (path.endsWith("/status")) value = { worker };
+      else if (path.endsWith("/usage")) value = { available: true, usage: [] };
+      else if (path.endsWith("/prompt")) value = { text: worker?.promptPreview ?? "", available: true };
+      else if (path.includes("/events")) value = { events: [], nextSeq: 0, hasMore: false };
+      else throw new Error("未提供该演示数据");
+      return value as T;
+    }
     const response = await fetch(`/api${path}`, {
       method: body === undefined ? "GET" : "POST",
       credentials: "omit",
@@ -140,6 +216,7 @@ function App() {
     let disposed = false;
     const controller = new AbortController();
     async function connect() {
+      if (demo) { setToken("interface-preview"); setSession({ version: VERSION + " · 演示数据", ownerRef: null, preferredOwnerRef: "demo:project-workspace", expiresAt: "2099-01-01T00:00:00Z" }); setConnecting(false); return; }
       try {
         const params = new URLSearchParams(location.hash.slice(1));
         const launchToken = params.get("launch");
@@ -320,32 +397,52 @@ function App() {
   }, [token, detail?.id]);
 
   return <div className="app" data-theme={theme}>
-    <main className={`workspace${navigationCollapsed ? " navigation-collapsed" : ""}`}>
+    <main className={`workspace${navigationCollapsed ? " navigation-collapsed" : ""}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
       <aside className="workers" aria-label="Worker 列表">
         <div className="section-title">
-          <button className="navigation-toggle" onClick={() => setNavigationCollapsed(value => !value)} aria-label={navigationCollapsed ? "展开 Worker 列表" : "收起 Worker 列表"} title={navigationCollapsed ? "展开 Worker 列表" : "收起 Worker 列表"} aria-expanded={!navigationCollapsed} aria-controls="worker-navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg></button>
+          <button className="navigation-toggle" onClick={() => setNavigationCollapsed(value => !value)} aria-label={navigationCollapsed ? "展开 Worker 列表" : "收起 Worker 列表"} title={navigationCollapsed ? "展开 Worker 列表" : "收起 Worker 列表"} aria-expanded={!navigationCollapsed} aria-controls="worker-navigation"><UiIcon name="panelLeft" /></button>
           <h2 className="sidebar-copy" aria-hidden={navigationCollapsed}>Workers <span>{workers.length}{hasMoreWorkers ? "+" : ""}</span></h2>
         </div>
         <div id="worker-navigation" className="worker-scroll sidebar-copy" inert={navigationCollapsed} aria-hidden={navigationCollapsed}>
           <div className="navigation-inner">
-            {!token ? <p className="navigation-empty">连接后查看 Worker。</p> : workers.length === 0 && !preferredOwnerRef ? <div className="empty small"><h3>暂无 Worker</h3><p>由 Master 发起任务后，会出现在这里。</p></div> : <WorkerNavigation key={JSON.stringify([preferredOwnerRef ?? null])} workers={workers} selected={selected} onSelect={setSelected} preferredOwnerRef={preferredOwnerRef} />}
+            {!token ? <p className="navigation-empty">连接后查看 Worker。</p> : workers.length === 0 && !preferredOwnerRef ? <div className="empty small"><h3>暂无 Worker</h3><p>由 Master 发起任务后，会出现在这里。</p></div> : <><WorkerNavigation key={JSON.stringify([preferredOwnerRef ?? null])} workers={workers} selected={selected} activeProjectCwd={projectCwd ?? workers.find(worker => worker.ownerRef === preferredOwnerRef)?.cwd} activeOwnerRef={canvasOwnerRef ?? preferredOwnerRef} onProjectSelect={(cwd, direction) => { setDisplayScope("project"); setSceneDirection(direction); setProjectCwd(cwd); setCanvasOwnerRef(undefined); setDrawerOpen(false); }} onSessionSelect={(cwd, owner, direction) => { setDisplayScope("session"); setSceneDirection(direction); setProjectCwd(cwd); setCanvasOwnerRef(owner ?? ""); setDrawerOpen(false); }} onSelect={id => { setProjectCwd(workers.find(worker => worker.id === id)?.cwd); setCanvasOwnerRef(workers.find(worker => worker.id === id)?.ownerRef ?? ""); setSelected(id); setDrawerOpen(true); }} preferredOwnerRef={preferredOwnerRef} /></>}
             {token && hasMoreWorkers && <button className="load-more" disabled={busy} onClick={() => { void olderWorkers(); }}>读取更早的 Worker</button>}
           </div>
         </div>
         <header className="page-heading" aria-label="Harness Supervisor">
           <div className="brand"><span className="brand-mark" aria-hidden="true">HS</span><h1 className="sidebar-copy" aria-hidden={navigationCollapsed}>Harness Supervisor</h1></div>
-          <div className="header-actions"><span className={`connection sidebar-copy ${token ? "connected" : ""}`} aria-hidden={navigationCollapsed}><span aria-hidden="true" />{connecting ? "连接中" : token ? "本机已连接" : "未连接"}</span><button className="theme-toggle" onClick={toggleTheme} aria-label={theme === "light" ? "切换深色外观" : "切换浅色外观"}><span className="theme-label">{theme === "light" ? "深色" : "浅色"}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{theme === "dark" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></> : <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />}</svg></button></div>
+          <div className="header-actions"><span className={`connection sidebar-copy ${token ? "connected" : ""}`} aria-hidden={navigationCollapsed}><span aria-hidden="true" />{connecting ? "连接中" : token ? "本机已连接" : "未连接"}</span><button className="theme-toggle" onClick={toggleTheme} aria-label={theme === "light" ? "切换深色外观" : "切换浅色外观"}><span className="theme-label">{theme === "light" ? "深色" : "浅色"}</span><UiIcon name={theme === "dark" ? "sun" : "moon"} /></button></div>
           <div className="scope sidebar-copy" inert={navigationCollapsed} aria-hidden={navigationCollapsed}>
             <strong>{session ? session.ownerRef ? "当前会话 Worker" : "本机全部 Worker" : "等待认证"}</strong>
             {session?.ownerRef ? <span className="scope-reference" title={session.ownerRef}>{session.ownerRef}</span> : preferredOwnerRef && <span title={preferredOwnerRef}>默认展开当前会话</span>}
             {session && <small>v{session.version} · {session.ownerRef ? "仅此会话" : "全局管理"}</small>}
           </div>
         </header>
+      {!navigationCollapsed && <ResizeHandle label="调整会话栏宽度" width={sidebarWidth} onWidth={setSidebarWidth} max={520} />}
       </aside>
-      <section className="detail" aria-label="Worker 详情">
-        {error && <div className="notice error" role="alert">{error}</div>}
+      <div className={`workspace-content${drawerOpen && view === "relations" ? " has-worker-drawer" : ""}`} style={{ "--drawer-width": `${drawerWidth}px` } as React.CSSProperties}>
+      {error && <div className="notice error workspace-error" role="alert">{error}</div>}
+      {token ? <div><WorkerRelations workers={workers} onGroupSelect={owner => { setCanvasOwnerRef(owner); setDisplayScope("session"); setDrawerOpen(false); }} displayScope={displayScope} onScopeChange={value => { setDisplayScope(value); setDrawerOpen(false); }} transitionDirection={sceneDirection} selectedWorkerId={drawerOpen ? selected : null} selectedOwnerRef={canvasOwnerRef} projectCwd={projectCwd} onProjectChange={cwd => { setProjectCwd(cwd); setDrawerOpen(false); }} preferredOwnerRef={preferredOwnerRef} onOpen={id => { setSelected(id); setDrawerOpen(true); }} demo={demo} /></div> : <section className="detail" aria-label="Worker 详情">
         {!token ? <div className="empty welcome"><span className="empty-icon" aria-hidden="true">◇</span><h2>{connecting ? "正在连接 Supervisor" : "从可信入口连接"}</h2><p>通过命令行 <code>harness-sup ui</code> 或 DSH 的 Harness Supervisor 入口打开。连接仅限本机。</p><p className="muted">服务重启后需要重新打开入口。关闭页面不会取消 Worker。</p></div> : !detail ? <div className="empty"><h2>{selected ? "读取 Worker…" : preferredOwnerRef ? "当前会话暂无 Worker" : "选择一个 Worker"}</h2><p>{preferredOwnerRef && !selected ? "可以展开左侧其它会话，查看已有 Worker。" : "查看运行状态、结果与需要你处理的输入。"}</p></div> : <>
-          <div className="detail-overview">
+          <WorkerDetails key={detail.id} detail={detail} usage={usage} usageAvailable={usageAvailable} eventHistory={eventHistory} loadPrompt={loadPrompt} act={act} pageEvents={pageEvents} busy={busy} readOnly={demo} />
+        </>}
+      </section>}
+      {drawerMounted && view === "relations" && <aside ref={drawerElement} className={`workspace-drawer${drawerOpen ? " is-open" : " is-closing"}${drawerMaximized ? " is-maximized" : ""}`} inert={!drawerOpen} aria-hidden={!drawerOpen} style={{ top: drawerTop, ...(drawerMaximized ? { left: drawerLeft, width: `calc(100vw - ${drawerLeft}px)` } : {}) }} aria-label="Worker 详情侧栏">{!drawerMaximized && <ResizeHandle label="调整详情栏宽度" width={drawerWidth} onWidth={setDrawerWidth} direction={-1} min={320} max={800} />}<div className="drawer-title"><span>Worker 详情</span><div className="drawer-actions"><button className="drawer-maximize" aria-label={drawerMaximized ? "还原详情" : "最大化详情"} title={drawerMaximized ? "还原详情" : "最大化详情"} aria-pressed={drawerMaximized} onClick={toggleDrawerSize}><UiIcon name={drawerMaximized ? "minimize" : "maximize"} /></button><button aria-label="关闭详情侧栏" onClick={() => setDrawerOpen(false)}><UiIcon name="close" /></button></div></div><div className="drawer-scroll">{detail ? <WorkerDetails key={detail.id} detail={detail} usage={usage} usageAvailable={usageAvailable} eventHistory={eventHistory} loadPrompt={loadPrompt} act={act} pageEvents={pageEvents} busy={busy} readOnly={demo} /> : <p>读取 Worker…</p>}</div></aside>}
+      </div>
+    </main>
+  </div>;
+}
+
+function WorkerDetails({ detail, usage, usageAvailable, eventHistory, loadPrompt, act, pageEvents, busy, readOnly = false }: {
+  detail: Worker; usage: Usage[]; usageAvailable: boolean; eventHistory: EventHistory;
+  loadPrompt: (signal: AbortSignal) => Promise<PromptDetail>;
+  act: (action: "answer" | "cancel", body: unknown) => Promise<void>;
+  pageEvents: (direction: "previous" | "next" | "refresh") => void | Promise<void>;
+  busy: boolean; readOnly?: boolean;
+}) {
+  const [panel, setPanel] = useState<"result" | "events">("result");
+  const [cancelConfirm, setCancelConfirm] = useState(false);
+  return <>          <div className="detail-overview">
             <div className="detail-heading"><div className="worker-identity"><div className="eyebrow harness-caption"><HarnessIcon runtime={detail.runtime} />{harnessName(detail.runtime)}<span aria-hidden="true"> / </span>{detail.persistence === "persistent" ? "持续会话" : "单次任务"}</div><h2>{detail.name ?? detail.id}</h2></div><div className="detail-subline"><span className={`badge ${detail.status}`}><span className={`status-dot ${detail.status}`} aria-hidden="true" />{label(detail.status)}</span><time>{new Date(detail.updatedAt).toLocaleString()}</time></div></div>
             <div className="task-context">
               <TaskPrompt key={`${detail.id}:${detail.startedAt ?? ""}:${detail.promptPreview}`} preview={detail.promptPreview} load={loadPrompt} />
@@ -365,18 +462,14 @@ function App() {
             <button id="tab-events" role="tab" aria-controls="panel-events" aria-selected={panel === "events"} tabIndex={panel === "events" ? 0 : -1} onClick={() => setPanel("events")}>轨迹</button>
           </div>
           {panel === "result" ? <div className="result-panel" id="panel-result" role="tabpanel" aria-labelledby="tab-result" tabIndex={0}>{detail.result ? <><Markdown text={detail.result.text} />{detail.result.truncated && <p className="muted">结果已被存储上限截断，完整内容请查阅原生 Harness Session。</p>}</> : <div className="empty small"><h3>{ACTIVE.has(detail.status) ? "任务正在执行" : detail.status === "cancelled" ? "任务已取消" : "暂无最终结果"}</h3><p>{ACTIVE.has(detail.status) ? "最终答复会显示在这里。运行过程可在轨迹中查看。" : "可在轨迹中查看已记录的执行过程。"}</p></div>}{detail.error && detail.status !== "cancelled" && <p className="notice error" role="alert">{detail.error}</p>}</div> : <div className="events-panel" id="panel-events" role="tabpanel" aria-labelledby="tab-events" tabIndex={0}><EventTimeline key={detail.id} history={eventHistory} runtime={detail.runtime} onPage={direction => { void pageEvents(direction); }} /></div>}
-          {ACTIVE.has(detail.status) && <div className="danger-zone">{cancelConfirm ? <><p>取消此 Worker 的当前任务？此操作会请求终止执行。</p><div className="actions"><button className="danger" disabled={busy} onClick={() => { void act("cancel", {}); }}>{busy ? "正在处理…" : "确认取消任务"}</button><button disabled={busy} onClick={() => setCancelConfirm(false)}>继续运行</button></div></> : <button className="subtle-danger" disabled={busy} onClick={() => setCancelConfirm(true)}>取消当前任务</button>}</div>}
-        </>}
-      </section>
-    </main>
-  </div>;
+          {!readOnly && ACTIVE.has(detail.status) && <div className="danger-zone">{cancelConfirm ? <><p>取消此 Worker 的当前任务？此操作会请求终止执行。</p><div className="actions"><button className="danger" disabled={busy} onClick={() => { void act("cancel", {}); }}>{busy ? "正在处理…" : "确认取消任务"}</button><button disabled={busy} onClick={() => setCancelConfirm(false)}>继续运行</button></div></> : <button className="subtle-danger" disabled={busy} onClick={() => setCancelConfirm(true)}>取消当前任务</button>}</div>}</>;
 }
 
 function RuntimeInformation({ worker }: { worker: Worker }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   return <section className={`metadata${open ? " is-open" : ""}`}>
-    <button className="metadata-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(value => !value)}>运行信息<svg className="metadata-chevron" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m4 6 4 4 4-4" /></svg></button>
+    <button className="metadata-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(value => !value)}>运行信息<UiIcon name="chevronDown" size={14} className="metadata-chevron" /></button>
     <div className="metadata-content" id={panelId} inert={!open} aria-hidden={!open}><div className="metadata-inner">
       <dl><div><dt>Worker ID</dt><dd>{worker.id}</dd></div><div><dt>工作目录</dt><dd>{worker.cwd}</dd></div><div><dt>生命周期</dt><dd>{worker.lifecycle}</dd></div>{worker.statusReason && <div><dt>状态说明</dt><dd>{worker.statusReason}</dd></div>}</dl>
     </div></div>
@@ -402,4 +495,13 @@ function UsageDisplay({ usage, available }: { usage: Usage[]; available: boolean
   return <section className="usage" aria-label="Worker 用量"><div><small>输入 Token</small><strong>{total("inputTokens")}</strong></div><div><small>输出 Token</small><strong>{total("outputTokens")}</strong></div><div><small>缓存读取</small><strong>{total("cacheReadTokens")}</strong></div><p>{!available ? "用量服务不可用，暂显示 0" : usage.length ? `${usage.length} 条 Worker 用量记录 · ${usage.some(record => record.attribution === "session_level") ? "含会话级数据" : "按运行时上报"}` : "尚未上报用量，暂显示 0"}</p></section>;
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+function RelationsPreview() {
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [previewWorker, setPreviewWorker] = useState<string | null>(null);
+  const demoWorker = demoRelationWorkers.find(worker => worker.id === previewWorker);
+  const demoDetail = demoWorker ? { ...demoWorker, createdAt: "2026-11-14T00:00:00Z", updatedAt: "2026-11-14T00:00:00Z" } as Worker : null;
+  return <div className="app" data-theme={theme}><div className="relations-preview-bar"><div className="brand"><span className="brand-mark">HS</span><h1>Harness Supervisor</h1></div><button onClick={() => setTheme(value => value === "dark" ? "light" : "dark")}>{theme === "dark" ? "切换浅色" : "切换深色"}</button></div>{demoDetail ? <><button className="relations-back" onClick={() => setPreviewWorker(null)}>← 返回关系图 · 演示数据</button><section className="detail" aria-label="Worker 详情"><WorkerDetails key={demoDetail.id} detail={demoDetail} usage={[]} usageAvailable={true} eventHistory={{ ...emptyEventHistory(), loaded: true }} loadPrompt={async () => ({ text: demoDetail.promptPreview, available: true })} act={async () => {}} pageEvents={() => {}} busy={false} readOnly /></section></> : <WorkerRelations workers={demoRelationWorkers} preferredOwnerRef="demo:project-workspace" onOpen={setPreviewWorker} demo />}</div>;
+}
+const developmentPreview = (import.meta as ImportMeta & { env: { DEV: boolean } }).env.DEV;
+const previewMode = developmentPreview && location.pathname === "/" ? new URLSearchParams(location.search).get("preview") : null;
+createRoot(document.getElementById("root")!).render(previewMode === "relations" ? <RelationsPreview /> : <App demo={previewMode === "workspace"} />);

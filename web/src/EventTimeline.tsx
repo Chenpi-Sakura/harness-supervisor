@@ -1,3 +1,4 @@
+import { UiIcon } from "./UiIcon";
 import React, { useMemo, useState } from "react";
 import { Markdown } from "./Markdown";
 import { buildTimelineEntries, eventDataJson, presentTimelineEntry, timelineEntrySearchText, type EventCategory, type TimelineEntry } from "./event-presentation";
@@ -29,7 +30,7 @@ function TimelineRow({ entry }: { entry: TimelineEntry }) {
     if (!event.currentTarget.open) setRawOpen(false);
   }}>
     <summary>
-      <svg className="trace-chevron" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m6 3 5 5-5 5" /></svg>
+      <UiIcon name="chevronRight" size={16} className="trace-chevron" />
       <span className="trace-seq" title={seq}>{seq}</span>
       <span className="trace-category">{CATEGORY_NAMES[presentation.category]}</span>
       <strong className="trace-label">{presentation.label}{merged ? ` · ${entry.events.length} 片段` : ""}</strong>
@@ -65,7 +66,7 @@ export function EventTimeline({ history, runtime, onPage }: {
     {history.error && <div className="notice error" role="alert">轨迹读取失败：{history.error} <button disabled={loading} onClick={() => onPage("refresh")}>重试读取轨迹</button></div>}
     <div className="trace-toolbar">
       <p className="trace-count" aria-live="polite">第 {page + 1} 页 · {events.length} 条原始事件 · {rows.length} 个展示条目{firstSeq !== undefined ? ` · #${firstSeq}–${lastSeq}` : ""}{normalizedQuery ? ` · 匹配 ${visible.length} 项` : ""}{loading ? " · 读取中…" : ""}</p>
-      <label className="trace-search"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索本页完整已记录文本" aria-label="搜索本页轨迹" /></label>
+      <label className="trace-search"><UiIcon name="search" /><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索本页完整已记录文本" aria-label="搜索本页轨迹" /></label>
     </div>
     <div className="trace-history" aria-label="轨迹历史分页">
       <button disabled={!hasPrevious || loading} onClick={() => onPage("previous")}>上一页轨迹</button>

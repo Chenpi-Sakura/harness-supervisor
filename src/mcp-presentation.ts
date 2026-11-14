@@ -1,3 +1,4 @@
+import { mergeOutputEvents } from "./output-groups.js";
 /**
  * MCP presentation layer.
  *
@@ -333,7 +334,7 @@ export function presentWait(
   if (mode === "development") {
     return {
       worker: presentWorkerDevelopment(result.worker),
-      events: compacted.events,
+      events: mergeOutputEvents(compacted.events, result.worker.runtime),
       eventsOmitted: compacted.eventsOmitted,
       nextSeq: result.nextSeq,
       hasMore: result.hasMore,
@@ -376,7 +377,7 @@ export function presentWait(
 export function presentEventsDevelopment(result: ReadEventsResult): unknown {
   return {
     worker: presentWorkerDevelopment(result.worker),
-    events: result.events,
+    events: mergeOutputEvents(result.events, result.worker.runtime),
     nextSeq: result.nextSeq,
     hasMore: result.hasMore,
   };

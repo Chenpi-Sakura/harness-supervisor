@@ -4,6 +4,7 @@ export { PiAdapter } from "./adapters/pi/adapter.js";
 export { QoderAdapter } from "./adapters/qoder/adapter.js";
 export { McodeAdapter } from "./adapters/mcode/adapter.js";
 export { DshAdapter } from "./adapters/dsh/adapter.js";
+export { NativeAcpAdapter } from "./adapters/native-acp/adapter.js";
 export { SupervisorClient } from "./ipc/client.js";
 export { runDaemon } from "./daemon.js";
 export { WebUiServer } from "./web-ui.js";

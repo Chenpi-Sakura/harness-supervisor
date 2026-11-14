@@ -2,7 +2,7 @@ const React = require("react");
 const h = React.createElement;
 const PREFIX = "harness-supervisor/";
 
-exports.inject = ["connection", "slots", "sidebarRight", "commandUi", "uiSession"];
+exports.inject = ["connection", "slots", "sidebarRight", "commandUi", "uiSession", "configForms"];
 
 exports.apply = function apply(ctx) {
   let disposed = false;
@@ -117,60 +117,62 @@ exports.apply = function apply(ctx) {
   }, "HS right sidebar entry");
 
   function Settings() {
+    const form = React.useMemo(() => ctx.configForms.get("harness-supervisor"), []);
+    const snapshot = React.useSyncExternalStore(form.subscribe, form.getSnapshot, form.getSnapshot);
+    const [draft, setDraft] = React.useState(null);
     const [data, setData] = React.useState();
     const [error, setError] = React.useState("");
     const [notice, setNotice] = React.useState("");
     const [busy, setBusy] = React.useState(false);
-    const binding = React.useSyncExternalStore(ctx.uiSession.current.subscribe, ctx.uiSession.current.getSnapshot);
-    const sessionId = binding.key;
     const active = React.useRef(true);
-    React.useEffect(() => {
-      active.current = true;
-      return () => { active.current = false; };
-    }, []);
-    const run = async (work) => {
+    React.useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+    const run = async work => {
       if (busy) return;
       setBusy(true); setError(""); setNotice("");
-      try { await work(); }
-      catch (failure) { if (active.current) setError(failure.message); }
+      try { await work(); } catch (failure) { if (active.current) setError(failure.message); }
       finally { if (active.current) setBusy(false); }
     };
     const refresh = async () => { const next = await call("status"); if (active.current) setData(next); };
-    React.useEffect(() => { void run(refresh); }, []);
-    const intent = data?.update?.intent;
-    const draining = intent?.phase === "draining";
-    const phaseText = {
-      draining: "正在等待已有任务结束", switching: "正在切换配套核心", verifying: "正在验证新核心",
-      complete: "配套核心已应用", cancelled: "此次更新已取消", failed: "更新未完成，请查看诊断详情",
-      recovery_required: "需要人工恢复，请查看诊断详情",
-    }[intent?.phase] || (data?.update?.managed ? "核心已由 HS 托管" : "当前实例尚未托管");
-    const remaining = data?.update?.drain?.workerIds?.length || 0;
-    const button = (label, onClick, disabled = false) => h("button", {
-      type: "button", disabled: busy || disabled, onClick: () => void run(onClick),
-      style: { border: "1px solid var(--dsw-alias-border-l2, #8886)", borderRadius: 7, padding: "7px 12px", color: "inherit", background: "var(--dsw-alias-bg-layer-1, transparent)", cursor: "pointer" },
-    }, label);
-    return h("section", { style: { padding: 20, width: "100%", lineHeight: 1.6 } },
-      h("div", { style: { maxWidth: 780 } }, h(Introduction),
-        h("p", null, "人工面板可查看全部 Worker，默认展开当前对话分组；没有当前对话时也可查看。")),
-      h("div", { style: { width: "100%", height: "70vh", minHeight: 520, margin: "20px 0 28px" } },
-        h(SessionView, { key: sessionId ?? "global", sessionId, surface: "settings" })),
-      h("section", { style: { maxWidth: 780 } },
-      h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
-        button("在右侧栏打开全局面板", () => open(sessionId), !sessionId),
+    const value = draft?.value ?? snapshot.value ?? { coreSource: "bundled", corePath: "" };
+    const edit = (key, selected) => setDraft(previous => ({
+      revision: previous?.revision ?? snapshot.revision,
+      value: { ...(previous?.value ?? snapshot.value ?? value), [key]: selected },
+    }));
+    const disabled = busy || snapshot.status !== "ready" || !snapshot.writable;
+    const inputStyle = { boxSizing: "border-box", width: "100%", border: "1px solid var(--dsw-alias-border-l2, #8886)", borderRadius: 8, padding: "9px 12px", color: "inherit", background: "var(--dsw-alias-bg-layer-1, #222)", font: "inherit" };
+    const button = (text, action, unavailable = false) => h("button", { type: "button", disabled: busy || unavailable,
+      onClick: () => void run(action), style: { ...inputStyle, width: "auto", cursor: "pointer" } }, text);
+    return h("section", { style: { padding: 24, boxSizing: "border-box", width: "100%", maxWidth: 780, lineHeight: 1.6 } },
+      h("h2", { style: { marginTop: 0 } }, "HS 核心来源"),
+      h("label", { htmlFor: "hs-core-source", style: { display: "block", marginBottom: 8 } }, "使用哪个 HS 核心"),
+      h("select", { id: "hs-core-source", value: value.coreSource, disabled, style: inputStyle, onChange: event => edit("coreSource", event.target.value) },
+        h("option", { value: "bundled" }, "插件内置 HS"), h("option", { value: "npm" }, "全局 npm 安装的 HS"), h("option", { value: "custom" }, "自定义安装目录")),
+      h("p", { style: { opacity: .7, fontSize: 13 } }, value.coreSource === "npm" ? "自动查找 npm install -g harness-supervisor 的安装位置。" : value.coreSource === "custom" ? "选择包含 package.json 和已构建 dist/ 的 HS 安装目录。" : "使用插件携带的 HS 核心，无需额外安装。"),
+      value.coreSource === "custom" && h("div", { style: { margin: "16px 0" } },
+        h("label", { htmlFor: "hs-core-path", style: { display: "block", marginBottom: 8 } }, "HS 安装目录"),
+        h("input", { id: "hs-core-path", value: value.corePath || "", disabled, style: inputStyle, placeholder: "HS 安装目录的绝对路径", onChange: event => edit("corePath", event.target.value) })),
+      h("div", { style: { display: "flex", gap: 10, margin: "20px 0", flexWrap: "wrap" } },
+        button("保存", async () => {
+          if (!draft) return;
+          if (value.coreSource === "custom" && !value.corePath?.trim()) throw new Error("请填写自定义 HS 安装目录");
+          const accepted = await form.mutate([
+            { op: "set", path: ["coreSource"], value: value.coreSource },
+            { op: "set", path: ["corePath"], value: value.corePath || "" },
+          ], draft.revision);
+          if (!accepted) {
+            if (active.current) setDraft(previous => previous && ({ ...previous, revision: form.getSnapshot().revision }));
+            throw new Error("保存未被接受，草稿已保留。配置可能已被其他窗口修改，请核对后再次保存。");
+          }
+          if (active.current) { setDraft(null); setNotice("来源已保存。正在连接所选 HS；可刷新状态确认，原有 Worker 不会停止。"); }
+        }, disabled || !draft),
         button("刷新状态", refresh)),
-      h("h3", null, data?.externalCore ? "独立 HS 核心" : "配套 HS 核心"),
-      data?.externalCore && h("p", null, "当前使用独立 HS，由其自身安装方式管理更新。"),
-      h("p", null, `插件 ${data?.pluginVersion || "正在读取"} · 配套核心 ${data?.pairedCoreVersion || "正在读取"} · 运行核心 ${data?.supervisor?.version || "正在读取"}`),
-      h("p", null, "等待已有任务结束后切换，期间仍可审批和取消任务。"),
-      h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
-        button("应用配套 HS 核心", async () => { const result = await call("apply-core"); if (active.current) setNotice(result.alreadyActive ? "当前已是配套 HS 核心。" : "已登记更新；排空完成后由 HS 自动切换。"); await refresh(); }, data?.externalCore || draining || ["switching", "verifying"].includes(intent?.phase)),
-        !data?.externalCore && draining && button("取消此次更新", async () => { await call("cancel-update", { intentId: intent.id }); await refresh(); if (active.current) setNotice("已取消此次更新。"); })),
+      snapshot.status === "unavailable" && h("p", { role: "alert" }, "宿主尚未提供 HS 配置表单，请确认已更新插件并重新启用。"),
       notice && h("p", { role: "status" }, notice),
-      error && h("p", { role: "alert", style: { color: "var(--dsw-alias-state-error-primary, #c33)", overflowWrap: "anywhere" } }, error),
-      data?.update && h("p", { role: "status" }, phaseText, draining ? `，剩余 ${remaining} 个 Worker。` : "。"),
-      data && h("details", null, h("summary", null, "诊断详情"), h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12 } }, JSON.stringify({ update: data.update, sessions: data.sessions }, null, 2))),
-      h("p", { style: { fontSize: 12, opacity: 0.75 } }, "顶部标签、右侧栏入口、设置页和 /hs 均为人工全局视图，默认展开当前对话分组。核心重启后重新打开面板。")));
+      error && h("p", { role: "alert", style: { color: "var(--dsw-alias-state-error-primary, #d66)", overflowWrap: "anywhere" } }, error),
+      h("details", { style: { marginTop: 24 } }, h("summary", { style: { cursor: "pointer" } }, "诊断详情"),
+        h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12 } }, JSON.stringify(data ?? { state: "尚未读取运行状态" }, null, 2))));
   }
+
   ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({
     name: "settings.section", id: "harness-supervisor", order: 80,
     label: () => "Harness Supervisor",

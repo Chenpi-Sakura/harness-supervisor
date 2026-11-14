@@ -60,7 +60,7 @@ function mountComponent(Component, props, React) {
     return cells[index];
   };
   const render = () => {
-    Object.assign(React, { useState, useEffect, useRef });
+    Object.assign(React, { useState, useEffect, useRef, useMemo: fn => fn() });
     while (dirty) {
       dirty = false; cursor = 0; tree = Component(props);
       effects.splice(0).forEach((run) => run());
@@ -125,23 +125,24 @@ test("conversation tab captures the preferred session and aborts stale replies w
   assert.equal(calls[2].args[3].aborted, true);
 });
 
-test("right sidebar entry and embedded settings open the human global UI with separate leases", async () => {
-  const slots = [], calls = [], cleanups = [], tabTypes = [], disposedTypes = [];
+test("right sidebar retains its lease while settings edits core source without embedding WebUI", async () => {
+  const slots = [], calls = [], cleanups = [], tabTypes = [], disposedTypes = [], saved = [];
+  const form = { subscribe: () => () => {}, getSnapshot: () => ({ status: "ready", writable: true, revision: 7, value: { coreSource: "bundled", corePath: "" } }), mutate: async (ops, revision) => { saved.push({ ops, revision }); return true; } };
   const tabs = { register: (definition) => { tabTypes.push(definition); return () => disposedTypes.push(definition.id); } };
   let binding = {};
   const current = { subscribe: () => () => {}, getSnapshot: () => binding };
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children }),
     useSyncExternalStore: (subscribe, getSnapshot) => {
-      assert.equal(subscribe, current.subscribe);
-      assert.equal(getSnapshot, current.getSnapshot);
+      assert.ok(subscribe === current.subscribe || subscribe === form.subscribe);
+      assert.ok(getSnapshot === current.getSnapshot || getSnapshot === form.getSnapshot);
       return getSnapshot();
     },
   };
   const ctx = {
     connection: { rpc: { call: (...args) => new Promise((resolve) => calls.push({ args, resolve })) } },
     commandUi: { register: () => () => {} }, sidebarRight: { openTab() { assert.fail("right pane must not open the browser sidebar"); } },
-    uiSession: { current },
+    uiSession: { current }, configForms: { get: id => { assert.equal(id, "harness-supervisor"); return form; } },
     get: (name) => (name === "sidebarRightTabs" ? tabs : undefined),
     slots: {
       inject: (_, fn) => {
@@ -217,32 +218,22 @@ test("right sidebar entry and embedded settings open the human global UI with se
   assert.equal(calls[2].args[3].aborted, true);
 
   const settingsPanel = mountComponent(settings.Component, {}, React);
-  const settingsTree = settingsPanel.render();
-  assert.equal(settingsTree.props.style.maxWidth, undefined, "the embedded WebUI uses the settings area's full width");
-  const embedded = descendants(settingsTree).find(({ props }) => props?.surface === "settings");
-  assert.equal(embedded.props.sessionId, binding.key);
-  const viewport = descendants(settingsTree).find(({ children }) => children?.includes(embedded));
-  assert.equal(viewport.props.style.height, "70vh");
-  assert.equal(viewport.props.style.minHeight, 520);
-  const embeddedPanel = mountComponent(embedded.type, embedded.props, React);
-  const settingsCall = calls.find(({ args }) => args[1] === "harness-supervisor/open-ui" && args[2].viewKey.endsWith(":settings"));
-  assert.equal(settingsCall.args[2].sessionId, binding.key);
-  assert.equal(settingsCall.args[2].viewGeneration, 1);
-  assert.equal(new Set([calls[1].args[2].viewKey, calls[2].args[2].viewKey, settingsCall.args[2].viewKey]).size, 3, "each human surface replaces only its own lease");
-  settingsCall.resolve({ ok: true, value: { url: "http://127.0.0.1:9999/view/settings/#launch=settings" } });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(descendants(embeddedPanel.render()).find(({ type }) => type === "iframe").props.title, "Harness Supervisor · 全局 Worker");
-  embeddedPanel.unmount();
-  binding = {};
-  const unboundEmbedded = descendants(settingsPanel.rerender()).find(({ props }) => props?.surface === "settings");
-  assert.notEqual(unboundEmbedded.props.key, embedded.props.key, "changing the preferred conversation rebuilds the settings frame");
-  const unboundPanel = mountComponent(unboundEmbedded.type, unboundEmbedded.props, React);
-  const unboundCall = calls.at(-1);
-  assert.equal(unboundCall.args[1], "harness-supervisor/open-ui");
-  assert.equal(Object.hasOwn(unboundCall.args[2], "sessionId"), false);
-  assert.equal(unboundCall.args[2].viewKey, settingsCall.args[2].viewKey);
-  assert.equal(unboundCall.args[2].viewGeneration, 2, "settings keeps its counter when the preferred session becomes absent");
-  unboundPanel.unmount();
+  let settingsTree = settingsPanel.render();
+  assert.equal(descendants(settingsTree).some(({ type, props }) => type === "iframe" || props?.surface === "settings"), false);
+  assert.deepEqual(descendants(settingsTree).filter(({ type }) => type === "option").map(node => node.props.value), ["bundled", "npm", "custom"]);
+  const source = descendants(settingsTree).find(({ type }) => type === "select");
+  source.props.onChange({ target: { value: "custom" } });
+  settingsTree = settingsPanel.render();
+  descendants(settingsTree).find(({ type }) => type === "input").props.onChange({ target: { value: "D:/custom/hs" } });
+  settingsTree = settingsPanel.render();
+  descendants(settingsTree).find(({ type, children }) => type === "button" && children.includes("保存")).props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(saved[0].revision, 7);
+  assert.deepEqual(JSON.parse(JSON.stringify(saved[0].ops)), [
+    { op: "set", path: ["coreSource"], value: "custom" }, { op: "set", path: ["corePath"], value: "D:/custom/hs" },
+  ]);
+  assert.equal(calls.filter(({ args }) => args[1] === "harness-supervisor/open-ui").length, 3, "settings never creates a WebUI lease");
+
   settingsPanel.unmount();
   cleanups.forEach((cleanup) => cleanup());
   assert.deepEqual(disposedTypes, ["harness-supervisor"], "plugin unload disposes the right tab type");

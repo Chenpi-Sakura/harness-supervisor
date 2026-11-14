@@ -66,7 +66,7 @@ Daemon:
 
 Workers:
   spawn --prompt <text> [--cwd <dir>] [--name <n>] [--model <m>] [--provider <p>]
-        [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder|mcode|dsh]
+        [--tools <a,b>] [--thinking <level>] [--max-duration-ms <n>] [--runtime pi|qoder|mcode|dsh|codex|claude]
         [--extra-args '["--no-extensions"]'] [--request-id <key>] [--wait] [--json]
         [--persistence persistent|oneshot] [--task <taskId>]
         [--notify-thread <verified-thread-id> | --notify-none]

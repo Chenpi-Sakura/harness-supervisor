@@ -426,7 +426,7 @@ server.registerTool(
         .min(1)
         .optional()
         .describe(
-          "Runtime adapter name (default: pi; qoder uses the Qoder CLI; mcode uses MiniMax Code over ACP; dsh uses DeepSeek Harness over ACP)",
+          "Runtime adapter name (default: pi; qoder uses the Qoder CLI; mcode uses MiniMax Code over ACP; dsh uses DeepSeek Harness over ACP; codex and claude use externally installed ACP adapters)",
         ),
       name: z.string().min(1).max(200).optional().describe("Human-readable worker label"),
       persistence: z

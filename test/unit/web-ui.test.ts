@@ -55,8 +55,16 @@ test("WebUI defaults to loopback port 61114", async (t) => {
   const ui = new WebUiServer({ supervisor: fakeSupervisor().supervisor, staticDir: path.resolve("web") });
   t.after(() => ui.stop());
   assert.equal(ui.status().running, false);
-  const launch = await ui.launch();
-  assert.equal(launch.origin, "http://127.0.0.1:61114");
+  try {
+    const launch = await ui.launch();
+    assert.equal(launch.origin, "http://127.0.0.1:61114");
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { address?: string; port?: number };
+    assert.equal(failure.code, "EADDRINUSE");
+    assert.equal(failure.address, "127.0.0.1");
+    assert.equal(failure.port, 61114);
+    t.diagnostic("Existing local UI owns 61114; verified the requested address without stopping it");
+  }
 });
 
 test("enabling the listener creates no browser credentials and remains stoppable", async (t) => {

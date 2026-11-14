@@ -15,7 +15,7 @@ export const relationStatus: Record<string, string> = {
   running: "正在工作", starting: "正在启动", awaiting_input: "等待输入", completed: "已完成",
   cancelled: "已取消", failed: "执行失败", crashed: "异常终止", interrupted: "已中断", orphaned: "失去连接",
 };
-const runtimeNames: Record<string, string> = { pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DeepSeek Harness" };
+const runtimeNames: Record<string, string> = { pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DeepSeek Harness", codex: "Codex", claude: "Claude Code" };
 const active = new Set(["running", "starting", "awaiting_input"]);
 
 function Frame({ status, persistent }: { status: string; persistent: boolean }) {

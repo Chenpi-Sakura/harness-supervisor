@@ -8,18 +8,19 @@ import { AgentBridge, createRpcHandler, createFetchRoutes } from "./bridge.js";
 import { resolveNodeExecutable } from "./node-runtime.js";
 import { resolvePluginState } from "./state-dir.js";
 import { findGlobalCore, validateCoreRoot } from "./core-source.js";
+import { createSourceBinding } from "./source-binding.js";
 
 export const name = "harness-supervisor";
 export const inject = ["agents", "connection", "webServer"];
 export const Config = z.object({
-  coreSource: z.union([z.const("bundled").description("插件内置 HS"), z.const("npm").description("全局 npm 安装的 HS"), z.const("custom").description("自定义安装目录")]).default("bundled").description("HS 核心来源"),
-  corePath: z.string().default("").description("自定义 HS 安装目录（仅自定义模式需要）"),
+  coreSource: z.union([z.const("bundled").description("插件内置 HS"), z.const("npm").description("全局 npm 安装的 HS"), z.const("custom").description("自定义安装目录")]).default("bundled").description("HS 核心来源").volatile(),
+  corePath: z.string().default("").description("自定义 HS 安装目录（仅自定义模式需要）").volatile(),
   stateDir: z.string().default(""),
   nodeExecutable: z.string().default(""),
 });
 
 const coreRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve("harness-supervisor"))), "../..");
-const EXPECTED_CORE_VERSION = "0.11.1";
+const EXPECTED_CORE_VERSION = "0.12.0";
 
 export function assertCapabilities(info) {
   const required = ["ownerScope", "webUi", "managedRuntime", "drain"];
@@ -29,6 +30,24 @@ export function assertCapabilities(info) {
 }
 
 export async function apply(ctx, config) {
+  const state = { readStatus: undefined, error: undefined };
+  const binding = createSourceBinding(snapshot => ctx.plugin(inner => mount(inner, snapshot, state), {}));
+  const rebind = () => {
+    const snapshot = { ...config, coreSource: config.coreSource.get(), corePath: config.corePath.get() };
+    state.desired = snapshot; state.readStatus = undefined; state.error = undefined;
+    return binding.update(snapshot).catch(error => {
+      if (state.desired === snapshot) state.error = error.message;
+      ctx.logger.warn(`HS source connection failed: ${error.message}`);
+    });
+  };
+  ctx.effect(() => () => { state.desired = undefined; return binding.dispose(); }, "HS configured connection");
+  const rpc = createRpcHandler({ status: async () => state.readStatus ? state.readStatus() : { connection: { state: state.error ? "failed" : "connecting", error: state.error }, coreSource: config.coreSource.get() } });
+  for (const route of createFetchRoutes(rpc).filter(route => route.path.endsWith("/status"))) ctx.effect(() => ctx.connection.fetch.register(route), "HS stable source diagnostics");
+  ctx.on("loader/volatile-update", rebind);
+  await rebind();
+}
+
+async function mount(ctx, config, state) {
   if (!ctx.agents?.list || !ctx.agents?.get || !ctx.connection?.fetch?.register || typeof ctx.effect !== "function") {
     throw new Error("Required DSH Agent and Connection APIs are unavailable");
   }
@@ -41,6 +60,7 @@ export async function apply(ctx, config) {
   // Stage before auto-start: plugin removal must not remove a live daemon's code.
   // The selected install is copied before use; npm updates cannot remove live code.
   const selectedRuntime = await prepareManagedRuntime(stateDir, selectedRoot);
+  if (state.desired !== config) return;
   const uiPort = external ? 61114 : 61115;
   const client = new SupervisorClient({ stateDir, daemonEntry: path.join(selectedRuntime.root, "dist/src/daemon-entry.js"), nodeExecutable, uiPort });
   const connections = new Map();
@@ -48,6 +68,7 @@ export async function apply(ctx, config) {
   ctx.effect(() => () => client.close(), "HS operator IPC connection");
   // Existing instances retain their verified core until a controlled update.
   const info = await request("info");
+  if (state.desired !== config) return;
   assertCapabilities(info);
 
   const bridge = new AgentBridge({
@@ -77,17 +98,19 @@ export async function apply(ctx, config) {
       ? current.intent.id : randomUUID();
     return request("runtime_update", { intentId, runtimeId: selectedRuntime.id });
   })().finally(() => { applying = undefined; });
-  const rpc = createRpcHandler({
-    agents: ctx.agents, namespace, request,
-    status: async () => ({
-      pluginVersion: "0.2.1", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
+  const status = async () => ({
+      pluginVersion: "0.3.0", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
       supervisor: await request("info"), update: await request("runtime_update_status"),
       sessions: [...connections].map(([agent, status]) => ({ sessionId: agent.id, ...status })),
-    }),
+    });
+  state.readStatus = status;
+  ctx.effect(() => () => { if (state.readStatus === status) state.readStatus = undefined; }, "HS diagnostics owner");
+  const rpc = createRpcHandler({
+    agents: ctx.agents, namespace, request, status,
     applyCore,
     cancelUpdate: (intentId) => { if (external) throw new Error("请通过独立 HS 管理其更新"); return request("runtime_update_cancel", { intentId }); },
   });
-  for (const route of createFetchRoutes(rpc)) {
+  for (const route of createFetchRoutes(rpc).filter(route => !route.path.endsWith("/status"))) {
     ctx.effect(() => ctx.connection.fetch.register(route), `HS owner-only ${route.path}`);
   }
   await Promise.all(ctx.agents.list().map((agent) => bridge.attachAgent(agent)));

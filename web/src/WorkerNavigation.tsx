@@ -24,7 +24,7 @@ function statusLabel(status: string) {
 }
 
 function harnessName(runtime: string) {
-  return ({ pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DeepSeek Harness" } as Record<string, string>)[runtime] ?? runtime;
+  return ({ pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DeepSeek Harness", codex: "Codex", claude: "Claude Code" } as Record<string, string>)[runtime] ?? runtime;
 }
 
 function time(value: string) {

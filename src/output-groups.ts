@@ -7,7 +7,7 @@ export interface OutputEvent {
 }
 
 export function outputDeltaKind(event: OutputEvent, runtime?: string): string | undefined {
-  if (!["qoder", "mcode", "dsh"].includes(runtime ?? "") || event.type !== "run.progress") return;
+  if (!["qoder", "mcode", "dsh", "codex", "claude"].includes(runtime ?? "") || event.type !== "run.progress") return;
   const data = event.data;
   if (!data || !["thinking", "assistant_message"].includes(String(data.kind)) || typeof data.preview !== "string") return;
   // Unknown fields can represent snapshots or message boundaries. Fail closed.

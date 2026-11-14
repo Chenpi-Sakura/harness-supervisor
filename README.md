@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.10.6-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -14,7 +14,7 @@
 
 ## 安装
 
-普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Worker 对应的原生 Harness CLI 仍需自行安装并配置账号。
+普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Worker 对应的原生 Harness CLI 或 ACP 适配器仍需自行安装，并完成原生账号配置。
 
 ### 独立 CLI / MCP
 
@@ -64,9 +64,24 @@ harness-sup wait <workerId> --timeout-ms 60000
 
 ### 在 DSH 中使用
 
-插件启用后，可直接让 DSH 委派原生 Worker。右侧栏入口、对话顶部标签和设置中的 **Harness Supervisor** 都能打开共用 WebUI；`/hs` 可在右侧浏览器中打开。
+插件启用后，可直接让 DSH 委派原生 Worker。右侧栏入口和对话顶部标签可以打开共用 WebUI；`/hs` 可在右侧浏览器中打开。**设置 → Harness Supervisor** 只提供 HS 核心来源选择、保存、刷新状态与诊断详情；选择自定义来源时填写安装目录，设置页不嵌入 WebUI。
 
 人工界面可查看本机当前 HS 实例的全部 Worker，默认展开当前对话；模型的查询、操作和通知 ACK 仍受会话归属约束。
+
+## Codex 与 Claude Code Worker
+
+两者通过外部 ACP 适配器接入，HS 不锁定适配器版本，也不会在每次启动任务时下载。按需安装或更新最新稳定版：
+
+```powershell
+npm install -g @agentclientprotocol/codex-acp@latest
+npm install -g @agentclientprotocol/claude-agent-acp@latest
+harness-sup spawn --runtime codex --model gpt-6-luna --thinking low --cwd D:/work/demo --prompt "完成任务并总结" --persistence persistent
+harness-sup spawn --runtime claude --cwd D:/work/demo --prompt "完成任务并总结" --persistence persistent
+```
+
+复用原生 Harness 的认证和设置。支持持续会话、审批、取消；重启恢复要求适配器声明 `session/load`。模型与推理等级必须由适配器提供并确认；暂不接入执行中 steering、问题表单或适配器专用终端扩展。缺少安装、认证或能力时会明确报错，不自动换模型或重新创建会话。
+
+可用 `HARNESS_SUPERVISOR_CODEX_ACP_ENTRY` / `HARNESS_SUPERVISOR_CLAUDE_ACP_ENTRY` 指定适配器的绝对 JS 入口或原生可执行文件；Windows 不接受 `.cmd`/`.ps1` 启动脚本。适配器官方的 `CODEX_PATH` / `CLAUDE_CODE_EXECUTABLE` 可选择现有原生 CLI。更新适配器与 HS 发版独立，已有 Worker 不会被热替换，升级后应验证所需能力。
 
 ## MCP 接入
 
@@ -171,6 +186,8 @@ HS 的目标：以尽可能低的开销，让独立的原生 Harness Worker 被�
 | Qoder CLI | 官方 ACP 默认，stream-json 可回退 | 实验性 |
 | MiniMax Code | ACP over ndJSON | 实验性 |
 | DeepSeek Harness / DSH | 官方 ACP（`dsh --profile acp`） | PoC |
+| Codex | 外部 `@agentclientprotocol/codex-acp` | 实验性，已通过真实任务与持续会话验收 |
+| Claude Code | 外部 `@agentclientprotocol/claude-agent-acp` | 实验性，已通过真实任务与持续会话验收 |
 
 ## 功能
 
@@ -183,6 +200,7 @@ HS 的目标：以尽可能低的开销，让独立的原生 Harness Worker 被�
 - **任务度量**：每次 `spawn` 自动创建或关联一个委托任务；记录 Worker 终态、耗时、可得的运行时 Token 用量，并生成带覆盖率、来源和未知字段的单任务/汇总报告。费用不采集，验收、返工与干预尚未采集。
 - **Qoder 双传输**：默认使用官方 ACP，可回退 stream-json；两种传输的会话句柄不互换，能力差异如实报告。
 - **DSH ACP 接入**：支持 spawn / 事件 / 取消 / `session/resume` / 模型与推理强度配置 / 权限提权应答；桌面端安装可自动发现，也可用 `HARNESS_SUPERVISOR_DSH_ENTRY` 指定入口。
+- **Codex / Claude Code ACP 接入**：复用原生认证与设置，支持持续会话、权限审批、取消和能力协商后的恢复。适配器独立安装、独立更新，不绑定 HS 发布版本。
 - **统一入口**：CLI、MCP、IPC 共享同一个 daemon 与同一份状态。
 
 ## 架构
@@ -211,6 +229,8 @@ flowchart TB
         Qoder["Qoder ACP 默认 / stream-json 回退<br/>qodercli 子进程"]
         Mcode["MiniMax Code ACP（ndJSON）<br/>mcode acp 子进程"]
         Dsh["DeepSeek Harness ACP（ndJSON）<br/>dsh --profile acp 子进程"]
+        Codex["Codex ACP 适配器<br/>Codex App Server"]
+        Claude["Claude ACP 适配器<br/>Claude Agent SDK"]
     end
 
     Client --> CLI
@@ -225,11 +245,13 @@ flowchart TB
     Lifecycle --> Qoder
     Lifecycle --> Mcode
     Lifecycle --> Dsh
+    Lifecycle --> Codex
+    Lifecycle --> Claude
 ```
 
 | 模块 | 职责 |
 | --- | --- |
-| `src/adapters/` | Pi / Qoder / MiniMax Code / DSH 的运行时适配，以及通用 ACP ndJSON 传输 |
+| `src/adapters/` | Pi / Qoder / MiniMax Code / DSH / Codex / Claude Code 的运行时适配，以及通用 ACP ndJSON 传输 |
 | `src/supervisor.ts` | 状态机、wait、send/answer、cancel、resume、重启对账 |
 | `src/store.ts` | Worker 记录、追加式事件日志、游标、持久化 |
 | `src/metrics.ts` | 任务/用量记录、独立追加日志、覆盖率与报告计算 |
@@ -417,29 +439,31 @@ $env:HARNESS_SUPERVISOR_WORKER_PROTOCOL = '0'
 | Qoder CLI | 实验性 | ACP 默认：spawn / resume / 审批 / 提问 / 取消 / Persistent 3 轮连续协作。stream-json 回退：spawn / cancel / resume；steer、follow-up 被接受但未生效 |
 | MiniMax Code | 实验性 | ACP：spawn / 完成 / 取消 / resume / Persistent 3 轮连续协作；活跃回合内 steer；queue 入队；Ask 模式尚未触发 |
 | DSH | PoC | ACP v1：spawn / resume / 模型与推理配置 / 工作区写入 / 工作区外提权 / 完全权限 / 取消 / Persistent 3 轮连续协作 |
+| Codex | 实验性 | Codex ACP 2.6.0 + Codex CLI 0.169.0：`gpt-6-luna` / `low`；真实三轮、进程重启后恢复及文件内容核对；HS daemon/IPC 真实文件任务。审批和取消另有协议与集成测试 |
+| Claude Code | 实验性 | Claude ACP 0.107.0 + Claude Code 2.1.325：原生 MiniMax-M3.1-Flash 配置；真实三轮、进程重启后恢复及文件内容核对；HS daemon/IPC 真实文件任务。审批和取消另有协议与集成测试 |
 
 ### 操作能力对比
 
 `是` 表示适配器实现了该能力；`有条件` 表示依赖特定传输、扩展或版本，或只有协议/单元测试；`否` 表示明确不支持。真实运行覆盖范围见上表。
 
-| 操作 | Pi | Qoder ACP（默认） | Qoder stream-json 回退 | MiniMax Code | DSH |
-| --- | --- | --- | --- | --- | --- |
-| 协议 | Pi RPC | ACP v1 | stream-json | ACP | ACP v1 |
-| spawn / 单轮 prompt | 是 | 是 | 是 | 是 | 是 |
-| 流式文本 / 思考 / 工具事件 | 是 | 是 | 是 | 是 | 是（无 plan） |
-| 取消 | 是 | 是 | 是 | 是 | 是 |
-| resume | 是（Pi session 文件） | 是（`session/load`） | 是（`--resume`，校验 session id） | 是（`session/load`） | 是（`session/resume`，要求相同绝对 cwd） |
-| Idle continue（同一 Worker / Session 下一轮） | L3（真实 3 轮） | L3（真实 3 轮） | L2（未跑 3 轮；resume 已真实验证） | L3（真实 3 轮） | L3（真实 3 轮） |
-| 运行中 steer | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 steer 扩展；活跃回合内已验证） | 否 |
-| follow-up 队列 | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 queue 扩展；已验证入队） | 否 |
-| 交互输入（审批 / 提问 / 对话框） | 是（extension dialog） | 是（permission + elicitation） | 1.1.79 及以前支持；1.1.82 不支持提问/审批 | 是（Ask 模式触发时） | 仅审批；请求不含工具名/输入，无 elicitation |
-| 权限模式控制 | 由 Pi 自身配置，HS 不管理 | 5 种 ACP 模式映射（plan 无对应） | 支持（默认 `bypass_permissions`） | `bypassPermissions` 默认 / `default` 为 Ask | 3 种（默认 `workspace-write` + `ask`） |
-| 模型 / 思考配置 | 是 | 是 | 是 | 否（忽略，走运行时配置） | 是（model 对 + `reasoning_effort`） |
-| provider 参数 | 是 | 否（写进 model 名） | 否（写进 model 名） | 否（写进 model 名） | 是（model 重名时必须） |
-| 工具白名单 | 是 | 否 | 是 | 否（忽略） | 否 |
-| extraArgs | 是（禁改保留参数） | 是（禁改保留参数） | 是（禁改保留参数） | 仅校验，不转发 | 否（明确 `UNSUPPORTED`） |
-| Token 用量 | 是（原生 usage） | 未知（1.1.82 计数全零） | 有条件（`result.usage` 存在时） | 否（仅上下文占用） | 否（仅上下文占用） |
-| pause | 否 | 否 | 否 | 否 | 否 |
+| 操作 | Pi | Qoder ACP（默认） | Qoder stream-json 回退 | MiniMax Code | DSH | Codex / Claude ACP |
+| --- | --- | --- | --- | --- | --- | --- |
+| 协议 | Pi RPC | ACP v1 | stream-json | ACP | ACP v1 | ACP v1 |
+| spawn / 单轮 prompt | 是 | 是 | 是 | 是 | 是 | 是 |
+| 流式文本 / 思考 / 工具事件 | 是 | 是 | 是 | 是 | 是（无 plan） | 是 |
+| 取消 | 是 | 是 | 是 | 是 | 是 | 是 |
+| resume | 是（Pi session 文件） | 是（`session/load`） | 是（`--resume`，校验 session id） | 是（`session/load`） | 是（`session/resume`，要求相同绝对 cwd） | 有条件（适配器声明 session/load） |
+| Idle continue（同一 Worker / Session 下一轮） | L3（真实 3 轮） | L3（真实 3 轮） | L2（未跑 3 轮；resume 已真实验证） | L3（真实 3 轮） | L3（真实 3 轮） | L3（真实 3 轮，含重启恢复） |
+| 运行中 steer | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 steer 扩展；活跃回合内已验证） | 否 | 否 |
+| follow-up 队列 | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 queue 扩展；已验证入队） | 否 | 否 |
+| 交互输入（审批 / 提问 / 对话框） | 是（extension dialog） | 是（permission + elicitation） | 1.1.79 及以前支持；1.1.82 不支持提问/审批 | 是（Ask 模式触发时） | 仅审批；请求不含工具名/输入，无 elicitation | 仅权限审批；未接入提问扩展 |
+| 权限模式控制 | 由 Pi 自身配置，HS 不管理 | 5 种 ACP 模式映射（plan 无对应） | 支持（默认 `bypass_permissions`） | `bypassPermissions` 默认 / `default` 为 Ask | 3 种（默认 `workspace-write` + `ask`） | 沿用原生设置，不自动提权 |
+| 模型 / 思考配置 | 是 | 是 | 是 | 否（忽略，走运行时配置） | 是（model 对 + `reasoning_effort`） | 是（需目录提供并确认） |
+| provider 参数 | 是 | 否（写进 model 名） | 否（写进 model 名） | 否（写进 model 名） | 是（model 重名时必须） | 否（沿用原生配置） |
+| 工具白名单 | 是 | 否 | 是 | 否（忽略） | 否 | 否（明确拒绝） |
+| extraArgs | 是（禁改保留参数） | 是（禁改保留参数） | 是（禁改保留参数） | 仅校验，不转发 | 否（明确 `UNSUPPORTED`） | 否（明确拒绝） |
+| Token 用量 | 是（原生 usage） | 未知（1.1.82 计数全零） | 有条件（`result.usage` 存在时） | 否（仅上下文占用） | 否（仅上下文占用） | 未知（未采集） |
+| pause | 否 | 否 | 否 | 否 | 否 | 否 |
 
 说明：
 

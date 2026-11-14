@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { DshAdapter } from "./adapters/dsh/adapter.js";
+import { NativeAcpAdapter } from "./adapters/native-acp/adapter.js";
 import { McodeAdapter } from "./adapters/mcode/adapter.js";
 import { PiAdapter } from "./adapters/pi/adapter.js";
 import { QoderAdapter } from "./adapters/qoder/adapter.js";
@@ -133,6 +134,9 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       ["qoder", qoderAdapter],
       ["mcode", mcodeAdapter],
       ["dsh", dshAdapter],
+      ...(["codex", "claude"] as const).map(runtime => [runtime, new NativeAcpAdapter(runtime, { abortTimeoutMs,
+        onStderr: (workerId: string, text: string) => { void store.appendStderr(workerId, text).catch(error => logger.warn("Failed to persist native ACP stderr", { error: errorMessage(error) })); },
+      })] as const),
     ]),
     logger,
     supervisorId,

@@ -153,7 +153,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   await supervisor.init();
 
   let server: IpcServer;
-  const webUi = new WebUiServer({ supervisor });
+  const webUi = new WebUiServer({ supervisor, port: intEnv("HARNESS_SUPERVISOR_UI_PORT", 61114, 1, 65535) });
   let updater: RuntimeUpdater;
   let shuttingDown = false;
   let hardExitTimer: NodeJS.Timeout | undefined;
@@ -250,6 +250,14 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   } catch (error) {
     await shutdown("managed_verification_failed");
     throw error;
+  }
+  if (!shuttingDown && process.env.HARNESS_SUPERVISOR_UI !== "0") {
+    try {
+      await webUi.enable();
+    } catch (error) {
+      // An optional UI must never prevent the daemon from serving Workers.
+      logger.warn("Default WebUI could not start; retry with the ui command", { error: errorMessage(error) });
+    }
   }
   logger.info("Supervisor daemon started", {
     name: TOOL_NAME,

@@ -142,6 +142,11 @@ export class WebUiServer {
     return { running: this.server !== undefined, ...(this.origin ? { origin: this.origin } : {}) };
   }
 
+  /** Start the authenticated listener without creating browser credentials. */
+  enable(): Promise<void> {
+    return this.exclusive(() => this.start());
+  }
+
   launch(options: WebUiLaunchOptions = {}): Promise<WebUiLaunch> {
     return this.exclusive(async () => {
       const ownerRef = options.ownerRef === undefined ? undefined : parse(OwnerRefSchema, options.ownerRef);

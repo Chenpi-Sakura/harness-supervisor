@@ -32,6 +32,8 @@ export interface ClientOptions {
   daemonEntry?: string;
   /** Host plugins may run inside Electron and must launch a real Node executable. */
   nodeExecutable?: string;
+  /** Host-specific default for a newly started daemon; existing instances are reused. */
+  uiPort?: number;
   autoStart?: boolean;
   logger?: Logger;
   connectTimeoutMs?: number;
@@ -341,7 +343,7 @@ export class SupervisorClient {
         detached: true,
         windowsHide: true,
         stdio: ["ignore", out, out],
-        env: process.env,
+        env: this.options.uiPort === undefined ? process.env : { ...process.env, HARNESS_SUPERVISOR_UI_PORT: String(this.options.uiPort) },
       });
       child.unref();
       this.options.logger?.info("Spawned supervisor daemon", { pid: child.pid, logPath });

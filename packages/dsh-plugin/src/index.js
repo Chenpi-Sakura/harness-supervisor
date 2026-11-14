@@ -7,38 +7,46 @@ import { SupervisorClient, prepareManagedRuntime } from "harness-supervisor";
 import { AgentBridge, createRpcHandler, createFetchRoutes } from "./bridge.js";
 import { resolveNodeExecutable } from "./node-runtime.js";
 import { resolvePluginState } from "./state-dir.js";
+import { findGlobalCore, validateCoreRoot } from "./core-source.js";
 
 export const name = "harness-supervisor";
 export const inject = ["agents", "connection", "webServer"];
 export const Config = z.object({
+  coreSource: z.union([z.const("bundled").description("插件内置 HS"), z.const("npm").description("全局 npm 安装的 HS"), z.const("custom").description("自定义安装目录")]).default("bundled").description("HS 核心来源"),
+  corePath: z.string().default("").description("自定义 HS 安装目录（仅自定义模式需要）"),
   stateDir: z.string().default(""),
   nodeExecutable: z.string().default(""),
 });
 
 const coreRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve("harness-supervisor"))), "../..");
-const EXPECTED_CORE_VERSION = "0.11.0";
+const EXPECTED_CORE_VERSION = "0.11.1";
 
 export function assertCapabilities(info) {
   const required = ["ownerScope", "webUi", "managedRuntime", "drain"];
   if (!info?.capabilities || required.some((key) => info.capabilities[key] !== true)) {
-    throw new Error(`The DSH-owned HS daemon (${info?.version ?? "unknown"}) lacks required capabilities. Apply the plugin's bundled core after its tasks have finished.`);
+    throw new Error(`The selected HS daemon (${info?.version ?? "unknown"}) lacks required capabilities. Update the selected core after its tasks have finished.`);
   }
 }
 
 export async function apply(ctx, config) {
   if (!ctx.agents?.list || !ctx.agents?.get || !ctx.connection?.fetch?.register || typeof ctx.effect !== "function") {
-    throw new Error("DSH 0.2.2-rc.1 Agent and Connection APIs are required");
+    throw new Error("Required DSH Agent and Connection APIs are unavailable");
   }
   const { stateDir, namespace } = resolvePluginState(config);
   const nodeExecutable = resolveNodeExecutable(config.nodeExecutable);
+  const external = config.coreSource && config.coreSource !== "bundled";
+  if (![undefined, "bundled", "npm", "custom"].includes(config.coreSource)) throw new Error("未知 HS 核心来源");
+  const selectedRoot = config.coreSource === "npm" ? findGlobalCore(nodeExecutable)
+    : config.coreSource === "custom" ? validateCoreRoot(config.corePath) : coreRoot;
   // Stage before auto-start: plugin removal must not remove a live daemon's code.
-  // Only DSH's private instance is reused. Its cached core survives plugin removal.
-  const bundledRuntime = await prepareManagedRuntime(stateDir, coreRoot);
-  const client = new SupervisorClient({ stateDir, daemonEntry: path.join(bundledRuntime.root, "dist/src/daemon-entry.js"), nodeExecutable });
+  // The selected install is copied before use; npm updates cannot remove live code.
+  const selectedRuntime = await prepareManagedRuntime(stateDir, selectedRoot);
+  const uiPort = external ? 61114 : 61115;
+  const client = new SupervisorClient({ stateDir, daemonEntry: path.join(selectedRuntime.root, "dist/src/daemon-entry.js"), nodeExecutable, uiPort });
   const connections = new Map();
   const request = async (method, params = {}) => client.request(method, params, { timeoutMs: 120_000 });
   ctx.effect(() => () => client.close(), "HS operator IPC connection");
-  // The private instance retains its verified bundled core until a drained update.
+  // Existing instances retain their verified core until a controlled update.
   const info = await request("info");
   assertCapabilities(info);
 
@@ -46,8 +54,8 @@ export async function apply(ctx, config) {
     namespace,
     attach: (agent, ownerRef) => agent.ctx.plugin(mcpClient, {
       transport: "stdio", serverName: "harness_supervisor", command: nodeExecutable,
-      args: [path.join(bundledRuntime.root, "dist/src/mcp.js"), "--state-dir", stateDir, "--owner-ref", ownerRef, "--notify-none"],
-      env: {}, cwd: agent.session.meta?.cwd || process.cwd(), toolCallTimeoutMs: 150_000,
+      args: [path.join(selectedRuntime.root, "dist/src/mcp.js"), "--state-dir", stateDir, "--owner-ref", ownerRef, "--notify-none"],
+      env: { HARNESS_SUPERVISOR_UI_PORT: String(uiPort) }, cwd: agent.session.meta?.cwd || process.cwd(), toolCallTimeoutMs: 150_000,
       startupTimeoutMs: 30_000, closeTimeoutMs: 5_000, expandTemplates: false, failOnStartupError: true,
     }),
     report: (agent, status) => {
@@ -60,23 +68,24 @@ export async function apply(ctx, config) {
   ctx.on("agent/disposed", ({ agent }) => { connections.delete(agent); return bridge.detachAgent(agent); });
   let applying;
   const applyCore = () => applying ??= (async () => {
+    if (external) throw new Error("独立 HS 请通过其自身安装方式更新，插件不会应用内置核心");
     const current = await request("runtime_update_status");
-    if (current.activeRuntimeId === bundledRuntime.id && !["draining", "switching", "verifying"].includes(current.intent?.phase)) {
-      return { alreadyActive: true, runtimeId: bundledRuntime.id, version: EXPECTED_CORE_VERSION };
+    if (current.activeRuntimeId === selectedRuntime.id && !["draining", "switching", "verifying"].includes(current.intent?.phase)) {
+      return { alreadyActive: true, runtimeId: selectedRuntime.id, version: EXPECTED_CORE_VERSION };
     }
-    const intentId = current.intent?.targetRuntimeId === bundledRuntime.id && ["draining", "switching", "verifying"].includes(current.intent.phase)
+    const intentId = current.intent?.targetRuntimeId === selectedRuntime.id && ["draining", "switching", "verifying"].includes(current.intent.phase)
       ? current.intent.id : randomUUID();
-    return request("runtime_update", { intentId, runtimeId: bundledRuntime.id });
+    return request("runtime_update", { intentId, runtimeId: selectedRuntime.id });
   })().finally(() => { applying = undefined; });
   const rpc = createRpcHandler({
     agents: ctx.agents, namespace, request,
     status: async () => ({
-      pluginVersion: "0.2.0", pairedCoreVersion: EXPECTED_CORE_VERSION,
+      pluginVersion: "0.2.1", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
       supervisor: await request("info"), update: await request("runtime_update_status"),
       sessions: [...connections].map(([agent, status]) => ({ sessionId: agent.id, ...status })),
     }),
     applyCore,
-    cancelUpdate: (intentId) => request("runtime_update_cancel", { intentId }),
+    cancelUpdate: (intentId) => { if (external) throw new Error("请通过独立 HS 管理其更新"); return request("runtime_update_cancel", { intentId }); },
   });
   for (const route of createFetchRoutes(rpc)) {
     ctx.effect(() => ctx.connection.fetch.register(route), `HS owner-only ${route.path}`);

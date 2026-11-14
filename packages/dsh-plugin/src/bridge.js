@@ -28,7 +28,7 @@ export class AgentBridge {
       try {
         const ownerRef = ownerRefFor(this.namespace, agent.id);
         if (agent.session?.id !== agent.id || typeof agent.ctx?.plugin !== "function") {
-          throw new Error("DSH live Agent capabilities are incompatible (expected 0.2.2-rc.1)");
+          throw new Error("Required DSH live Agent capabilities are unavailable");
         }
         // attach returns the Fiber synchronously; awaiting the Fiber waits for ready.
         entry.fiber = this.attach(agent, ownerRef);

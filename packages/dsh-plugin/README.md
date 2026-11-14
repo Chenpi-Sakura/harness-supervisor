@@ -1,10 +1,14 @@
 # DSH Harness Supervisor
 
-将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护，配套 HS `0.10.6`。插件不声明 DSH 宿主版本限制，通过运行时接口检查兼容性；已在 DSH `0.2.2-rc.1` 验证，其他版本尚需验收。
+将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code 等原生 Worker。社区独立维护。
 
 [项目仓库](https://github.com/Chenpi-Sakura/harness-supervisor) · [完整项目 README](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/README.md) · [npm](https://www.npmjs.com/package/dsh-harness-supervisor)
 
 ## 安装与使用
+
+默认使用插件内置 HS，WebUI 随 daemon 启动，监听 `127.0.0.1:61115`。在插件配置中，**HS 核心来源**可选择“全局 npm 安装的 HS”，自动查找 `npm install -g harness-supervisor` 的安装位置；无需手填路径。也可选择“自定义安装目录”，填写含 `package.json` 和已构建 `dist/` 的目录。
+
+独立模式默认连接独立 HS 的状态目录（`HARNESS_SUPERVISOR_HOME` 或 `~/.harness-supervisor`），没有运行实例时可代为启动，默认 WebUI 端口为 `61114`。可用 `stateDir` 指定其他目录。已有 daemon 或已验证的托管核心优先复用，选择安装来源不会强行切换它们，也不会在独立模式应用内置核心；更新由独立 HS 自身管理。
 
 在 DSH 自带的「插件 → 添加插件」中输入 `dsh-harness-supervisor@latest`，安装并启用。也可通过 CLI 安装到 Desktop profile：
 

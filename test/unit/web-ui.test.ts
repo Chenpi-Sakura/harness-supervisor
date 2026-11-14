@@ -59,6 +59,22 @@ test("WebUI defaults to loopback port 61114", async (t) => {
   assert.equal(launch.origin, "http://127.0.0.1:61114");
 });
 
+test("enabling the listener creates no browser credentials and remains stoppable", async (t) => {
+  const { ui } = setup();
+  t.after(() => ui.stop());
+  await Promise.all([ui.enable(), ui.enable()]);
+  const origin = ui.status().origin!;
+  assert.equal(ui.status().running, true);
+  assert.equal((await fetch(`${origin}/api/session`)).status, 401);
+  const launch = await ui.launch();
+  assert.equal(launch.origin, origin);
+  assert.equal((await exchange(launch)).response.status, 200);
+  await ui.stop();
+  assert.equal(ui.status().running, false);
+  await Promise.all([ui.enable(), ui.stop()]);
+  assert.equal(ui.status().running, false, "a queued stop must win over startup");
+});
+
 async function exchange(launch: WebUiLaunch) {
   const url = new URL(launch.url);
   const response = await fetch(`${url.origin}/api/exchange`, {

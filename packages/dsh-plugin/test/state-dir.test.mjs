@@ -19,3 +19,9 @@ test("explicit isolated directories work, shared default directories are rejecte
   assert.throws(() => resolvePluginState({ stateDir: path.join(home, ".harness-supervisor") }, {}, home), /dedicated stateDir/);
   assert.equal(resolvePluginState({ stateDir: path.resolve("private-hs") }, {}, home).stateDir, path.resolve("private-hs"));
 });
+test("external npm mode defaults to the standalone instance", () => {
+  const home = path.resolve("test-home");
+  const standalone = path.resolve("standalone-state");
+  assert.equal(resolvePluginState({ coreSource: "npm" }, { HARNESS_SUPERVISOR_HOME: standalone }, home).stateDir, standalone);
+  assert.equal(resolvePluginState({ coreSource: "custom" }, {}, home).stateDir, path.join(home, ".harness-supervisor"));
+});

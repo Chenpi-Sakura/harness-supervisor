@@ -101,12 +101,14 @@ harness-sup-mcp --mode production --owner-ref <stable-session-reference> --notif
 
 ## 可选 WebUI
 
-WebUI 默认不开端口。独立 HS 用户可运行：
+WebUI 默认不启动 HTTP 服务，启用后默认监听本机地址 `127.0.0.1:61114`。独立 HS 用户可运行：
 
 ```powershell
 harness-sup ui          # 在系统浏览器中打开
 harness-sup ui --stop   # 关闭 WebUI，Worker 继续运行
 ```
+
+独立 HS 与 DSH 插件使用各自的实例；如果同时开启两个实例的 WebUI，后开启者会提示 `61114` 端口已被占用。请先关闭不需要的实例的 WebUI，再打开另一实例。
 
 浏览器和 DSH 使用同一套界面，可按“工作目录 → 会话 → Worker”查看状态、结果、轨迹和用量，回答输入或取消任务；任务创建与续接由 Master 完成。界面仅监听 `127.0.0.1`，一次性入口兑换独立浏览器凭证，不向网页暴露 IPC Token。刷新不会唤醒模型或自动 ACK；daemon 或 WebUI 重启后需从可信入口重新打开。
 

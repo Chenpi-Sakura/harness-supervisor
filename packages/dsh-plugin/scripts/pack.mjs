@@ -7,14 +7,15 @@ import { fileURLToPath } from "node:url";
 import { verifyProductionTree } from "../../../scripts/verify-production-tree.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const coreTarball = `harness-supervisor-${manifest.dependencies["harness-supervisor"]}.tgz`;
 const arg = process.argv.indexOf("--core-tarball");
-if (arg >= 0 && !process.argv[arg + 1]) throw new Error("Usage: node scripts/pack.mjs [--core-tarball <harness-supervisor-0.14.1.tgz>]");
-const tarball = path.resolve(arg >= 0 ? process.argv[arg + 1] : path.join(root, "../../.artifacts/harness-supervisor-0.14.1.tgz"));
+if (arg >= 0 && !process.argv[arg + 1]) throw new Error(`Usage: node scripts/pack.mjs [--core-tarball <${coreTarball}>]`);
+const tarball = path.resolve(arg >= 0 ? process.argv[arg + 1] : path.join(root, "../../.artifacts", coreTarball));
 const output = path.join(root, ".artifacts");
 await mkdir(output, { recursive: true });
 await import("./build.mjs");
 const stage = await mkdtemp(path.join(output, "package-"));
-const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 await writeFile(path.join(stage, "package.json"), JSON.stringify(manifest, null, 2));
 for (const name of ["dist", "cordis.patch.yml", "README.md", "LICENSE"]) await cp(path.join(root, name), path.join(stage, name), { recursive: true });
 const npmCli = [process.env.npm_execpath, process.env.NPM_CLI_PATH, path.join(path.dirname(process.execPath), "node_modules/npm/bin/npm-cli.js")]

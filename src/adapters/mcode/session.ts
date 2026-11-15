@@ -21,7 +21,7 @@ import {
   MCODE_INPUT_TIMEOUT_ENV,
   resolveRuntimeInputTimeoutMs,
 } from "../../input-timeout.js";
-import type { McodeLaunch } from "./launch.js";
+import { MCODE_PERMISSION_MODES as LAUNCH_PERMISSION_MODES, type McodeLaunch, type McodePermissionMode } from "./launch.js";
 
 export interface McodeAcpSessionOptions {
   launch: McodeLaunch;
@@ -45,9 +45,9 @@ export interface McodeAcpSessionOptions {
   resumeSessionId?: string;
 }
 
-export const MCODE_PERMISSION_MODES = ["default", "auto", "bypassPermissions"] as const;
-
-export type McodePermissionMode = (typeof MCODE_PERMISSION_MODES)[number];
+// Keep this module's existing public ordering while sharing the mode definitions.
+export const MCODE_PERMISSION_MODES = [LAUNCH_PERMISSION_MODES[2], LAUNCH_PERMISSION_MODES[1], LAUNCH_PERMISSION_MODES[0]] as const;
+export type { McodePermissionMode } from "./launch.js";
 
 interface PendingRequest {
   resolve: (value: unknown) => void;

@@ -5,11 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import {
   findMcodePackageEntry,
+  MCODE_PERMISSION_MODES,
   resolveMcodeLaunch,
   resolveMcodePermissionMode,
   validateMcodeExtraArgs,
 } from "../../src/adapters/mcode/launch.js";
 import { readMcodeSessionHandle } from "../../src/adapters/mcode/adapter.js";
+import { MCODE_PERMISSION_MODES as SESSION_PERMISSION_MODES } from "../../src/adapters/mcode/session.js";
 
 test("MiniMax Code launch uses the Node entry point instead of the npm shim", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hs-mcode-launch-"));
@@ -94,6 +96,18 @@ test("MiniMax Code permission mode defaults to bypassPermissions and explicit va
         HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "yolo",
       }),
     /Unsupported MiniMax Code permission mode.*default: bypassPermissions/,
+  );
+});
+
+test("MiniMax Code permission exports preserve their order and unsupported-mode error text", () => {
+  assert.deepEqual(MCODE_PERMISSION_MODES, ["bypassPermissions", "auto", "default"]);
+  assert.deepEqual(SESSION_PERMISSION_MODES, ["default", "auto", "bypassPermissions"]);
+  for (const mode of SESSION_PERMISSION_MODES) {
+    assert.equal(resolveMcodePermissionMode({ HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: mode }), mode);
+  }
+  assert.throws(
+    () => resolveMcodePermissionMode({ HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE: "yolo" }),
+    { message: "Unsupported MiniMax Code permission mode: yolo. Allowed: bypassPermissions, auto, default (default: bypassPermissions)." },
   );
 });
 

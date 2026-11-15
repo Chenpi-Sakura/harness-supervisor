@@ -1,11 +1,12 @@
 import { harnessName, modelDisplay, type ModelDisplaySource } from "./harness-catalog";
 import { AnimatePresence, motion, animate as animateValue, useMotionValue, useReducedMotion } from "motion/react";
 import { UiIcon } from "./UiIcon";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { HarnessIcon } from "./harness-icons";
 import { Markdown } from "./Markdown";
 import "./worker-relations.css";
 import type { MasterContext } from "../../src/ipc/protocol";
+import { layoutRelationWorkers, selectRelationProject } from "./relation-layout";
 
 export interface RelationWorker extends ModelDisplaySource {
   id: string; name?: string; ownerRef?: string; runtime: string; status: string; model?: string; sessionTitle?: string;
@@ -17,7 +18,7 @@ export const relationStatus: Record<string, string> = {
   running: "正在工作", starting: "正在启动", awaiting_input: "等待输入", completed: "已完成",
   cancelled: "已取消", failed: "执行失败", crashed: "异常终止", interrupted: "已中断", orphaned: "失去连接",
 };
-const active = new Set(["running", "starting", "awaiting_input"]);
+const emptyMasters: MasterContext[] = [];
 
 function Frame({ status, persistent }: { status: string; persistent: boolean }) {
   return <svg className="relation-frame" aria-hidden="true" width="100%" height="100%">
@@ -26,17 +27,15 @@ function Frame({ status, persistent }: { status: string; persistent: boolean }) 
   </svg>;
 }
 
-export function WorkerRelations({ workers, masters = [], preferredOwnerRef, onOpen, demo = false, displayScope, onScopeChange, onGroupSelect, projectCwd, transitionDirection = -1, selectedOwnerRef, selectedWorkerId, onProjectChange }: {
+export function WorkerRelations({ workers, masters = emptyMasters, preferredOwnerRef, onOpen, demo = false, displayScope, onScopeChange, onGroupSelect, projectCwd, transitionDirection = -1, selectedOwnerRef, selectedWorkerId }: {
   masters?: MasterContext[];
-  workers: RelationWorker[]; onGroupSelect?: (ownerRef: string) => void; displayScope?: "session" | "project"; onScopeChange?: (scope: "session" | "project") => void; transitionDirection?: -1 | 1; selectedWorkerId?: string | null; selectedOwnerRef?: string; projectCwd?: string; onProjectChange?: (cwd: string) => void; preferredOwnerRef?: string; onOpen?: (id: string) => void; demo?: boolean;
+  workers: RelationWorker[]; onGroupSelect?: (ownerRef: string) => void; displayScope?: "session" | "project"; onScopeChange?: (scope: "session" | "project") => void; transitionDirection?: -1 | 1; selectedWorkerId?: string | null; selectedOwnerRef?: string; projectCwd?: string; preferredOwnerRef?: string; onOpen?: (id: string) => void; demo?: boolean;
 }) {
   const reduceMotion = useReducedMotion();
-  const masterByOwner = new Map(masters.map(master => [master.ownerRef, master]));
-  const projects = [...new Set([...workers.map(worker => worker.cwd), ...masters.flatMap(master => master.cwd ? [master.cwd] : [])])];
-  const [localProject, setLocalProject] = useState<string | null>(null);
-  const project = projectCwd ?? localProject ?? workers.find(worker => worker.ownerRef === preferredOwnerRef)?.cwd ?? masterByOwner.get(preferredOwnerRef ?? "")?.cwd ?? projects[0] ?? "";
-  const projectWorkers = workers.filter(worker => worker.cwd === project);
-  const owners = [...new Set([...projectWorkers.map(worker => worker.ownerRef).filter((value): value is string => Boolean(value)), ...masters.filter(master => master.cwd === project).map(master => master.ownerRef)])];
+  const { project, projectWorkers, owners, masterByOwner } = useMemo(
+    () => selectRelationProject(workers, masters, projectCwd, preferredOwnerRef),
+    [workers, masters, projectCwd, preferredOwnerRef],
+  );
   const [chosenOwner, setOwner] = useState<string | null>(preferredOwnerRef ?? null);
   const owner = selectedOwnerRef !== undefined && (selectedOwnerRef === "" || owners.includes(selectedOwnerRef)) ? selectedOwnerRef : chosenOwner !== null && (owners.includes(chosenOwner) || chosenOwner === "") ? chosenOwner : owners[0] ?? "";
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -80,41 +79,10 @@ export function WorkerRelations({ workers, masters = [], preferredOwnerRef, onOp
   const [filter, setFilter] = useState("all");
   useEffect(() => { setSelectedId(null); }, [project, owner]);
   const selected = workers.find(worker => worker.id === selectedId);
-  const sessionWorkers = scope === "project" ? projectWorkers : projectWorkers.filter(worker => (worker.ownerRef ?? "") === owner);
-  const visible = sessionWorkers.filter(worker => filter === "all" || (filter === "active" ? active.has(worker.status) : !active.has(worker.status)));
-  const groupOwners = scope === "project" ? [...new Set([...projectWorkers.map(worker => worker.ownerRef ?? ""), ...owners])] : [owner];
-  let nextX = 0;
-  const groups = groupOwners.map((groupOwner, index) => {
-    const originals = projectWorkers.filter(worker => (worker.ownerRef ?? "") === groupOwner);
-    const members = visible.filter(worker => (worker.ownerRef ?? "") === groupOwner);
-    const rowCount = Math.max(1, Math.ceil(Math.sqrt(members.length / 2)));
-    const weights = Array.from({ length: rowCount }, (_, row) => row + 2);
-    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-    let remaining = members.length;
-    const rowSizes = weights.map((weight, row) => {
-      const count = row === rowCount - 1 ? remaining : Math.min(remaining, Math.max(1, Math.floor(members.length * weight / totalWeight)));
-      remaining -= count;
-      return count;
-    });
-    const innerWidth = Math.max(284, Math.max(...rowSizes) * 320 - 36);
-    const padding = scope === "project" ? 32 : 0;
-    const top = scope === "project" ? 70 : 0;
-    const x = nextX;
-    const width = innerWidth + padding * 2;
-    const height = top + 300 + rowCount * 284 + padding;
-    const points = rowSizes.flatMap((count, row) => Array.from({ length: count }, (_, column) => ({
-      x: x + padding + (innerWidth - (count * 320 - 36)) / 2 + column * 320,
-      y: top + 300 + row * 284,
-    })));
-    const running = originals.filter(worker => ["starting", "running"].includes(worker.status)).length;
-    const terminal = originals.filter(worker => !active.has(worker.status)).length;
-    nextX += width + 48;
-    return { owner: groupOwner, originals, members, points, x, width, height, masterX: x + width / 2 - 142, masterY: top, index, state: running > terminal ? "running" : originals.some(worker => worker.status === "awaiting_input") && !terminal ? "awaiting_input" : "completed" };
-  });
-  const width = Math.max(284, nextX - 48);
-  const height = Math.max(584, ...groups.map(group => group.height));
-  const positions = visible.map(worker => { const group = groups.find(group => group.members.some(member => member.id === worker.id))!; return { ...group.points[group.members.findIndex(member => member.id === worker.id)]!, masterX: group.masterX, masterY: group.masterY }; });
-  const working = sessionWorkers.filter(worker => worker.status === "running" || worker.status === "starting").length;
+  const { sessionWorkers, visible, groups, width, height, positions, working } = useMemo(
+    () => layoutRelationWorkers(projectWorkers, owners, scope, owner, filter),
+    [projectWorkers, owners, scope, owner, filter],
+  );
   return <section className="relations" aria-label="Master 与 Worker 关系" data-direction={transitionDirection} data-project={project} data-owner={owner}>
 
     <div className="relations-toolbar"><div className="relations-inline-count"><strong>{sessionWorkers.length}</strong> Workers <span>· {working} 个正在工作</span></div><div className="relations-filters" aria-label="Worker 状态筛选">{[["all", "全部"], ["active", "进行中"], ["terminal", "已结束"]].map(([value, title]) => <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value!)}>{title}</button>)}</div></div>

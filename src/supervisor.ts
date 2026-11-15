@@ -85,7 +85,7 @@ import { inspectProcess } from "./util/process.js";
 import type { Logger } from "./util/logger.js";
 import { redactText, safeText, truncateText } from "./util/redact.js";
 import { VERSION, TOOL_NAME } from "./version.js";
-import { validateExtraArgs } from "./adapters/pi/launch.js";
+import { validateExtraArgs } from "./worker-args.js";
 
 const DEFAULT_LIMITS: SupervisorLimits = {
   maxWorkers: 8,
@@ -3304,16 +3304,15 @@ export class Supervisor {
 
   private summary(record: WorkerRecord): WorkerSummary {
     const pidAlive = record.pid !== undefined ? isPidAlive(record.pid) : null;
+    const session = this.sessionProjection(record, pidAlive);
     const resumeAvailable = Boolean(
       !record.retiredAt &&
         isTerminal(record.status) &&
-        record.sessionFile &&
-        existsSync(record.sessionFile) &&
+        session.available &&
         !pidAlive &&
         this.adapters.get(record.runtime)?.capabilities.resume,
     );
     const persistence: WorkerPersistence = record.persistence ?? "oneshot";
-    const session = this.sessionProjection(record, pidAlive);
     return {
       ...structuredClone(record),
       pidAlive,

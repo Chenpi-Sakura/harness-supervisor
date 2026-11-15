@@ -97,7 +97,6 @@ function App({ demo = false }: { demo?: boolean }) {
   const [error, setError] = useState("");
   const [connecting, setConnecting] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [cancelConfirm, setCancelConfirm] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [drawerWidth, setDrawerWidth] = useState(480);
   const [drawerTop, setDrawerTop] = useState(119);
@@ -143,12 +142,9 @@ function App({ demo = false }: { demo?: boolean }) {
     const timer = window.setTimeout(() => setDrawerMounted(false), window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 220);
     return () => window.clearTimeout(timer);
   }, [drawerOpen]);
-  const view = "relations";
 
-  const [panel, setPanel] = useState<"result" | "events">("result");
   const [navigationCollapsed, setNavigationCollapsed] = useState(() => window.matchMedia("(max-width: 620px)").matches);
   useEffect(() => {
-    if (view !== "relations") return;
     const toolbar = document.querySelector(".relations-toolbar");
     if (!toolbar) return;
     const update = () => { const bounds = toolbar.getBoundingClientRect(); setDrawerTop(bounds.bottom); setDrawerLeft(bounds.left); };
@@ -157,7 +153,7 @@ function App({ demo = false }: { demo?: boolean }) {
     window.addEventListener("resize", update);
     update();
     return () => { observer.disconnect(); window.removeEventListener("resize", update); };
-  }, [view, sidebarWidth, navigationCollapsed, token]);
+  }, [sidebarWidth, navigationCollapsed, token]);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const eventPager = useRef<EventPager | null>(null);
   const listPages = useRef(1);
@@ -263,7 +259,6 @@ function App({ demo = false }: { demo?: boolean }) {
     setDetail(null);
     detailRef.current = null;
     setUsage([]);
-    setCancelConfirm(false);
     async function refresh() {
       if (document.hidden || running || disposed) return;
       running = true;
@@ -371,7 +366,6 @@ function App({ demo = false }: { demo?: boolean }) {
       const worker = await request<Worker>(`/workers/${encodeURIComponent(id)}/${action}`, token, body);
       if (detailRef.current?.id === id) setDetail(worker);
       setWorkers(previous => previous.map(item => item.id === id ? worker : item));
-      setCancelConfirm(false);
     } catch (failure) {
       if (failure instanceof ApiError && failure.status === 401) expire(failure.message);
       else setError(failure instanceof Error ? failure.message : "操作失败");
@@ -427,14 +421,12 @@ function App({ demo = false }: { demo?: boolean }) {
         </header>
       {!navigationCollapsed && <ResizeHandle label="调整会话栏宽度" width={sidebarWidth} onWidth={setSidebarWidth} max={520} />}
       </aside>
-      <div className={`workspace-content${drawerOpen && view === "relations" ? " has-worker-drawer" : ""}`} style={{ "--drawer-width": `${drawerWidth}px` } as React.CSSProperties}>
+      <div className={`workspace-content${drawerOpen ? " has-worker-drawer" : ""}`} style={{ "--drawer-width": `${drawerWidth}px` } as React.CSSProperties}>
       {error && <div className="notice error workspace-error" role="alert">{error}</div>}
-      {token ? <div><WorkerRelations workers={workers} masters={masters} onGroupSelect={owner => { setCanvasOwnerRef(owner); setDisplayScope("session"); setDrawerOpen(false); }} displayScope={displayScope} onScopeChange={value => { setDisplayScope(value); setDrawerOpen(false); }} transitionDirection={sceneDirection} selectedWorkerId={drawerOpen ? selected : null} selectedOwnerRef={canvasOwnerRef} projectCwd={projectCwd} onProjectChange={cwd => { setProjectCwd(cwd); setDrawerOpen(false); }} preferredOwnerRef={preferredOwnerRef} onOpen={id => { setSelected(id); setDrawerOpen(true); }} demo={demo} /></div> : <section className="detail" aria-label="Worker 详情">
-        {!token ? <div className="empty welcome"><span className="empty-icon" aria-hidden="true">◇</span><h2>{connecting ? "正在连接 Supervisor" : "从可信入口连接"}</h2><p>通过命令行 <code>harness-sup ui</code> 或 DSH 的 Harness Supervisor 入口打开。连接仅限本机。</p><p className="muted">服务重启后需要重新打开入口。关闭页面不会取消 Worker。</p></div> : !detail ? <div className="empty"><h2>{selected ? "读取 Worker…" : preferredOwnerRef ? "当前会话暂无 Worker" : "选择一个 Worker"}</h2><p>{preferredOwnerRef && !selected ? "可以展开左侧其它会话，查看已有 Worker。" : "查看运行状态、结果与需要你处理的输入。"}</p></div> : <>
-          <WorkerDetails key={detail.id} detail={detail} usage={usage} usageAvailable={usageAvailable} eventHistory={eventHistory} loadPrompt={loadPrompt} act={act} pageEvents={pageEvents} busy={busy} readOnly={demo} />
-        </>}
+      {token ? <div><WorkerRelations workers={workers} masters={masters} onGroupSelect={owner => { setCanvasOwnerRef(owner); setDisplayScope("session"); setDrawerOpen(false); }} displayScope={displayScope} onScopeChange={value => { setDisplayScope(value); setDrawerOpen(false); }} transitionDirection={sceneDirection} selectedWorkerId={drawerOpen ? selected : null} selectedOwnerRef={canvasOwnerRef} projectCwd={projectCwd} preferredOwnerRef={preferredOwnerRef} onOpen={id => { setSelected(id); setDrawerOpen(true); }} demo={demo} /></div> : <section className="detail" aria-label="Worker 详情">
+        <div className="empty welcome"><span className="empty-icon" aria-hidden="true">◇</span><h2>{connecting ? "正在连接 Supervisor" : "从可信入口连接"}</h2><p>通过命令行 <code>harness-sup ui</code> 或 DSH 的 Harness Supervisor 入口打开。连接仅限本机。</p><p className="muted">服务重启后需要重新打开入口。关闭页面不会取消 Worker。</p></div>
       </section>}
-      {drawerMounted && view === "relations" && <aside ref={drawerElement} className={`workspace-drawer${drawerOpen ? " is-open" : " is-closing"}${drawerMaximized ? " is-maximized" : ""}`} inert={!drawerOpen} aria-hidden={!drawerOpen} style={{ top: drawerTop, ...(drawerMaximized ? { left: drawerLeft, width: `calc(100vw - ${drawerLeft}px)` } : {}) }} aria-label="Worker 详情侧栏">{!drawerMaximized && <ResizeHandle label="调整详情栏宽度" width={drawerWidth} onWidth={setDrawerWidth} direction={-1} min={320} max={800} />}<div className="drawer-title"><span>Worker 详情</span><div className="drawer-actions"><button className="drawer-maximize" aria-label={drawerMaximized ? "还原详情" : "最大化详情"} title={drawerMaximized ? "还原详情" : "最大化详情"} aria-pressed={drawerMaximized} onClick={toggleDrawerSize}><UiIcon name={drawerMaximized ? "minimize" : "maximize"} /></button><button aria-label="关闭详情侧栏" onClick={() => setDrawerOpen(false)}><UiIcon name="close" /></button></div></div><div className="drawer-scroll">{detail ? <WorkerDetails key={detail.id} detail={detail} usage={usage} usageAvailable={usageAvailable} eventHistory={eventHistory} loadPrompt={loadPrompt} act={act} pageEvents={pageEvents} busy={busy} readOnly={demo} /> : <p>读取 Worker…</p>}</div></aside>}
+      {drawerMounted && <aside ref={drawerElement} className={`workspace-drawer${drawerOpen ? " is-open" : " is-closing"}${drawerMaximized ? " is-maximized" : ""}`} inert={!drawerOpen} aria-hidden={!drawerOpen} style={{ top: drawerTop, ...(drawerMaximized ? { left: drawerLeft, width: `calc(100vw - ${drawerLeft}px)` } : {}) }} aria-label="Worker 详情侧栏">{!drawerMaximized && <ResizeHandle label="调整详情栏宽度" width={drawerWidth} onWidth={setDrawerWidth} direction={-1} min={320} max={800} />}<div className="drawer-title"><span>Worker 详情</span><div className="drawer-actions"><button className="drawer-maximize" aria-label={drawerMaximized ? "还原详情" : "最大化详情"} title={drawerMaximized ? "还原详情" : "最大化详情"} aria-pressed={drawerMaximized} onClick={toggleDrawerSize}><UiIcon name={drawerMaximized ? "minimize" : "maximize"} /></button><button aria-label="关闭详情侧栏" onClick={() => setDrawerOpen(false)}><UiIcon name="close" /></button></div></div><div className="drawer-scroll">{detail ? <WorkerDetails key={detail.id} detail={detail} usage={usage} usageAvailable={usageAvailable} eventHistory={eventHistory} loadPrompt={loadPrompt} act={act} pageEvents={pageEvents} busy={busy} readOnly={demo} /> : <p>读取 Worker…</p>}</div></aside>}
       </div>
     </main>
   </div>;

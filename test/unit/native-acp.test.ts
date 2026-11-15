@@ -48,6 +48,67 @@ test("ACP without model configuration leaves native identity unknown", async t =
   assert.equal((await session.getState()).runtimeInfo?.modelId, undefined);
   assert.equal((await session.getState()).runtimeInfo?.modelName, undefined);
 });
+
+test("ACP nested choices use each confirmed config response for the next option and final display", async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-native-acp-config-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const methods: string[] = [];
+  const selections: unknown[] = [];
+  let model = "native-model", effort = "medium";
+  const config = () => [
+    { id: "model", category: "model", currentValue: model, options: [
+      { name: "Models", options: [null, { value: "selected", name: effort === "low" ? "Final native label" : "Nested model" }] },
+    ] },
+    { id: "native_effort", category: "thought_level", currentValue: effort, options: [
+      { name: "Efforts", options: [{ value: model === "selected" ? "low" : "medium", name: "Available effort" }] },
+    ] },
+  ];
+  const client = {
+    request: async (method: string, params: { configId?: string; value?: string }) => {
+      methods.push(method);
+      if (method === "initialize") return { protocolVersion: 1, agentInfo: { name: "native", version: "1" } };
+      if (method === "session/new") return { sessionId: "config-session", configOptions: config() };
+      if (method === "session/set_config_option") {
+        selections.push(params);
+        if (params.configId === "model") model = params.value!;
+        if (params.configId === "native_effort") effort = params.value!;
+        return { configOptions: config() };
+      }
+      throw new Error(`Unexpected request ${method}`);
+    },
+  };
+  const session = Reflect.construct(NativeAcpSession, [client, {
+    runtime: "codex", spec: { cwd: dir, sessionDir: dir, model: "Nested model", thinking: "low" },
+  }]) as NativeAcpSession;
+  await Reflect.get(session, "initialize").call(session);
+  assert.deepEqual(methods, ["initialize", "session/new", "session/set_config_option", "session/set_config_option"]);
+  assert.deepEqual(selections, [
+    { sessionId: "config-session", configId: "model", value: "selected" },
+    { sessionId: "config-session", configId: "native_effort", value: "low" },
+  ]);
+  assert.deepEqual((await session.getState()).runtimeInfo, {
+    modelId: "selected", modelName: "Final native label", reasoningEffort: "low", adapter: "native 1",
+  });
+});
+
+test("ACP rejects ambiguous nested model labels before sending a selection", async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-native-acp-ambiguous-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const client = { request: async (method: string) => {
+    if (method === "initialize") return { protocolVersion: 1 };
+    assert.equal(method, "session/new", "an ambiguous label must not be sent to the agent");
+    return { sessionId: "ambiguous-session", configOptions: [{ id: "model", options: [
+      { value: "first", name: "Same label" },
+      { options: [{ value: "second", name: "Same label" }] },
+    ] }] };
+  } };
+  const session = Reflect.construct(NativeAcpSession, [client, {
+    runtime: "codex", spec: { cwd: dir, sessionDir: dir, model: "Same label" },
+  }]) as NativeAcpSession;
+  await assert.rejects(Reflect.get(session, "initialize").call(session), {
+    message: "ACP does not offer an unambiguous model=Same label; available: first, second",
+  });
+});
 test("ACP permission requires a real offered option and repeated answers fail", async t => {
   const { session, wait } = await setup(t);
   await session.prompt("approve");

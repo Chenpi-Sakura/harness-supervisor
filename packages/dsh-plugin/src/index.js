@@ -22,7 +22,7 @@ export const Config = z.object({
 });
 
 const coreRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve("harness-supervisor"))), "../..");
-const EXPECTED_CORE_VERSION = "0.14.1";
+const EXPECTED_CORE_VERSION = "0.14.2";
 
 export function assertCapabilities(info) {
   const required = ["ownerScope", "webUi", "managedRuntime", "drain"];
@@ -117,7 +117,7 @@ async function mount(ctx, config, state) {
     return request("runtime_update", { intentId, runtimeId: selectedRuntime.id });
   })().finally(() => { applying = undefined; });
   const status = async () => ({
-      pluginVersion: "0.5.1", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
+      pluginVersion: "0.5.2", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
       pairedUpdate,
       supervisor: await request("info"), update: await request("runtime_update_status"),
       sessions: [...connections].map(([agent, status]) => ({ sessionId: agent.id, ...status })),

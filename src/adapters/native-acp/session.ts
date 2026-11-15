@@ -10,6 +10,19 @@ import type { NativeAcpLaunch, NativeAcpRuntime } from "./launch.js";
 type Obj = Record<string, unknown>;
 const object = (value: unknown): Obj => value && typeof value === "object" && !Array.isArray(value) ? value as Obj : {};
 const array = (value: unknown): Obj[] => Array.isArray(value) ? value.map(object) : [];
+
+function configChoices(option: Obj | undefined): Obj[] {
+  const choices: Obj[] = [];
+  const walk = (items: Obj[]) => {
+    for (const item of items) {
+      if (typeof item.value === "string") choices.push(item);
+      walk(array(item.options));
+    }
+  };
+  walk(array(option?.options));
+  return choices;
+}
+
 interface Permission { id: string | number; options: Obj[]; timer: NodeJS.Timeout }
 export interface NativeAcpSessionOptions {
   runtime: NativeAcpRuntime; launch: NativeAcpLaunch; spec: HarnessSpawnSpec; callbacks: HarnessCallbacks;
@@ -57,30 +70,32 @@ export class NativeAcpSession implements HarnessSession {
     if (!resumeSessionId) this.sessionId = typeof response.sessionId === "string" ? response.sessionId : "";
     if (!this.sessionId) throw new SupervisorError("HARNESS_ERROR", "ACP returned no session id");
     let config = array(response.configOptions);
-    const applyOption = async (kind: string, requested: string | undefined) => {
-      if (requested === undefined) return;
-      const option = config.find(item => item.id === kind || item.category === kind || (kind === "thought_level" && ["reasoning_effort", "thinking", "effort"].includes(String(item.id))));
-      const choices: Obj[] = [];
-      const walk = (items: Obj[]) => { for (const item of items) { if (typeof item.value === "string") choices.push(item); walk(array(item.options)); } };
-      walk(array(option?.options));
-      const matches = choices.filter(item => item.value === requested || item.name === requested);
-      if (!option || matches.length !== 1 || typeof option.id !== "string") throw new SupervisorError("UNSUPPORTED", `ACP does not offer an unambiguous ${kind}=${requested}; available: ${choices.map(item => item.value).join(", ")}`);
-      const value = matches[0]!.value;
-      const result = object(await this.client.request("session/set_config_option", { sessionId: this.sessionId, configId: option.id, value }, 30_000));
-      config = array(result.configOptions);
-      if (config.find(item => item.id === option.id)?.currentValue !== value) throw new SupervisorError("HARNESS_ERROR", `ACP did not confirm ${kind}=${requested}`);
-    };
-    await applyOption("model", spec.model);
-    await applyOption("thought_level", spec.thinking);
+    config = await this.applyConfigOption(config, "model", spec.model);
+    config = await this.applyConfigOption(config, "thought_level", spec.thinking);
+    this.runtimeInfo = this.readRuntimeInfo(config, object(init.agentInfo));
+    this.sessionFile = path.join(spec.sessionDir, `${this.options.runtime}-acp-session.json`);
+    await atomicWriteJson(this.sessionFile, { runtime: this.options.runtime, protocol: "acp", id: this.sessionId, cwd: spec.cwd });
+  }
+
+  private async applyConfigOption(config: Obj[], kind: string, requested: string | undefined): Promise<Obj[]> {
+    if (requested === undefined) return config;
+    const option = config.find(item => item.id === kind || item.category === kind || (kind === "thought_level" && ["reasoning_effort", "thinking", "effort"].includes(String(item.id))));
+    const choices = configChoices(option);
+    const matches = choices.filter(item => item.value === requested || item.name === requested);
+    if (!option || matches.length !== 1 || typeof option.id !== "string") throw new SupervisorError("UNSUPPORTED", `ACP does not offer an unambiguous ${kind}=${requested}; available: ${choices.map(item => item.value).join(", ")}`);
+    const value = matches[0]!.value;
+    const result = object(await this.client.request("session/set_config_option", { sessionId: this.sessionId, configId: option.id, value }, 30_000));
+    const updated = array(result.configOptions);
+    if (updated.find(item => item.id === option.id)?.currentValue !== value) throw new SupervisorError("HARNESS_ERROR", `ACP did not confirm ${kind}=${requested}`);
+    return updated;
+  }
+
+  private readRuntimeInfo(config: Obj[], agent: Obj): HarnessRuntimeInfo {
     const model = config.find(item => item.category === "model" || item.id === "model");
-    const choices: Obj[] = [];
-    const walk = (items: Obj[]) => { for (const item of items) { if (typeof item.value === "string") choices.push(item); walk(array(item.options)); } };
-    walk(array(model?.options));
-    const choice = choices.find(item => item.value === model?.currentValue);
+    const choice = configChoices(model).find(item => item.value === model?.currentValue);
     const effort = config.find(item => item.category === "thought_level" || ["reasoning_effort", "thinking", "effort"].includes(String(item.id)));
     const text = (value: unknown) => typeof value === "string" && value.trim() ? safeText(value, 200) : undefined;
-    const agent = object(init.agentInfo);
-    this.runtimeInfo = {
+    return {
       modelId: text(model?.currentValue),
       // Default aliases remain explicit: a description is a native report, not an inferred backend ID.
       modelName: text(choice?.description) && model?.currentValue === "default"
@@ -88,8 +103,6 @@ export class NativeAcpSession implements HarnessSession {
       reasoningEffort: text(effort?.currentValue),
       adapter: text([text(agent.name), text(agent.version)].filter(Boolean).join(" ")),
     };
-    this.sessionFile = path.join(spec.sessionDir, `${this.options.runtime}-acp-session.json`);
-    await atomicWriteJson(this.sessionFile, { runtime: this.options.runtime, protocol: "acp", id: this.sessionId, cwd: spec.cwd });
   }
   async getState() { return { sessionId: this.sessionId, sessionFile: this.sessionFile, runtimeInfo: { ...this.runtimeInfo } }; }
   isAlive() { return this.client.isAlive(); }

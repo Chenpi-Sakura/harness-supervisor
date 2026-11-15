@@ -1,7 +1,7 @@
 {
   "name": "harness-supervisor",
   "version": "0.13.0",
-  "description": "A small lifecycle and messaging layer for native AI agent harnesses (Pi first).",
+  "description": "A lightweight local lifecycle and communication layer for native AI agent workers, with CLI, MCP and WebUI.",
   "type": "module",
   "license": "MIT",
   "homepage": "https://gitcode.com/chenpi_1/harness-supervisor",

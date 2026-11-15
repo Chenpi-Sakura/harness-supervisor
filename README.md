@@ -2,7 +2,16 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.13.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20Qoder%20CN%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.13.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+
+<p>
+  <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/pi.svg" alt="Pi" height="28">
+  <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/qoder.svg" alt="Qoder CLI" height="28">
+  <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/mcode.svg" alt="MiniMax Code" height="28">
+  <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/dsh.svg" alt="DeepSeek Harness" height="28">
+  <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/codex.svg" alt="Codex" height="28">
+  <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/claude.svg" alt="Claude Code" height="28">
+</p>
 
 <hr />
 

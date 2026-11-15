@@ -1,7 +1,7 @@
 {
   "name": "harness-supervisor",
   "version": "0.13.0",
-  "description": "A lightweight local lifecycle and communication layer for native AI agent workers, with CLI, MCP and WebUI. | 本地、轻量的原生 AI Worker 生命周期与通信管理工具，支持 CLI、MCP 和 WebUI。",
+  "description": "Make other harnesses work for yours. Turn native AI harnesses into subagents your main harness can command and manage. | 让你的主 Harness 当老板，其他 Harness 来干活。把各家原生 Harness 变成它可委派、可管理的子智能体。",
   "type": "module",
   "license": "MIT",
   "homepage": "https://gitcode.com/chenpi_1/harness-supervisor",

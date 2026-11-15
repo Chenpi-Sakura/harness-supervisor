@@ -51,34 +51,7 @@ dsh plugin --profile desktop add dsh-harness-supervisor@latest
 
 ## 快速开始
 
-### 独立 CLI
-
-以下示例使用已安装并配置好的 Pi。将 `D:/work/demo` 替换为现有工作目录：
-
-```powershell
-harness-sup up
-harness-sup spawn --runtime pi --cwd D:/work/demo --prompt "Create hello.txt containing hello. Then reply exactly DONE." --name demo-worker --json
-```
-
-`spawn` 返回任务已接受的状态。复制返回的 Worker ID，再读取状态或等待结果：
-
-```powershell
-harness-sup list
-harness-sup status <workerId>
-harness-sup wait <workerId> --timeout-ms 60000
-```
-
-需要与 Worker 通信、取消、恢复或续接时，查看 `harness-sup help` 和下方接口说明。`down` 会关闭 daemon 并取消活动 Worker，结束查看时不必执行它。
-
-独立 CLI/MCP 默认状态目录为 `~/.harness-supervisor`，可用 `--state-dir <dir>` 或 `HARNESS_SUPERVISOR_HOME` 选择实例。DSH 插件使用其数据目录下的 `harness-supervisor` 专属实例，由插件携带的核心启动。默认专属实例在最后一个 DSH 宿主退出后正常关闭，同时取消尚在运行的 Worker；仅禁用插件不触发关闭。独立 npm／自定义 HS 保持独立运行，两种生命周期模式不能复用同一个状态目录。另一台机器同样从 npm 安装，并配置本机 Harness；账号登录态、运行进程与任务记录不会随安装包迁移。
-
-### 在 DSH 中使用
-
-插件启用后，可直接让 DSH 委派原生 Worker。右侧栏入口和对话顶部标签可以打开共用 WebUI；`/hs` 可在右侧浏览器中打开。**设置 → Harness Supervisor** 只提供 HS 核心来源选择、保存、刷新状态与诊断详情；选择自定义来源时填写安装目录，设置页不嵌入 WebUI。
-
-人工界面可查看本机当前 HS 实例的全部 Worker，默认展开当前对话；模型的查询、操作和通知 ACK 仍受会话归属约束。
-
-## MCP 接入
+### MCP 接入
 
 MCP server 是 daemon 的客户端。建议先在普通终端启动 daemon，尤其是宿主会在退出时清理 MCP 子进程树的场景：
 
@@ -108,6 +81,33 @@ harness-sup-mcp --mode production --owner-ref <stable-session-reference> --notif
 ```
 
 该连接只能操作所属会话的 Worker 与通知 ACK，不继承共享 daemon 的 Codex 通知目标。旧 Worker 不自动归入新会话，仍可通过全局 CLI 查询。DSH 插件会自动设置归属。归属检查是路由护栏，不是操作系统沙箱。
+
+### 在 DSH 中使用
+
+插件启用后，可直接让 DSH 委派原生 Worker。右侧栏入口和对话顶部标签可以打开共用 WebUI；`/hs` 可在右侧浏览器中打开。**设置 → Harness Supervisor** 只提供 HS 核心来源选择、保存、刷新状态与诊断详情；选择自定义来源时填写安装目录，设置页不嵌入 WebUI。
+
+人工界面可查看本机当前 HS 实例的全部 Worker，默认展开当前对话；模型的查询、操作和通知 ACK 仍受会话归属约束。
+
+### 独立 CLI
+
+以下示例使用已安装并配置好的 Pi。将 `D:/work/demo` 替换为现有工作目录：
+
+```powershell
+harness-sup up
+harness-sup spawn --runtime pi --cwd D:/work/demo --prompt "Create hello.txt containing hello. Then reply exactly DONE." --name demo-worker --json
+```
+
+`spawn` 返回任务已接受的状态。复制返回的 Worker ID，再读取状态或等待结果：
+
+```powershell
+harness-sup list
+harness-sup status <workerId>
+harness-sup wait <workerId> --timeout-ms 60000
+```
+
+需要与 Worker 通信、取消、恢复或续接时，查看 `harness-sup help` 和下方接口说明。`down` 会关闭 daemon 并取消活动 Worker，结束查看时不必执行它。
+
+独立 CLI/MCP 默认状态目录为 `~/.harness-supervisor`，可用 `--state-dir <dir>` 或 `HARNESS_SUPERVISOR_HOME` 选择实例。DSH 插件使用其数据目录下的 `harness-supervisor` 专属实例，由插件携带的核心启动。默认专属实例在最后一个 DSH 宿主退出后正常关闭，同时取消尚在运行的 Worker；仅禁用插件不触发关闭。独立 npm／自定义 HS 保持独立运行，两种生命周期模式不能复用同一个状态目录。另一台机器同样从 npm 安装，并配置本机 Harness；账号登录态、运行进程与任务记录不会随安装包迁移。
 
 ## WebUI
 

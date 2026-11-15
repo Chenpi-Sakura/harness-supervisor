@@ -18,10 +18,9 @@ import { ensureDir } from "../../util/fsx.js";
 import { safeText } from "../../util/redact.js";
 import {
   DEFAULT_INPUT_TIMEOUT_MS,
-  QODER_INPUT_TIMEOUT_ENV,
   resolveRuntimeInputTimeoutMs,
 } from "../../input-timeout.js";
-import type { QoderLaunch, QoderPermissionMode } from "./launch.js";
+import { qoderEnvPrefix, type QoderLaunch, type QoderPermissionMode, type QoderRuntime } from "./launch.js";
 
 export interface QoderAcpSessionOptions {
   launch: QoderLaunch;
@@ -279,6 +278,7 @@ export class QoderAcpSession implements HarnessSession {
   private readonly maxStderrTail: number;
   private readonly cwd: string;
   private readonly sessionDir: string;
+  private readonly runtime: QoderRuntime;
   private readonly resumeSessionId: string | undefined;
   private readonly permissionMode: QoderPermissionMode | undefined;
   private readonly modelId: string | undefined;
@@ -322,6 +322,7 @@ export class QoderAcpSession implements HarnessSession {
     this.maxStderrTail = options.stderrTailBytes ?? 32 * 1024;
     this.cwd = options.cwd;
     this.sessionDir = options.sessionDir;
+    this.runtime = options.launch.runtime ?? "qoder";
     this.resumeSessionId = options.resumeSessionId;
     this.permissionMode = options.permissionMode;
     this.modelId = options.modelId;
@@ -412,7 +413,7 @@ export class QoderAcpSession implements HarnessSession {
     const payload = {
       type: "session",
       id: sessionId,
-      runtime: "qoder",
+      runtime: this.runtime,
       protocol: "acp",
       cwd: this.cwd,
       // Persist the catalog so a resumed session can resolve a display-name
@@ -647,7 +648,7 @@ export class QoderAcpSession implements HarnessSession {
       type: "progress",
       kind: "session_init",
       detail: safeText(
-        `qoder-cli ${this.agentVersion ?? "unknown"} (acp, ${kind}, mode=${this.permissionMode ?? "default"})`,
+        `${this.runtime === "qoder-cn" ? "qoder-cli-cn" : "qoder-cli"} ${this.agentVersion ?? "unknown"} (acp, ${kind}, mode=${this.permissionMode ?? "default"})`,
         500,
       ),
     });
@@ -660,7 +661,7 @@ export class QoderAcpSession implements HarnessSession {
     }
     return new SupervisorError(
       "HARNESS_ERROR",
-      `${message} (run \`qodercli login\` with the same OS user, then retry the worker)`,
+      `${message} (run \`${this.runtime === "qoder-cn" ? "qodercn" : "qodercli"} login\` with the same OS user, then retry the worker)`,
       { method },
     );
   }
@@ -1163,7 +1164,7 @@ export class QoderAcpSession implements HarnessSession {
       timer: setTimeout(() => undefined, 0),
     };
     const timeoutMs = resolveRuntimeInputTimeoutMs({
-      specificEnv: QODER_INPUT_TIMEOUT_ENV,
+      specificEnv: `${qoderEnvPrefix(this.runtime)}_INPUT_TIMEOUT_MS`,
       defaultMs: DEFAULT_PERMISSION_TIMEOUT_MS,
     });
 
@@ -1304,7 +1305,7 @@ export class QoderAcpSession implements HarnessSession {
     }
 
     const timeoutMs = resolveRuntimeInputTimeoutMs({
-      specificEnv: QODER_INPUT_TIMEOUT_ENV,
+      specificEnv: `${qoderEnvPrefix(this.runtime)}_INPUT_TIMEOUT_MS`,
       defaultMs: DEFAULT_PERMISSION_TIMEOUT_MS,
     });
 
@@ -1682,19 +1683,19 @@ export class QoderAcpSession implements HarnessSession {
  * first line must carry `{ "type": "session", "protocol": "acp", "id": ... }`;
  * a stream-json session file never matches because it has no protocol marker.
  */
-export async function readQoderAcpSessionHandle(handleFile: string): Promise<string | null> {
+export async function readQoderAcpSessionHandle(handleFile: string, runtime?: QoderRuntime): Promise<string | null> {
+  let parsed: { type?: unknown; protocol?: unknown; id?: unknown; runtime?: unknown };
   try {
     const raw = await readFile(handleFile, "utf8");
     const firstLine = raw.split("\n", 1)[0];
     if (!firstLine) return null;
-    const parsed = JSON.parse(firstLine) as {
-      type?: unknown;
-      protocol?: unknown;
-      id?: unknown;
-    };
-    if (parsed.type !== "session" || parsed.protocol !== "acp") return null;
-    return typeof parsed.id === "string" && parsed.id.length > 0 ? parsed.id : null;
+    parsed = JSON.parse(firstLine);
   } catch {
     return null;
   }
+  if (parsed.type !== "session" || parsed.protocol !== "acp") return null;
+  if (runtime && (parsed.runtime ?? "qoder") !== runtime) {
+    throw new SupervisorError("UNSUPPORTED", `This ACP session belongs to ${parsed.runtime ?? "qoder"}, not ${runtime}`);
+  }
+  return typeof parsed.id === "string" && parsed.id.length > 0 ? parsed.id : null;
 }

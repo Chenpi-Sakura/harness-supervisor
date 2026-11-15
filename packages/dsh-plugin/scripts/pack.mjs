@@ -8,8 +8,8 @@ import { verifyProductionTree } from "../../../scripts/verify-production-tree.mj
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const arg = process.argv.indexOf("--core-tarball");
-if (arg >= 0 && !process.argv[arg + 1]) throw new Error("Usage: node scripts/pack.mjs [--core-tarball <harness-supervisor-0.12.3.tgz>]");
-const tarball = path.resolve(arg >= 0 ? process.argv[arg + 1] : path.join(root, "../../.artifacts/harness-supervisor-0.12.3.tgz"));
+if (arg >= 0 && !process.argv[arg + 1]) throw new Error("Usage: node scripts/pack.mjs [--core-tarball <harness-supervisor-0.13.0.tgz>]");
+const tarball = path.resolve(arg >= 0 ? process.argv[arg + 1] : path.join(root, "../../.artifacts/harness-supervisor-0.13.0.tgz"));
 const output = path.join(root, ".artifacts");
 await mkdir(output, { recursive: true });
 await import("./build.mjs");
@@ -44,9 +44,10 @@ if (core.name !== "harness-supervisor" || core.version !== manifest.dependencies
 for (const name of ["dist/src/mcp.js", "dist/src/daemon-entry.js", "dist/web/index.html"]) await readFile(path.join(stage, "node_modules/harness-supervisor", name));
 const productionLock = JSON.parse(await readFile(path.join(coreRoot, "production-lock.json"), "utf8"));
 if (productionLock.version !== core.version || productionLock.lockfileVersion !== 3) throw new Error("A matching core production-lock.json is required");
-await verifyProductionTree(path.join(stage, "node_modules"), productionLock, [`${core.name}@${core.version}`]);
-// Remove temporary file specifiers: an installed plugin never refers to the build checkout.
-await writeFile(path.join(stage, "package.json"), JSON.stringify(manifest, null, 2));
+await verifyProductionTree(path.join(stage, "node_modules"), productionLock, [`${core.name}@${core.version}`], { portable: true });
+// A bundled core is opaque to npm's dependency traversal. Expose its exact
+// platform payloads at the install root so Windows/macOS don't inherit Linux binaries.
+await writeFile(path.join(stage, "package.json"), JSON.stringify({ ...manifest, optionalDependencies: core.optionalDependencies }, null, 2));
 const packedResult = JSON.parse(run(["pack", stage, "--ignore-scripts", "--json", "--pack-destination", output]));
 const packed = Array.isArray(packedResult) ? packedResult[0] : Object.values(packedResult)[0];
 const release = path.join(output, packed.filename);

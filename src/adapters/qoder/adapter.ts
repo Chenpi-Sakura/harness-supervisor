@@ -12,6 +12,7 @@ import type {
 import { ensureDir } from "../../util/fsx.js";
 import {
   qoderConfigRoots,
+  qoderEnvPrefix,
   resolveQoderLaunch,
   resolveQoderPermissionMode,
   resolveQoderProtocol,
@@ -20,11 +21,13 @@ import {
   type QoderLaunch,
   type QoderPermissionMode,
   type QoderProtocol,
+  type QoderRuntime,
 } from "./launch.js";
 import { QoderAcpSession, readQoderAcpSessionHandle } from "./acp-session.js";
 import { QoderCliSession } from "./session.js";
 
 export interface QoderAdapterOptions {
+  runtime?: QoderRuntime;
   launch?: QoderLaunch;
   protocol?: QoderProtocol;
   permissionMode?: QoderPermissionMode;
@@ -61,7 +64,7 @@ const ACP_CAPABILITIES: RuntimeCapabilities = {
 };
 
 export class QoderAdapter implements HarnessAdapter {
-  readonly name = "qoder";
+  readonly name: QoderRuntime;
   readonly capabilities: RuntimeCapabilities;
   private readonly options: QoderAdapterOptions;
   private readonly protocol: QoderProtocol;
@@ -69,8 +72,12 @@ export class QoderAdapter implements HarnessAdapter {
 
   constructor(options: QoderAdapterOptions = {}) {
     this.options = options;
-    this.protocol = options.protocol ?? resolveQoderProtocol(process.env);
-    this.capabilities = this.protocol === "acp" ? ACP_CAPABILITIES : STREAM_JSON_CAPABILITIES;
+    this.name = options.runtime ?? "qoder";
+    this.protocol = options.protocol ?? resolveQoderProtocol(process.env, this.name);
+    const capabilities = this.protocol === "acp" ? ACP_CAPABILITIES : STREAM_JSON_CAPABILITIES;
+    this.capabilities = { ...capabilities, runtime: this.name, ...(this.name === "qoder-cn" ? {
+      notes: "Qoder CN reuses the Qoder protocol adapter with a separate executable and config/session identity. Qoder version-specific real validation below does not imply validation of every CN build. " + capabilities.notes.replaceAll("HARNESS_SUPERVISOR_QODER_", "HARNESS_SUPERVISOR_QODER_CN_").replaceAll("qodercli", "qodercn"),
+    } : {}) };
   }
 
   get processIdentity(): "command-line" | "conservative" {
@@ -79,14 +86,14 @@ export class QoderAdapter implements HarnessAdapter {
   }
 
   instanceRef(): string {
-    const root = qoderConfigRoots(process.env)[0] ?? "(none)";
-    let file = "qodercli";
+    const root = qoderConfigRoots(process.env, this.name)[0] ?? "(none)";
+    let file = this.name === "qoder-cn" ? "qodercn" : "qodercli";
     try {
       file = this.resolveLaunch().file;
     } catch {
       // Identity is best effort; a launch error surfaces when a session starts.
     }
-    return `qoder:${this.protocol}:${file}:${root}`;
+    return `${this.name}:${this.protocol}:${file}:${root}`;
   }
 
   async spawn(spec: HarnessSpawnSpec, callbacks: HarnessCallbacks): Promise<HarnessSession> {
@@ -142,12 +149,12 @@ export class QoderAdapter implements HarnessAdapter {
       );
     }
 
-    const acpSessionId = await readQoderAcpSessionHandle(resolved);
+    const acpSessionId = await readQoderAcpSessionHandle(resolved, this.name);
     if (acpSessionId) {
       if (this.protocol !== "acp") {
         throw new SupervisorError(
           "UNSUPPORTED",
-          "This worker was created with the Qoder ACP transport. Unset HARNESS_SUPERVISOR_QODER_PROTOCOL (default acp) or set it to acp to resume it; stream-json cannot load an ACP session.",
+          `This worker was created with the Qoder ACP transport. Set ${qoderEnvPrefix(this.name)}_PROTOCOL=acp to resume it; stream-json cannot load an ACP session.`,
           { sessionFile: resolved },
         );
       }
@@ -157,7 +164,7 @@ export class QoderAdapter implements HarnessAdapter {
     if (this.protocol === "acp") {
       throw new SupervisorError(
         "UNSUPPORTED",
-        "This worker was created with the Qoder stream-json transport. Set HARNESS_SUPERVISOR_QODER_PROTOCOL=stream-json to resume it; ACP cannot load a stream-json session.",
+        `This worker was created with the Qoder stream-json transport. Set ${qoderEnvPrefix(this.name)}_PROTOCOL=stream-json to resume it; ACP cannot load a stream-json session.`,
         { sessionFile: resolved },
       );
     }
@@ -237,7 +244,7 @@ export class QoderAdapter implements HarnessAdapter {
 
   private resolveLaunch(): QoderLaunch {
     if (!this.launch) {
-      this.launch = this.options.launch ?? resolveQoderLaunch();
+      this.launch = this.options.launch ?? resolveQoderLaunch(process.env, this.name);
     }
     return this.launch;
   }
@@ -245,11 +252,11 @@ export class QoderAdapter implements HarnessAdapter {
   /** Per-worker environment (command guard, worker id) never mutates the daemon env. */
   private launchFor(spec: HarnessSpawnSpec): QoderLaunch {
     const base = this.resolveLaunch();
-    return spec.env ? { ...base, env: { ...base.env, ...spec.env } } : base;
+    return { ...base, runtime: this.name, env: { ...base.env, ...spec.env } };
   }
 
   private resolvePermissionMode(): QoderPermissionMode {
-    return this.options.permissionMode ?? resolveQoderPermissionMode(process.env);
+    return this.options.permissionMode ?? resolveQoderPermissionMode(process.env, this.name);
   }
 
   private buildArgs(

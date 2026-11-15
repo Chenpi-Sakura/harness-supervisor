@@ -5,6 +5,20 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { alreadyPublished, publishedPackages, releaseMetadata, stageRelease, verifyRelease, waitForPublished } from "./npm-release.mjs";
+import { platformDependencies } from "../../scripts/platform-dependencies.mjs";
+
+test("portable artifacts expose exact platform optional dependencies, including npm aliases", () => {
+  const lock = { packages: {
+    "": { version: "1.0.0" },
+    "node_modules/@openai/codex-win32-x64": { name: "@openai/codex", version: "0.169.0-win32-x64", optional: true, os: ["win32"], cpu: ["x64"] },
+    "node_modules/linux-payload": { version: "1.2.3", optional: true, os: ["linux"], libc: ["glibc"] },
+    "node_modules/dev-tool": { version: "9.0.0", optional: true, dev: true, os: ["win32"] },
+    "node_modules/js-helper": { version: "1.0.0", optional: true },
+  } };
+  assert.deepEqual(platformDependencies(lock), { "@openai/codex-win32-x64": "npm:@openai/codex@0.169.0-win32-x64", "linux-payload": "1.2.3" });
+  lock.packages["node_modules/other/node_modules/linux-payload"] = { version: "2.0.0", optional: true, os: ["linux"] };
+  assert.throws(() => platformDependencies(lock), /Conflicting platform dependency/);
+});
 
 const env = { GITHUB_REPOSITORY: "example/hs", GITHUB_EVENT_NAME: "push", GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v1.2.3" };
 const writeJson = (file, value) => writeFile(file, JSON.stringify(value));

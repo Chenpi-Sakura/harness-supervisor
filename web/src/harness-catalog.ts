@@ -1,8 +1,5 @@
-/** Shared display names. Runtime identifiers remain the wire/storage contract. */
-export const harnessNames: Readonly<Record<string, string>> = Object.freeze({
-  pi: "Pi", qoder: "Qoder", mcode: "MiniMax Code", dsh: "DeepSeek Harness",
-  codex: "Codex", claude: "Claude Code",
-});
+import { harnessNames } from "../../src/harness-catalog.js";
+export { harnessNames };
 
 export function harnessName(runtime: string): string {
   return harnessNames[runtime] ?? runtime;

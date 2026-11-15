@@ -79,6 +79,47 @@ test("dependency junctions cannot escape a deployable install tree", async () =>
   await assert.rejects(() => prepareManagedRuntime(dir, source), /symbolic link dependency/);
 });
 
+test("managed runtimes retain installed optional payloads; portable releases omit them", async () => {
+  const dir = await state(), source = await fixture();
+  await writeFile(path.join(source, "package.json"), JSON.stringify({ name: "harness-supervisor", version: VERSION,
+    optionalDependencies: { "fixture-native": "npm:fixture-payload@1.0.0", "fixture-other-platform": "1.0.0" } }));
+  const payload = path.join(source, "node_modules/fixture-native");
+  await mkdir(payload, { recursive: true });
+  await writeFile(path.join(payload, "package.json"), JSON.stringify({ name: "fixture-payload", version: "1.0.0", os: [process.platform] }));
+  await writeFile(path.join(payload, "native.bin"), "native payload");
+  await writeFile(path.join(source, "production-lock.json"), JSON.stringify({ name: "harness-supervisor", packages: {
+    "": { version: VERSION }, "node_modules/fixture-native": { name: "fixture-payload", version: "1.0.0", optional: true },
+  } }));
+  const managed = await prepareManagedRuntime(dir, source);
+  assert.equal(await readFile(path.join(managed.root, "node_modules/fixture-native/native.bin"), "utf8"), "native payload");
+  const portable = await prepareManagedRuntime(dir, source, { includeOptionalDependencies: false });
+  assert.notEqual(portable.id, managed.id);
+  await assert.rejects(readFile(path.join(portable.root, "node_modules/fixture-native/package.json")), { code: "ENOENT" });
+  await writeFile(path.join(managed.root, "node_modules/fixture-native/native.bin"), "tampered");
+  await assert.rejects(readManagedRuntime(dir, managed.id), /integrity/);
+  await writeFile(path.join(payload, "package.json"), JSON.stringify({ name: "fixture-payload", version: "2.0.0" }));
+  await assert.rejects(prepareManagedRuntime(dir, source), /differs from the production lock/);
+});
+
+test("PNPM optional aliases are copied from the installation store only with a matching lock", async () => {
+  const dir = await state(), source = await fixture();
+  const modules = path.join(source, "node_modules");
+  const payload = path.join(modules, ".pnpm/fixture-native@1.0.0/node_modules/fixture-native");
+  await mkdir(payload, { recursive: true });
+  await writeFile(path.join(payload, "package.json"), JSON.stringify({ name: "fixture-payload", version: "1.0.0" }));
+  await writeFile(path.join(payload, "index.js"), "export const native = true;");
+  await symlink(payload, path.join(modules, "fixture-native"), process.platform === "win32" ? "junction" : "dir");
+  await writeFile(path.join(source, "package.json"), JSON.stringify({ name: "harness-supervisor", version: VERSION,
+    optionalDependencies: { "fixture-native": "npm:fixture-payload@1.0.0" } }));
+  await writeFile(path.join(source, "production-lock.json"), JSON.stringify({ name: "harness-supervisor", packages: {
+    "": { version: VERSION }, "node_modules/fixture-native": { name: "fixture-payload", version: "1.0.0", optional: true },
+  } }));
+  const managed = await prepareManagedRuntime(dir, source);
+  assert.equal(await readFile(path.join(managed.root, "node_modules/fixture-native/index.js"), "utf8"), "export const native = true;");
+  await writeFile(path.join(payload, "package.json"), JSON.stringify({ name: "fixture-payload", version: "2.0.0" }));
+  await assert.rejects(prepareManagedRuntime(dir, source), /differs from the production lock/);
+});
+
 test("clients never auto-start an old runtime during handoff or uncertain recovery", async () => {
   const dir = await state(), source = await fixture();
   const cached = await prepareManagedRuntime(dir, source);

@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 /** Release-time check shared by core and plugin packaging. */
-export async function verifyProductionTree(modules, lock, extraPairs = []) {
+export async function verifyProductionTree(modules, lock, extraPairs = [], { portable = false } = {}) {
   const expected = new Set([
     ...Object.entries(lock.packages).filter(([key, value]) => key && !value.dev).map(([key, value]) => `${value.name || key.slice(key.lastIndexOf("node_modules/") + 13)}@${value.version}`),
     ...extraPairs,
@@ -11,6 +11,7 @@ export async function verifyProductionTree(modules, lock, extraPairs = []) {
   async function inspect(directory) {
     if ((await lstat(directory)).isSymbolicLink()) throw Error("Release dependencies cannot be checkout links");
     const installed = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
+    if (portable && (installed.os || installed.cpu || installed.libc)) throw Error(`Platform payload ${installed.name} must be installed on the target, not bundled`);
     if (!expected.has(`${installed.name}@${installed.version}`)) throw Error(`Dependency ${installed.name}@${installed.version} differs from the verified production lock`);
     const req = createRequire(path.join(directory, "package.json"));
     for (const name of Object.keys(installed.dependencies ?? {})) {

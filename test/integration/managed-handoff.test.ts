@@ -26,7 +26,9 @@ async function cloneForCandidate(source: string, target: string): Promise<void> 
 test("two self-contained cached cores hand off after draining and preserve native continuation", { timeout: 300_000 }, async (t) => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "hs-core-handoff-"));
   const packageRoot = packageRootFromModule();
-  const baseline = await prepareManagedRuntime(stateDir, packageRoot);
+  // This handoff exercises Pi, not either bundled native ACP executable.
+  // Optional payload copying and integrity have their own runtime tests.
+  const baseline = await prepareManagedRuntime(stateDir, packageRoot, { includeOptionalDependencies: false });
   const candidateRoot = path.join(stateDir, "candidate-source");
   await cloneForCandidate(baseline.root, candidateRoot);
   const entry = path.join(candidateRoot, "dist/src/daemon-entry.js");

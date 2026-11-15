@@ -56,7 +56,7 @@ const fragment = (seq, preview, extra = {}) => ({ ...event("run.progress", { kin
 test("known ACP thinking deltas merge verbatim, remain fully searchable and retain every raw event", () => {
   const source = [fragment(1, "We"), fragment(2, " "), fragment(3, "should\n  inspect "), fragment(4, "好".repeat(250) + " FullTextMarker")];
   const before = structuredClone(source);
-  for (const runtime of ["qoder", "mcode", "dsh"]) {
+  for (const runtime of ["qoder", "qoder-cn", "mcode", "dsh", "codex", "claude"]) {
     const entries = buildTimelineEntries(source, runtime);
     assert.equal(entries.length, 1);
     assert.equal(entries[0].recordedText, "We should\n  inspect " + "好".repeat(250) + " FullTextMarker");

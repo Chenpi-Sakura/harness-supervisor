@@ -388,10 +388,7 @@ test("an interrupted requestId returns UNCERTAIN after a daemon restart and is n
   await inFlight;
 
   restarted = new TestDaemon(daemon.stateDir);
-  const client2 = await connectExisting(daemon.stateDir, 20_000).catch(async () => {
-    const fresh = await restarted!.start();
-    return fresh;
-  });
+  const client2 = await restarted.start();
   await assert.rejects(
     () =>
       client2.request("spawn", {

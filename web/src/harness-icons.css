@@ -14,6 +14,7 @@
 }
 .harness-icon--pi { -webkit-mask-image: url("./assets/harness/pi.svg"); mask-image: url("./assets/harness/pi.svg"); }
 .harness-icon--qoder { -webkit-mask-image: url("./assets/harness/qoder.svg"); mask-image: url("./assets/harness/qoder.svg"); }
+.harness-icon--qoder-cn { -webkit-mask-image: url("./assets/harness/qoder.svg"); mask-image: url("./assets/harness/qoder.svg"); }
 .harness-icon--mcode { -webkit-mask-image: url("./assets/harness/minimax.svg"); mask-image: url("./assets/harness/minimax.svg"); }
 .harness-icon--dsh { -webkit-mask-image: url("./assets/harness/deepseek.svg"); mask-image: url("./assets/harness/deepseek.svg"); }
 .harness-icon--generic { background: none; }

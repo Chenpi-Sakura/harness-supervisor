@@ -1,6 +1,6 @@
 # DSH Harness Supervisor
 
-将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、MiniMax Code、DeepSeek Harness、Codex、Claude Code 等原生 Worker。社区独立维护。Codex 与 Claude Code 的 ACP 适配器需另行安装，方法见完整项目 README。
+将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、Qoder CN、MiniMax Code、DeepSeek Harness、Codex、Claude Code 等原生 Worker。社区独立维护。Codex 与 Claude Code 的 ACP 适配器及配套原生程序随包安装，沿用原生账号认证和设置。
 
 [项目仓库](https://github.com/Chenpi-Sakura/harness-supervisor) · [完整项目 README](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/README.md) · [npm](https://www.npmjs.com/package/dsh-harness-supervisor)
 
@@ -16,7 +16,7 @@
 dsh plugin --profile desktop add dsh-harness-supervisor@latest
 ```
 
-插件包含固定配套的 HS 核心、生产依赖和 WebUI，无需 Clone、编译或额外全局安装 HS。Worker 对应的原生 Harness CLI 仍需安装并配置账号。
+插件包含固定配套的 HS 核心、生产依赖和 WebUI，无需 Clone、编译或额外全局安装 HS。Codex、Claude Code 开箱可用；其他 Worker 需先安装对应原生 CLI，所有 Harness 仍需配置账号。
 
 启用后，直接让 DSH 委派 Worker；插件会自动配置原生 MCP 连接。从右侧栏入口、对话顶部标签或设置中的 **Harness Supervisor** 打开 WebUI，或使用 `/hs` 在右侧浏览器打开。界面支持 DSH Desktop 和本机 DSH Web。
 

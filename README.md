@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.12.3-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.13.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![runtime](https://img.shields.io/badge/runtime-Pi%20%7C%20Qoder%20%7C%20Qoder%20CN%20%7C%20mcode%20%7C%20DSH%20%7C%20Codex%20%7C%20Claude%20Code-6f42c1) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <hr />
 
@@ -14,7 +14,7 @@
 
 ## 安装
 
-普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Worker 对应的原生 Harness CLI 或 ACP 适配器仍需自行安装，并完成原生账号配置。
+普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Codex、Claude Code 的 ACP 适配器和配套原生程序随包安装；其他 Harness 需先安装对应 CLI。账号认证和设置沿用原生 Harness。
 
 ### 独立 CLI / MCP
 
@@ -70,18 +70,20 @@ harness-sup wait <workerId> --timeout-ms 60000
 
 ## Codex 与 Claude Code Worker
 
-两者通过外部 ACP 适配器接入，HS 不锁定适配器版本，也不会在每次启动任务时下载。按需安装或更新最新稳定版：
+两者的 ACP 适配器随 HS 安装，更新发布时采用最新版本，并在发布物中固定依赖。无需另行安装适配器；启动任务时不下载。
 
 ```powershell
-npm install -g @agentclientprotocol/codex-acp@latest
-npm install -g @agentclientprotocol/claude-agent-acp@latest
 harness-sup spawn --runtime codex --model gpt-6-luna --thinking low --cwd D:/work/demo --prompt "完成任务并总结" --persistence persistent
 harness-sup spawn --runtime claude --cwd D:/work/demo --prompt "完成任务并总结" --persistence persistent
 ```
 
 复用原生 Harness 的认证和设置。支持持续会话、审批、取消；重启恢复要求适配器声明 `session/load`。模型与推理等级必须由适配器提供并确认；暂不接入执行中 steering、问题表单或适配器专用终端扩展。缺少安装、认证或能力时会明确报错，不自动换模型或重新创建会话。
 
-可用 `HARNESS_SUPERVISOR_CODEX_ACP_ENTRY` / `HARNESS_SUPERVISOR_CLAUDE_ACP_ENTRY` 指定适配器的绝对 JS 入口或原生可执行文件；Windows 不接受 `.cmd`/`.ps1` 启动脚本。适配器官方的 `CODEX_PATH` / `CLAUDE_CODE_EXECUTABLE` 可选择现有原生 CLI。更新适配器与 HS 发版独立，已有 Worker 不会被热替换，升级后应验证所需能力。
+可用 `HARNESS_SUPERVISOR_CODEX_ACP_ENTRY` / `HARNESS_SUPERVISOR_CLAUDE_ACP_ENTRY` 指定适配器的绝对 JS 入口或原生可执行文件；Windows 不接受 `.cmd`/`.ps1` 启动脚本。适配器官方的 `CODEX_PATH` / `CLAUDE_CODE_EXECUTABLE` 可选择现有原生 CLI。已有 Worker 不会被热替换，升级后应验证所需能力。
+
+### Qoder CN
+
+`--runtime qoder-cn` 复用 Qoder 的 ACP / stream-json 适配器，使用 `qodercn`（兼容旧命令 `qoderclicn`）和独立的 `~/.qoder-cn` 配置。自定义配置目录使用 `QODERCN_CONFIG_DIR`；HS 启动参数使用 `HARNESS_SUPERVISOR_QODER_CN_ENTRY` / `_BIN` / `_ARGS` / `_PROTOCOL` / `_PERMISSION_MODE` / `_INPUT_TIMEOUT_MS`，与国际版分别配置。WebUI 使用 Qoder 图标和品牌色，名称区分为 Qoder CN。
 
 ## MCP 接入
 
@@ -230,7 +232,7 @@ flowchart TB
 
     subgraph adapters["Runtime Adapters"]
         Pi["Pi 原生 RPC<br/>Pi 子进程"]
-        Qoder["Qoder ACP 默认 / stream-json 回退<br/>qodercli 子进程"]
+        Qoder["Qoder / Qoder CN ACP 默认 / stream-json 回退<br/>原生 CLI 子进程"]
         Mcode["MiniMax Code ACP（ndJSON）<br/>mcode acp 子进程"]
         Dsh["DeepSeek Harness ACP（ndJSON）<br/>dsh --profile acp 子进程"]
         Codex["Codex ACP 适配器<br/>Codex App Server"]
@@ -441,14 +443,15 @@ $env:HARNESS_SUPERVISOR_WORKER_PROTOCOL = '0'
 | --- | --- | --- |
 | Pi | 完整 | 原生 RPC；spawn / steer / follow-up / cancel / resume；Persistent 3 轮连续协作（同 Worker / 同 Session）；dialog 尚未单独真实覆盖 |
 | Qoder CLI | 实验性 | ACP 默认：spawn / resume / 审批 / 提问 / 取消 / Persistent 3 轮连续协作。stream-json 回退：spawn / cancel / resume；steer、follow-up 被接受但未生效 |
+| Qoder CN | 实验性 | 复用 Qoder 协议适配器；独立启动入口、配置及会话身份；协议与集成验证通过。原生 1.1.89 的 ACP 初始化与认证失败路径已实测，本机未登录，模型任务未实测 |
 | MiniMax Code | 实验性 | ACP：spawn / 完成 / 取消 / resume / Persistent 3 轮连续协作；活跃回合内 steer；queue 入队；Ask 模式尚未触发 |
 | DSH | PoC | ACP v1：spawn / resume / 模型与推理配置 / 工作区写入 / 工作区外提权 / 完全权限 / 取消 / Persistent 3 轮连续协作 |
-| Codex | 实验性 | Codex ACP 2.6.0 + Codex CLI 0.169.0：`gpt-6-luna` / `low`；真实三轮、进程重启后恢复及文件内容核对；HS daemon/IPC 真实文件任务。审批和取消另有协议与集成测试 |
-| Claude Code | 实验性 | Claude ACP 0.107.0 + Claude Code 2.1.325：原生 MiniMax-M3.1-Flash 配置；真实三轮、进程重启后恢复及文件内容核对；HS daemon/IPC 真实文件任务。审批和取消另有协议与集成测试 |
+| Codex | 实验性 | 随包 Codex ACP 2.6.0 + Codex CLI 0.166.0：`gpt-6-luna` / `low`；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 CLI 0.169.0 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
+| Claude Code | 实验性 | 随包 Claude ACP 0.107.0 + Agent SDK 0.3.323：原生 MiniMax-M3.1-Flash 配置；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 Claude Code 2.1.325 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
 
 ### 操作能力对比
 
-`是` 表示适配器实现了该能力；`有条件` 表示依赖特定传输、扩展或版本，或只有协议/单元测试；`否` 表示明确不支持。真实运行覆盖范围见上表。
+Qoder CN 复用 Qoder 的能力列，具体能力由安装版本协商。`是` 表示适配器实现了该能力；`有条件` 表示依赖特定传输、扩展或版本，或只有协议/单元测试；`否` 表示明确不支持。真实运行覆盖范围见上表。
 
 | 操作 | Pi | Qoder ACP（默认） | Qoder stream-json 回退 | MiniMax Code | DSH | Codex / Claude ACP |
 | --- | --- | --- | --- | --- | --- | --- |

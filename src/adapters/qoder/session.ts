@@ -17,16 +17,17 @@ import { JsonlDecoder, serializeJsonLine } from "../../util/jsonl.js";
 import { safeJson, safeText } from "../../util/redact.js";
 import {
   DEFAULT_INPUT_TIMEOUT_MS,
-  QODER_INPUT_TIMEOUT_ENV,
   resolveRuntimeInputTimeoutMs,
 } from "../../input-timeout.js";
 import {
   expectedQoderSessionFile,
   locateQoderSessionFile,
   qoderConfigRoots,
+  qoderEnvPrefix,
   sameQoderPermissionMode,
   waitForQoderSessionFile,
   type QoderLaunch,
+  type QoderRuntime,
 } from "./launch.js";
 
 export interface QoderSessionOptions {
@@ -99,9 +100,9 @@ const SETTLE_WITH_QUEUE_MS = 1500;
 // fallback sends the prompt early so startup cannot deadlock on 1.1.82.
 const INIT_PROMPT_FALLBACK_MS = 1000;
 
-function permissionTimeoutMs(): number {
+function permissionTimeoutMs(runtime: QoderRuntime = "qoder"): number {
   return resolveRuntimeInputTimeoutMs({
-    specificEnv: QODER_INPUT_TIMEOUT_ENV,
+    specificEnv: `${qoderEnvPrefix(runtime)}_INPUT_TIMEOUT_MS`,
     defaultMs: DEFAULT_PERMISSION_TIMEOUT_MS,
   });
 }
@@ -232,7 +233,7 @@ export class QoderCliSession implements HarnessSession {
 
   async getState(): Promise<HarnessStateInfo> {
     if (this.sessionId) {
-      const found = await locateQoderSessionFile(this.cwd, this.sessionId, this.launch.env);
+      const found = await locateQoderSessionFile(this.cwd, this.sessionId, this.launch.env, this.launch.runtime);
       if (found) this.sessionFile = found;
     }
     return { sessionId: this.sessionId, sessionFile: this.sessionFile };
@@ -473,8 +474,9 @@ export class QoderCliSession implements HarnessSession {
       info.sessionId,
       this.launch.env,
       1500,
+      this.launch.runtime,
     );
-    const root = qoderConfigRoots(this.launch.env)[0];
+    const root = qoderConfigRoots(this.launch.env, this.launch.runtime)[0];
     this.sessionFile =
       found ?? expectedQoderSessionFile(root ?? this.cwd, this.cwd, info.sessionId);
   }
@@ -1074,7 +1076,7 @@ export class QoderCliSession implements HarnessSession {
       input,
       questions: [],
     };
-    const timeoutMs = permissionTimeoutMs();
+    const timeoutMs = permissionTimeoutMs(this.launch.runtime);
     pending.timer = this.permissionTimer(pending, timeoutMs);
     this.pendingTools.set(requestId, pending);
     this.emit({
@@ -1162,7 +1164,7 @@ export class QoderCliSession implements HarnessSession {
       input,
       questions,
     };
-    const timeoutMs = permissionTimeoutMs();
+    const timeoutMs = permissionTimeoutMs(this.launch.runtime);
     pending.timer = this.permissionTimer(pending, timeoutMs);
     this.pendingTools.set(requestId, pending);
     this.emit({

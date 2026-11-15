@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { verifyProductionTree } from "./verify-production-tree.mjs";
+import { platformDependencies } from "./platform-dependencies.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const value = (name, fallback) => { const i = process.argv.indexOf(name); return i < 0 ? fallback : process.argv[i + 1]; };
@@ -22,7 +23,7 @@ const stage = await mkdtemp(path.join(output, "core-"));
 await mkdir(path.join(stage, "dist"));
 await cp(path.join(build, "src"), path.join(stage, "dist/src"), { recursive: true });
 await cp(path.join(build, "web"), path.join(stage, "dist/web"), { recursive: true });
-const releaseManifest = { ...manifest, bundleDependencies: Object.keys(manifest.dependencies), files: [...manifest.files, "production-lock.json"] };
+const releaseManifest = { ...manifest, optionalDependencies: platformDependencies(lock), bundleDependencies: Object.keys(manifest.dependencies), files: [...manifest.files, "production-lock.json"] };
 await writeFile(path.join(stage, "package.json"), JSON.stringify(releaseManifest, null, 2));
 // npm12 removed shrinkwrap support. Ship the verified production dependency
 // tree itself and a lock snapshot for verification, without install scripts.
@@ -31,9 +32,9 @@ for (const file of ["README.md", "LICENSE"]) await cp(path.join(root, file), pat
 const npmCli = [process.env.npm_execpath, process.env.NPM_CLI_PATH, path.join(path.dirname(process.execPath), "node_modules/npm/bin/npm-cli.js")].find((candidate) => candidate && candidate.endsWith(".js") && existsSync(candidate));
 if (!npmCli) throw Error("Run through npm run pack:core");
 const { prepareManagedRuntime } = await import(pathToFileURL(path.join(build, "src/managed-runtime.js")));
-const runtime = await prepareManagedRuntime(path.join(output, "build-cache"), stage);
+const runtime = await prepareManagedRuntime(path.join(output, "build-cache"), stage, { includeOptionalDependencies: false });
 await cp(path.join(runtime.root, "node_modules"), path.join(stage, "node_modules"), { recursive: true });
-await verifyProductionTree(path.join(stage, "node_modules"), lock);
+await verifyProductionTree(path.join(stage, "node_modules"), lock, [], { portable: true });
 const child = spawnSync(process.execPath, [npmCli, "--prefix", stage, "--workspaces=false", "pack", stage, "--ignore-scripts", "--json", "--pack-destination", output], { cwd: stage, encoding: "utf8", windowsHide: true });
 if (child.status !== 0) throw Error(child.stderr || child.stdout || "Core packing failed");
 const result = JSON.parse(child.stdout);

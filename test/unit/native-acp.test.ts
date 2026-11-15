@@ -81,7 +81,16 @@ test("ACP resume uses the original session and rejects cwd/runtime mismatches", 
 });
 test("native ACP launch rejects shell shims and missing adapters instead of downloading", () => {
   assert.throws(() => resolveNativeAcpLaunch("codex", { HARNESS_SUPERVISOR_CODEX_ACP_ENTRY: "codex.cmd" }), /shell shim/);
-  assert.throws(() => resolveNativeAcpLaunch("claude", { PATH: "" }), /npm install -g/);
+  assert.throws(() => resolveNativeAcpLaunch("claude", { PATH: "" }, { modules: [], executables: [] }), /missing from this HS installation/);
+});
+
+test("both ACP adapters resolve from the HS package without a global PATH install", () => {
+  for (const runtime of ["codex", "claude"] as const) {
+    const launch = resolveNativeAcpLaunch(runtime, { PATH: "" });
+    assert.equal(launch.file, process.execPath);
+    assert.match(launch.args[0]!, /node_modules[\\/]@agentclientprotocol[\\/]/);
+    assert.match(launch.description, /@agentclientprotocol/);
+  }
 });
 
 test("ACP rejects absent model choices and an unconfirmed model selection", async t => {

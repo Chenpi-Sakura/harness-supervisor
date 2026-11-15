@@ -216,6 +216,8 @@ export class Supervisor {
   private readonly workerEnv?: (workerId: string) => NodeJS.ProcessEnv;
   private readonly runtimes = new Map<string, Runtime>();
   private readonly resuming = new Set<string>();
+  /** Existing Workers reserved before an idempotency flush or runtime startup can yield. */
+  private readonly admittedWorkers = new Map<string, number>();
   private pendingSpawns = 0;
   /** One destructive maintenance operation at a time; blocks new activations. */
   private maintenance: string | null = null;
@@ -695,6 +697,7 @@ export class Supervisor {
       const protectedWorkerIds = new Set<string>([
         ...this.runtimes.keys(),
         ...this.resuming.keys(),
+        ...this.admittedWorkers.keys(),
       ]);
       const result = await this.retention.prune({ ...options, protectedWorkerIds });
       if (options.dryRun) return { ...result, compacted: null };
@@ -792,7 +795,7 @@ export class Supervisor {
   }
 
   private async spawnOnce(input: SpawnInput, workerIdOut?: { value?: string }): Promise<WorkerSummary> {
-    this.assertAcceptingWork();
+    this.assertAdmittedWork();
     this.reserveSpawnSlot();
     try {
       const summary = await this.spawnInternal(input);
@@ -925,7 +928,7 @@ export class Supervisor {
     const config = validateConfig(input);
     const now = new Date().toISOString();
     const id = newWorkerId();
-    this.assertAcceptingWork();
+    this.assertAdmittedWork();
     const taskBinding = await this.resolveTaskForSpawn(input, id, runtimeName);
     const record: WorkerRecord = {
       schemaVersion: SCHEMA_VERSION,
@@ -973,9 +976,9 @@ export class Supervisor {
     const initialPrompt = withWorkerProtocol(input.prompt);
     try {
       await this.store.flush(id);
-      this.assertAcceptingWork();
+      this.assertAdmittedWork();
       await this.initializeSession(runtime, { initialPrompt });
-      this.assertAcceptingWork();
+      this.assertAdmittedWork();
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -1097,7 +1100,7 @@ export class Supervisor {
       ? await this.withIdempotency("resume", requestId, { workerId, input }, (workerIdOut) =>
           run(workerIdOut),
         )
-      : await run());
+      : await run(), workerId);
   }
 
   private async resumeOnce(
@@ -1105,7 +1108,7 @@ export class Supervisor {
     input: ResumeInput,
     workerIdOut?: { value?: string },
   ): Promise<WorkerSummary> {
-    this.assertAcceptingWork();
+    this.assertAdmittedWork();
     const record = this.requireWorker(workerId);
     if (this.resuming.has(workerId)) {
       throw new SupervisorError("INVALID_STATE", "Resume is already in progress for this worker", {
@@ -1158,7 +1161,7 @@ export class Supervisor {
       ? await this.withIdempotency("continue", requestId, { workerId, input }, (workerIdOut) =>
           run(workerIdOut),
         )
-      : await run());
+      : await run(), workerId);
   }
 
   private async continueOnce(
@@ -1166,7 +1169,7 @@ export class Supervisor {
     input: ResumeInput,
     workerIdOut?: { value?: string },
   ): Promise<WorkerSummary> {
-    this.assertAcceptingWork();
+    this.assertAdmittedWork();
     const record = this.requireWorker(workerId);
     const persistence = record.persistence ?? "oneshot";
     if (persistence !== "persistent") {
@@ -1371,14 +1374,14 @@ export class Supervisor {
     const initialPrompt = withWorkerProtocol(input.prompt);
     try {
       await this.store.saveWorker(record);
-      this.assertAcceptingWork();
+      this.assertAdmittedWork();
       await this.initializeSession(runtime, {
         sessionFile: record.sessionFile,
         expectedSessionId,
         resume: true,
         initialPrompt,
       });
-      this.assertAcceptingWork();
+      this.assertAdmittedWork();
       if (runtime.cancelRequested) {
         await this.ensureCancelled(runtime);
         return this.summary(record);
@@ -3137,7 +3140,7 @@ export class Supervisor {
     run: () => Promise<T>,
   ): Promise<T> {
     this.assertNewAdmission();
-    if (this.resuming.has(workerId)) {
+    if (this.resuming.has(workerId) || this.admittedWorkers.has(workerId)) {
       throw new SupervisorError(
         "INVALID_STATE",
         `A continue or resume is in progress for this worker; retry ${action} shortly`,
@@ -3364,10 +3367,14 @@ export class Supervisor {
     if (!this.initialized) throw new SupervisorError("INTERNAL", "Supervisor is not initialized");
   }
 
-  private assertAcceptingWork(): void {
+  private assertAdmittedWork(): void {
     if (this.shuttingDown) {
       throw new SupervisorError("INVALID_STATE", "Supervisor is shutting down");
     }
+  }
+
+  private assertAcceptingWork(): void {
+    this.assertAdmittedWork();
     if (this.maintenance) {
       throw new SupervisorError(
         "INVALID_STATE",
@@ -3393,13 +3400,21 @@ export class Supervisor {
     finally { this.pendingDurableMutations -= 1; }
   }
 
-  private async withAdmittedWork<T>(run: () => Promise<T>): Promise<T> {
+  private async withAdmittedWork<T>(run: () => Promise<T>, workerId?: string): Promise<T> {
     this.assertNewAdmission();
     // Reserve before idempotency.flush or any other await. Once accepted, this
     // operation may complete during draining, but handoff must wait for it.
     this.pendingAdmissions += 1;
+    if (workerId) this.admittedWorkers.set(workerId, (this.admittedWorkers.get(workerId) ?? 0) + 1);
     try { return await run(); }
-    finally { this.pendingAdmissions -= 1; }
+    finally {
+      this.pendingAdmissions -= 1;
+      if (workerId) {
+        const remaining = this.admittedWorkers.get(workerId)! - 1;
+        if (remaining) this.admittedWorkers.set(workerId, remaining);
+        else this.admittedWorkers.delete(workerId);
+      }
+    }
   }
 
   private async withMaintenance<T>(name: string, run: () => Promise<T>): Promise<T> {

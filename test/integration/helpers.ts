@@ -127,10 +127,13 @@ export class TestDaemon {
 
   private async waitForExit(timeoutMs: number): Promise<void> {
     if (!this.child || this.child.exitCode !== null) return;
-    await Promise.race([
-      new Promise<void>((resolve) => this.child!.once("exit", () => resolve())),
-      sleep(timeoutMs),
-    ]);
+    const child = this.child;
+    await new Promise<void>((resolve) => {
+      const finish = () => { clearTimeout(timer); child.off("exit", finish); resolve(); };
+      const timer = setTimeout(finish, timeoutMs);
+      child.once("exit", finish);
+      if (child.exitCode !== null || child.signalCode !== null) finish();
+    });
     if (this.child.exitCode === null) {
       try {
         process.kill(this.child.pid!, "SIGKILL");

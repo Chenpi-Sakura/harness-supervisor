@@ -9,6 +9,7 @@ import {
   qoderConfigRoots,
   resolveQoderLaunch,
   resolveQoderPermissionMode,
+  resolveQoderProtocol,
   sameQoderPermissionMode,
   sessionIdFromFile,
   validateQoderExtraArgs,
@@ -129,4 +130,26 @@ test("Qoder session paths are derived from the project directory and session id"
     expectedQoderSessionFile("C:/q", "D:\\work", id),
     path.join("C:/q", "projects", "D--work", `${id}.jsonl`),
   );
+});
+
+test("Qoder CN has independent launch, config, settings and ACP session identity", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "hs-qoder-cn-"));
+  const entry = path.join(dir, "cn.js"), handle = path.join(dir, "handle.json");
+  await writeFile(entry, "");
+  const env = { HARNESS_SUPERVISOR_QODER_CN_ENTRY: entry, HARNESS_SUPERVISOR_QODER_ENTRY: "missing-global.js",
+    HARNESS_SUPERVISOR_QODER_CN_ARGS: '["--verbose"]', HARNESS_SUPERVISOR_QODER_PROTOCOL: "stream-json",
+    HARNESS_SUPERVISOR_QODER_CN_PERMISSION_MODE: "default", QODER_CONFIG_DIR: "other-account", QODERCN_CONFIG_DIR: dir };
+  const launch = resolveQoderLaunch(env, "qoder-cn");
+  assert.equal(launch.runtime, "qoder-cn");
+  assert.deepEqual(launch.args, [entry, "--verbose"]);
+  assert.equal(launch.env.QODER_CONFIG_DIR, undefined);
+  assert.deepEqual(qoderConfigRoots(launch.env, "qoder-cn"), [path.resolve(dir)]);
+  assert.equal(resolveQoderProtocol(env, "qoder-cn"), "acp");
+  assert.equal(resolveQoderPermissionMode(env, "qoder-cn"), "default");
+  await writeFile(handle, JSON.stringify({ type: "session", protocol: "acp", runtime: "qoder-cn", id: "cn-session" }));
+  assert.equal(await readQoderAcpSessionHandle(handle, "qoder-cn"), "cn-session");
+  await assert.rejects(readQoderAcpSessionHandle(handle, "qoder"), /belongs to qoder-cn/);
+  await writeFile(handle, JSON.stringify({ type: "session", protocol: "acp", id: "legacy-session" }));
+  assert.equal(await readQoderAcpSessionHandle(handle, "qoder"), "legacy-session");
+  await assert.rejects(readQoderAcpSessionHandle(handle, "qoder-cn"), /belongs to qoder/);
 });

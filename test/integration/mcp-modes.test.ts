@@ -10,6 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SupervisorClient } from "../../src/ipc/client.js";
 import { VERSION } from "../../src/version.js";
+import { harnessNames } from "../../src/harness-catalog.js";
 import { OldDaemonFixture } from "../fixtures/old-daemon.js";
 import {
   FAKE_ENTRY,
@@ -143,6 +144,8 @@ test("MCP mode comes from CLI/env, defaults to production, and rejects invalid v
 
   const production = await connectMcp(t, stateDir, {});
   const productionInfo = parseTool(await call(production, "supervisor_info", {}));
+  assert.deepEqual(productionInfo.runtimes.map((item: { runtime: string }) => item.runtime).sort(), Object.keys(harnessNames).sort());
+  for (const name of Object.values(harnessNames)) assert.ok(production.mcp.getInstructions()?.includes(name), `MCP instructions omit ${name}`);
   assert.equal(productionInfo.mcpMode, "production");
   assert.equal(productionInfo.version, VERSION);
   assert.equal(productionInfo.running, true);
@@ -160,6 +163,7 @@ test("MCP mode comes from CLI/env, defaults to production, and rejects invalid v
 
   const development = await connectMcp(t, stateDir, { modeEnv: "development" });
   const developmentInfo = parseTool(await call(development, "supervisor_info", {}));
+  for (const name of Object.values(harnessNames)) assert.ok(development.mcp.getInstructions()?.includes(name), `Development instructions omit ${name}`);
   assert.equal(developmentInfo.version, VERSION);
   assert.equal("stateDir" in developmentInfo, true, "development keeps the daemon diagnostics");
   assert.equal("pid" in developmentInfo, true);

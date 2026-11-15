@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { createRequire } from "node:module";
 import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -98,7 +99,9 @@ async function fileHashes(root: string, prefix = ""): Promise<Record<string, str
     if (entry.isSymbolicLink()) throw new SupervisorError("BAD_REQUEST", `Runtime contains a symbolic link: ${relative}`);
     if (entry.isDirectory()) Object.assign(output, await fileHashes(root, relative));
     else if (entry.isFile()) {
-      output[relative] = createHash("sha256").update(await readFile(path.join(root, relative))).digest("hex");
+      const hash = createHash("sha256");
+      for await (const chunk of createReadStream(path.join(root, relative))) hash.update(chunk);
+      output[relative] = hash.digest("hex");
     } else throw new SupervisorError("BAD_REQUEST", `Runtime contains a non-regular file: ${relative}`);
   }
   return output;
@@ -123,7 +126,44 @@ async function copyRegularTree(source: string, destination: string, omitNodeModu
     else throw new SupervisorError("BAD_REQUEST", `Refusing non-regular runtime file: ${from}`);
   }
 }
-async function dependencyRoot(fromPackage: string, name: string): Promise<string> {
+interface DependencyLock { name?: string; packages: Record<string, { name?: string; version?: string; dev?: boolean }> }
+function lockName(location: string, record: { name?: string }): string {
+  return record.name ?? location.slice(location.lastIndexOf("node_modules/") + 13);
+}
+function within(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+async function verifyDependency(from: string, candidate: string, name: string, lock: DependencyLock): Promise<void> {
+  const consumer = await readJsonFile<{ name: string; version: string }>(path.join(from, "package.json"));
+  const installed = await readJsonFile<{ name: string; version: string }>(path.join(candidate, "package.json"));
+  const matches = Object.entries(lock.packages).filter(([location, record]) =>
+    !record.dev && (location === "" ? lock.name === consumer?.name : lockName(location, record) === consumer?.name) && record.version === consumer?.version);
+  const expected = matches.some(([location]) => {
+    let folder = location;
+    for (;;) {
+      const entry = lock.packages[`${folder ? `${folder}/` : ""}node_modules/${name}`];
+      if (entry) return lockName(`node_modules/${name}`, entry) === installed?.name && entry.version === installed?.version;
+      if (!folder) break;
+      folder = path.posix.dirname(folder);
+      if (folder === ".") folder = "";
+    }
+    return false;
+  });
+  if (!expected) throw new SupervisorError("BAD_REQUEST", `Dependency ${name} differs from the production lock`);
+}
+async function checkedPnpmDependency(from: string, search: string, candidate: string, name: string, lock: DependencyLock | null): Promise<string> {
+  const canonical = await realpath(candidate);
+  const stores = [path.join(search, ".pnpm")];
+  for (let current = path.resolve(from); ; current = path.dirname(current)) {
+    if (path.basename(current) === ".pnpm" && path.basename(path.dirname(current)) === "node_modules") stores.push(current);
+    if (current === path.dirname(current)) break;
+  }
+  if (!lock || !stores.some(store => within(store, canonical))) throw new SupervisorError("BAD_REQUEST", `Refusing symbolic link dependency ${name}`);
+  await verifyDependency(from, canonical, name, lock);
+  return canonical;
+}
+async function dependencyRoot(fromPackage: string, name: string, lock: DependencyLock | null, optional = false): Promise<string | null> {
   const req = createRequire(path.join(fromPackage, "package.json"));
   // resolve() canonicalizes a junction before we can reject it. Inspect the
   // lexical package directories in Node's own lookup order instead, including
@@ -132,23 +172,30 @@ async function dependencyRoot(fromPackage: string, name: string): Promise<string
     const candidate = path.join(search, ...name.split("/"));
     try {
       const info = await lstat(candidate);
-      if (info.isSymbolicLink()) throw new SupervisorError("BAD_REQUEST", `Refusing symbolic link dependency ${name}`);
-      if (info.isDirectory() && await readJsonFile(path.join(candidate, "package.json"))) return candidate;
+      if (info.isSymbolicLink()) return checkedPnpmDependency(fromPackage, search, candidate, name, lock);
+      if (info.isDirectory() && await readJsonFile(path.join(candidate, "package.json"))) {
+        if (lock) await verifyDependency(fromPackage, candidate, name, lock);
+        return candidate;
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
+  if (optional) return null;
   throw new SupervisorError("BAD_REQUEST", `Cannot resolve production dependency ${name}`);
 }
-async function copyProductionDependencies(source: string, destination: string): Promise<void> {
+async function copyProductionDependencies(source: string, destination: string, includeOptional: boolean): Promise<void> {
+  const lock = await readJsonFile<DependencyLock>(path.join(source, "production-lock.json"))
+    ?? await readJsonFile<DependencyLock>(path.join(source, "package-lock.json"));
   const global = new Map<string, string>();
   const copied = new Set<string>();
   const dependencies = async (from: string) => {
-    const pkg = await readJsonFile<{ dependencies?: Record<string, string> }>(path.join(from, "package.json"));
+    const pkg = await readJsonFile<{ dependencies?: Record<string, string>; optionalDependencies?: Record<string, string> }>(path.join(from, "package.json"));
     const result: Array<[string, string]> = [];
-    for (const name of Object.keys(pkg?.dependencies ?? {}).sort()) {
+    for (const name of Object.keys({ ...pkg?.dependencies, ...(includeOptional ? pkg?.optionalDependencies : {}) }).sort()) {
       if (!/^(?:@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+$/.test(name)) throw new SupervisorError("BAD_REQUEST", "Invalid dependency name");
-      const dep = await dependencyRoot(from, name);
+      const dep = await dependencyRoot(from, name, lock, Object.hasOwn(pkg?.optionalDependencies ?? {}, name));
+      if (!dep) continue;
       const canonical = await realpath(dep), lexical = path.resolve(dep);
       if ((process.platform === "win32" ? canonical.toLowerCase() !== lexical.toLowerCase() : canonical !== lexical)) {
         throw new SupervisorError("BAD_REQUEST", `Dependency is linked outside its install tree: ${name}`);
@@ -185,10 +232,10 @@ async function copyProductionDependencies(source: string, destination: string): 
 }
 
 /** Copy a complete production install before exposing its immutable cache name. */
-export async function prepareManagedRuntime(stateDir: string, sourceRoot: string): Promise<ManagedRuntime> {
-  return withRuntimeCache(stateDir, () => prepareManagedRuntimeUnlocked(stateDir, sourceRoot));
+export async function prepareManagedRuntime(stateDir: string, sourceRoot: string, options: { includeOptionalDependencies?: boolean } = {}): Promise<ManagedRuntime> {
+  return withRuntimeCache(stateDir, () => prepareManagedRuntimeUnlocked(stateDir, sourceRoot, options.includeOptionalDependencies !== false));
 }
-async function prepareManagedRuntimeUnlocked(stateDir: string, sourceRoot: string): Promise<ManagedRuntime> {
+async function prepareManagedRuntimeUnlocked(stateDir: string, sourceRoot: string, includeOptional: boolean): Promise<ManagedRuntime> {
   const source = path.resolve(sourceRoot);
   const pkg = await readJsonFile<{ name?: string; version?: string }>(path.join(source, "package.json"));
   if (pkg?.name !== "harness-supervisor" || typeof pkg.version !== "string") {
@@ -206,7 +253,7 @@ async function prepareManagedRuntimeUnlocked(stateDir: string, sourceRoot: strin
     await cp(path.join(source, "package.json"), path.join(staging, "package.json"));
     await copyRegularTree(path.join(source, "dist", "src"), path.join(staging, "dist", "src"));
     await copyRegularTree(path.join(source, "dist", "web"), path.join(staging, "dist", "web"));
-    await copyProductionDependencies(source, staging);
+    await copyProductionDependencies(source, staging, includeOptional);
     for (const file of ["dist/src/daemon-entry.js", "dist/src/runtime-update-helper.js", "dist/web/index.html"]) {
       if (!(await stat(path.join(staging, file))).isFile()) throw new SupervisorError("BAD_REQUEST", `Missing runtime artifact ${file}`);
     }

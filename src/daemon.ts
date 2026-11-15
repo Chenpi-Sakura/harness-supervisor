@@ -84,7 +84,8 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       logger.warn(`Pi RPC diagnostic for ${workerId}`, { message });
     },
   });
-  const qoderAdapter = new QoderAdapter({
+  const qoderAdapters = (["qoder", "qoder-cn"] as const).map(runtime => [runtime, new QoderAdapter({
+    runtime,
     abortTimeoutMs,
     onStderr: (workerId, text) => {
       void store.appendStderr(workerId, text).catch((error: unknown) => {
@@ -92,9 +93,9 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       });
     },
     onDiagnostic: (workerId, message) => {
-      logger.warn(`Qoder CLI diagnostic for ${workerId}`, { message });
+      logger.warn(`${runtime} CLI diagnostic for ${workerId}`, { message });
     },
-  });
+  })] as const);
   const mcodeAdapter = new McodeAdapter({
     abortTimeoutMs,
     onStderr: (workerId, text) => {
@@ -132,7 +133,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     store,
     adapters: new Map<string, HarnessAdapter>([
       ["pi", piAdapter],
-      ["qoder", qoderAdapter],
+      ...qoderAdapters,
       ["mcode", mcodeAdapter],
       ["dsh", dshAdapter],
       ...(["codex", "claude"] as const).map(runtime => [runtime, new NativeAcpAdapter(runtime, { abortTimeoutMs,

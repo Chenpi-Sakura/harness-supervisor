@@ -6,10 +6,16 @@ import path from "node:path";
 import { SupervisorError } from "../../errors.js";
 
 export interface QoderLaunch {
+  runtime?: QoderRuntime;
   file: string;
   args: string[];
   description: string;
   env: NodeJS.ProcessEnv;
+}
+
+export type QoderRuntime = "qoder" | "qoder-cn";
+export function qoderEnvPrefix(runtime: QoderRuntime): string {
+  return runtime === "qoder-cn" ? "HARNESS_SUPERVISOR_QODER_CN" : "HARNESS_SUPERVISOR_QODER";
 }
 
 export const QODER_PERMISSION_MODES = [
@@ -39,8 +45,8 @@ export const QODER_DEFAULT_PROTOCOL: QoderProtocol = "acp";
  * usage). Both transports write different session handles, so a worker is
  * resumed only through the transport that created it.
  */
-export function resolveQoderProtocol(env: NodeJS.ProcessEnv = process.env): QoderProtocol {
-  const raw = env.HARNESS_SUPERVISOR_QODER_PROTOCOL?.trim();
+export function resolveQoderProtocol(env: NodeJS.ProcessEnv = process.env, runtime: QoderRuntime = "qoder"): QoderProtocol {
+  const raw = env[`${qoderEnvPrefix(runtime)}_PROTOCOL`]?.trim();
   if (!raw) return QODER_DEFAULT_PROTOCOL;
   const normalized = raw.toLowerCase().replace(/_/g, "-");
   if (normalized === "acp") return "acp";
@@ -111,25 +117,27 @@ const RESERVED_ARGS = new Set([
   "--worktree",
 ]);
 
-function parseArgsEnv(raw: string | undefined): string[] {
+function parseArgsEnv(raw: string | undefined, prefix = "HARNESS_SUPERVISOR_QODER"): string[] {
   if (!raw) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error("HARNESS_SUPERVISOR_QODER_ARGS must be a JSON array of strings");
+    throw new Error(`${prefix}_ARGS must be a JSON array of strings`);
   }
   if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
-    throw new Error("HARNESS_SUPERVISOR_QODER_ARGS must be a JSON array of strings");
+    throw new Error(`${prefix}_ARGS must be a JSON array of strings`);
   }
   return parsed;
 }
 
-function findQoderOnPath(): string | null {
+function findQoderOnPath(command: string, env: NodeJS.ProcessEnv): string | null {
   try {
-    const output = execFileSync(process.platform === "win32" ? "where.exe" : "which", ["qodercli"], {
+    const output = execFileSync(process.platform === "win32" ? "where.exe" : "which", [command], {
       encoding: "utf8",
       windowsHide: true,
+      env,
+      stdio: ["ignore", "pipe", "ignore"],
     });
     const candidates = output
       .split(/\r?\n/)
@@ -153,8 +161,9 @@ export function sanitizeQoderEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.P
 
 export function resolveQoderPermissionMode(
   env: NodeJS.ProcessEnv = process.env,
+  runtime: QoderRuntime = "qoder",
 ): QoderPermissionMode {
-  const raw = env.HARNESS_SUPERVISOR_QODER_PERMISSION_MODE?.trim();
+  const raw = env[`${qoderEnvPrefix(runtime)}_PERMISSION_MODE`]?.trim();
   if (!raw) return QODER_DEFAULT_PERMISSION_MODE;
   const normalized = raw.replace(/-/g, "_").toLowerCase();
   if (normalized === "bypass" || normalized === "yolo") return "bypass_permissions";
@@ -182,68 +191,81 @@ export function validateQoderExtraArgs(extraArgs: string[] | undefined): void {
   }
 }
 
-export function resolveQoderLaunch(env: NodeJS.ProcessEnv = process.env): QoderLaunch {
+export function resolveQoderLaunch(env: NodeJS.ProcessEnv = process.env, runtime: QoderRuntime = "qoder"): QoderLaunch {
+  const prefix = qoderEnvPrefix(runtime);
+  const command = runtime === "qoder-cn" ? "qodercn" : "qodercli";
   const childEnv = sanitizeQoderEnv(env);
-  const explicitEntry = env.HARNESS_SUPERVISOR_QODER_ENTRY;
+  if (runtime === "qoder-cn") {
+    childEnv.QODERCN_CONFIG_DIR = path.resolve(env.QODERCN_CONFIG_DIR || path.join(os.homedir(), ".qoder-cn"));
+    delete childEnv.QODER_CONFIG_DIR;
+  }
+  const args = parseArgsEnv(env[`${prefix}_ARGS`], prefix);
+  const explicitEntry = env[`${prefix}_ENTRY`];
   if (explicitEntry) {
     const entry = path.resolve(explicitEntry);
     if (!existsSync(entry)) {
-      throw new Error(`HARNESS_SUPERVISOR_QODER_ENTRY does not exist: ${entry}`);
+      throw new Error(`${prefix}_ENTRY does not exist: ${entry}`);
     }
     return {
+      runtime,
       file: process.execPath,
-      args: [entry, ...parseArgsEnv(env.HARNESS_SUPERVISOR_QODER_ARGS)],
+      args: [entry, ...args],
       description: `node ${entry}`,
       env: childEnv,
     };
   }
 
-  const explicitBin = env.HARNESS_SUPERVISOR_QODER_BIN;
+  const explicitBin = env[`${prefix}_BIN`];
   if (explicitBin) {
     if (/\.(?:mjs|cjs|js)$/i.test(explicitBin)) {
       return {
+        runtime,
         file: process.execPath,
-        args: [path.resolve(explicitBin), ...parseArgsEnv(env.HARNESS_SUPERVISOR_QODER_ARGS)],
+        args: [path.resolve(explicitBin), ...args],
         description: `node ${explicitBin}`,
         env: childEnv,
       };
     }
     if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(explicitBin)) {
       throw new Error(
-        "HARNESS_SUPERVISOR_QODER_BIN cannot point at a .cmd/.bat shim. Point it at the real qodercli executable or a JS entry via HARNESS_SUPERVISOR_QODER_ENTRY.",
+        `${prefix}_BIN cannot point at a .cmd/.bat shim. Point it at the real ${command} executable or a JS entry via ${prefix}_ENTRY.`,
       );
     }
     return {
+      runtime,
       file: explicitBin,
-      args: parseArgsEnv(env.HARNESS_SUPERVISOR_QODER_ARGS),
+      args,
       description: explicitBin,
       env: childEnv,
     };
   }
 
-  const found = findQoderOnPath();
+  const found = findQoderOnPath(command, env) ?? (runtime === "qoder-cn" ? findQoderOnPath("qoderclicn", env) : null);
   if (found) {
     return {
+      runtime,
       file: found,
-      args: parseArgsEnv(env.HARNESS_SUPERVISOR_QODER_ARGS),
-      description: `qodercli (${found})`,
+      args,
+      description: `${command} (${found})`,
       env: childEnv,
     };
   }
   if (process.platform !== "win32") {
     return {
-      file: "qodercli",
-      args: parseArgsEnv(env.HARNESS_SUPERVISOR_QODER_ARGS),
-      description: "qodercli (PATH)",
+      runtime,
+      file: command,
+      args,
+      description: `${command} (PATH)`,
       env: childEnv,
     };
   }
   throw new Error(
-    "Could not find qodercli. Install Qoder CLI, or set HARNESS_SUPERVISOR_QODER_BIN to the qodercli executable.",
+    `Could not find ${command}. Install ${runtime === "qoder-cn" ? "Qoder CN" : "Qoder"} CLI, or set ${prefix}_BIN to its executable.`,
   );
 }
 
-export function qoderConfigRoots(env: NodeJS.ProcessEnv = process.env): string[] {
+export function qoderConfigRoots(env: NodeJS.ProcessEnv = process.env, runtime?: QoderRuntime): string[] {
+  if (runtime === "qoder-cn") return [path.resolve(env.QODERCN_CONFIG_DIR || path.join(os.homedir(), ".qoder-cn"))];
   const candidates = [
     env.QODER_CONFIG_DIR,
     env.QODERCN_CONFIG_DIR,
@@ -289,8 +311,9 @@ export async function locateQoderSessionFile(
   cwd: string,
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
+  runtime?: QoderRuntime,
 ): Promise<string | null> {
-  const roots = qoderConfigRoots(env);
+  const roots = qoderConfigRoots(env, runtime);
   for (const root of roots) {
     const direct = expectedQoderSessionFile(root, cwd, sessionId);
     if (await isFile(direct)) return direct;
@@ -317,11 +340,12 @@ export async function waitForQoderSessionFile(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
   timeoutMs = 1500,
+  runtime?: QoderRuntime,
 ): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   let delay = 25;
   while (true) {
-    const found = await locateQoderSessionFile(cwd, sessionId, env);
+    const found = await locateQoderSessionFile(cwd, sessionId, env, runtime);
     if (found) return found;
     if (Date.now() >= deadline) return null;
     await new Promise((resolve) => setTimeout(resolve, delay));

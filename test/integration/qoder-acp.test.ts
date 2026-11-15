@@ -30,6 +30,7 @@ interface AcpHarness {
 async function startAcpHarness(
   t: TestContext,
   extraEnv: Record<string, string> = {},
+  runtime: "qoder" | "qoder-cn" = "qoder",
 ): Promise<AcpHarness> {
   const daemon = await TestDaemon.create("hs-qoder-acp-");
   t.after(async () => {
@@ -39,7 +40,7 @@ async function startAcpHarness(
   const cwd = await makeWorkspace("hs-qoder-acp-work-");
   const client = await daemon.start({
     env: {
-      HARNESS_SUPERVISOR_QODER_ENTRY: FAKE_QODER_ACP_ENTRY,
+      [runtime === "qoder-cn" ? "HARNESS_SUPERVISOR_QODER_CN_ENTRY" : "HARNESS_SUPERVISOR_QODER_ENTRY"]: FAKE_QODER_ACP_ENTRY,
       QODER_CONFIG_DIR: configDir,
       QODERCN_CONFIG_DIR: configDir,
       ...extraEnv,
@@ -70,7 +71,7 @@ async function readJsonLines(file: string): Promise<unknown[]> {
     .map((line) => JSON.parse(line) as unknown);
 }
 
-test("Qoder ACP runs a worker, maps mode/model, and resumes through its handle", async (t) => {
+for (const runtime of ["qoder", "qoder-cn"] as const) test(`${runtime} ACP runs a worker, maps mode/model, and resumes through its handle`, async (t) => {
   const logDir = await mkdtemp(path.join(os.tmpdir(), "hs-qoder-acp-logs-"));
   const argvLog = path.join(logDir, "argv.jsonl");
   const configLog = path.join(logDir, "config.jsonl");
@@ -79,13 +80,14 @@ test("Qoder ACP runs a worker, maps mode/model, and resumes through its handle",
     FAKE_QODER_ARGV_LOG: argvLog,
     FAKE_QODER_ACP_CONFIG_LOG: configLog,
     FAKE_QODER_ACP_PROMPT_LOG: promptLog,
-  });
+  }, runtime);
 
   const worker = await spawnQoder(client, cwd, "[scenario:basic] acp spawn", {
     model: "Fake Model B",
     thinking: "high",
+    runtime,
   });
-  assert.equal(worker.runtime, "qoder");
+  assert.equal(worker.runtime, runtime);
   assert.equal(worker.capabilities.steer, false);
   assert.equal(worker.capabilities.followUp, false);
   assert.equal(worker.capabilities.resume, true);
@@ -104,9 +106,10 @@ test("Qoder ACP runs a worker, maps mode/model, and resumes through its handle",
   assert.equal(existsSync(final.worker.sessionFile!), true);
   const handle = JSON.parse(
     (await readFile(final.worker.sessionFile!, "utf8")).split("\n")[0]!,
-  ) as { type?: string; id?: string; protocol?: string; models?: unknown[] };
+  ) as { type?: string; id?: string; protocol?: string; runtime?: string; models?: unknown[] };
   assert.equal(handle.type, "session");
   assert.equal(handle.protocol, "acp");
+  assert.equal(handle.runtime, runtime);
   assert.equal(handle.id, final.worker.sessionId);
   assert.ok(Array.isArray(handle.models) && handle.models.length > 0);
 

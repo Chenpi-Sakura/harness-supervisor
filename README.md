@@ -226,15 +226,8 @@ flowchart TB
         Metrics["度量<br/>任务 / 用量追加日志"]
     end
 
-    subgraph adapters["Runtime Adapters"]
-        Pi["Pi 原生 RPC<br/>Pi 子进程"]
-        Qoder["Qoder / Qoder CN ACP 默认 / stream-json 回退<br/>原生 CLI 子进程"]
-        Mcode["MiniMax Code ACP（ndJSON）<br/>mcode acp 子进程"]
-        Dsh["DeepSeek Harness ACP（ndJSON）<br/>dsh --profile acp 子进程"]
-        Codex["Codex ACP 适配器<br/>Codex App Server"]
-        Claude["Claude ACP 适配器<br/>Claude Agent SDK"]
-        OpenCode["OpenCode v2<br/>原生 ACP"]
-    end
+    Adapter["Runtime Adapter<br/>原生协议适配"]
+    Worker["原生 Harness Worker"]
 
     Client --> CLI
     Client --> MCP
@@ -244,13 +237,8 @@ flowchart TB
     Lifecycle --> Events
     Lifecycle --> Inbox
     Lifecycle --> Metrics
-    Lifecycle --> Pi
-    Lifecycle --> Qoder
-    Lifecycle --> Mcode
-    Lifecycle --> Dsh
-    Lifecycle --> Codex
-    Lifecycle --> Claude
-    Lifecycle --> OpenCode
+    Lifecycle --> Adapter
+    Adapter --> Worker
 ```
 
 | 模块 | 职责 |
@@ -453,24 +441,24 @@ OpenCode 沿用原生认证、项目配置和权限规则，支持权限审批�
 
 Qoder CN 复用 Qoder 的能力列，具体能力由安装版本协商。`是` 表示适配器实现了该能力；`有条件` 表示依赖特定传输、扩展或版本，或只有协议/单元测试；`否` 表示明确不支持。真实运行覆盖范围见上表。
 
-| 操作 | Pi | Qoder ACP（默认） | Qoder stream-json 回退 | MiniMax Code | DSH | 标准 ACP（Codex / Claude / OpenCode） |
-| --- | --- | --- | --- | --- | --- | --- |
-| 协议 | Pi RPC | ACP v1 | stream-json | ACP | ACP v1 | ACP v1 |
-| spawn / 单轮 prompt | 是 | 是 | 是 | 是 | 是 | 是 |
-| 流式文本 / 思考 / 工具事件 | 是 | 是 | 是 | 是 | 是（无 plan） | 是 |
-| 取消 | 是 | 是 | 是 | 是 | 是 | 是 |
-| resume | 是（Pi session 文件） | 是（`session/load`） | 是（`--resume`，校验 session id） | 是（`session/load`） | 是（`session/resume`，要求相同绝对 cwd） | 有条件（适配器声明 session/load） |
-| Idle continue（同一 Worker / Session 下一轮） | L3（真实 3 轮） | L3（真实 3 轮） | L2（未跑 3 轮；resume 已真实验证） | L3（真实 3 轮） | L3（真实 3 轮） | L3（验证范围见上表） |
-| 运行中 steer | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 steer 扩展；活跃回合内已验证） | 否 | 否 |
-| follow-up 队列 | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 queue 扩展；已验证入队） | 否 | 否 |
-| 交互输入（审批 / 提问 / 对话框） | 是（extension dialog） | 是（permission + elicitation） | 1.1.79 及以前支持；1.1.82 不支持提问/审批 | 是（Ask 模式触发时） | 仅审批；请求不含工具名/输入，无 elicitation | 仅权限审批；未接入提问扩展 |
-| 权限模式控制 | 由 Pi 自身配置，HS 不管理 | 5 种 ACP 模式映射（plan 无对应） | 支持（默认 `bypass_permissions`） | `bypassPermissions` 默认 / `default` 为 Ask | 3 种（默认 `workspace-write` + `ask`） | 沿用原生设置，不自动提权 |
-| 模型 / 思考配置 | 是 | 是 | 是 | 否（忽略，走运行时配置） | 是（model 对 + `reasoning_effort`） | 是（需目录提供并确认） |
-| provider 参数 | 是 | 否（写进 model 名） | 否（写进 model 名） | 否（写进 model 名） | 是（model 重名时必须） | 否（沿用原生配置） |
-| 工具白名单 | 是 | 否 | 是 | 否（忽略） | 否 | 否（明确拒绝） |
-| extraArgs | 是（禁改保留参数） | 是（禁改保留参数） | 是（禁改保留参数） | 仅校验，不转发 | 否（明确 `UNSUPPORTED`） | 否（明确拒绝） |
-| Token 用量 | 是（原生 usage） | 未知（1.1.82 计数全零） | 有条件（`result.usage` 存在时） | 否（仅上下文占用） | 否（仅上下文占用） | 未知（未采集） |
-| pause | 否 | 否 | 否 | 否 | 否 | 否 |
+| 操作 | Pi | Qoder ACP（默认） | MiniMax Code | DSH | 标准 ACP（Codex / Claude / OpenCode） |
+| --- | --- | --- | --- | --- | --- |
+| 协议 | Pi RPC | ACP v1 | ACP | ACP v1 | ACP v1 |
+| spawn / 单轮 prompt | 是 | 是 | 是 | 是 | 是 |
+| 流式文本 / 思考 / 工具事件 | 是 | 是 | 是 | 是（无 plan） | 是 |
+| 取消 | 是 | 是 | 是 | 是 | 是 |
+| resume | 是（Pi session 文件） | 是（`session/load`） | 是（`session/load`） | 是（`session/resume`，要求相同绝对 cwd） | 有条件（适配器声明 session/load） |
+| Idle continue（同一 Worker / Session 下一轮） | L3（真实 3 轮） | L3（真实 3 轮） | L3（真实 3 轮） | L3（真实 3 轮） | L3（验证范围见上表） |
+| 运行中 steer | 是 | 否 | 有条件（需 steer 扩展；活跃回合内已验证） | 否 | 否 |
+| follow-up 队列 | 是 | 否 | 有条件（需 queue 扩展；已验证入队） | 否 | 否 |
+| 交互输入（审批 / 提问 / 对话框） | 是（extension dialog） | 是（permission + elicitation） | 是（Ask 模式触发时） | 仅审批；请求不含工具名/输入，无 elicitation | 仅权限审批；未接入提问扩展 |
+| 权限模式控制 | 由 Pi 自身配置，HS 不管理 | 5 种 ACP 模式映射（plan 无对应） | `bypassPermissions` 默认 / `default` 为 Ask | 3 种（默认 `workspace-write` + `ask`） | 沿用原生设置，不自动提权 |
+| 模型 / 思考配置 | 是 | 是 | 否（忽略，走运行时配置） | 是（model 对 + `reasoning_effort`） | 是（需目录提供并确认） |
+| provider 参数 | 是 | 否（写进 model 名） | 否（写进 model 名） | 是（model 重名时必须） | 否（沿用原生配置） |
+| 工具白名单 | 是 | 否 | 否（忽略） | 否 | 否（明确拒绝） |
+| extraArgs | 是（禁改保留参数） | 是（禁改保留参数） | 仅校验，不转发 | 否（明确 `UNSUPPORTED`） | 否（明确拒绝） |
+| Token 用量 | 是（原生 usage） | 未知（1.1.82 计数全零） | 否（仅上下文占用） | 否（仅上下文占用） | 未知（未采集） |
+| pause | 否 | 否 | 否 | 否 | 否 |
 
 说明：
 

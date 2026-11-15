@@ -13,7 +13,7 @@ import { syncPairedCore } from "./paired-update.js";
 import { createMasterPublisher, sessionCwd } from "./host-context.js";
 
 export const name = "harness-supervisor";
-export const inject = { required: ["agents", "connection", "webServer"], optional: ["sessionTitle"] };
+export const inject = ["agents", "connection", "webServer"];
 export const Config = z.object({
   coreSource: z.union([z.const("bundled").description("插件内置 HS"), z.const("npm").description("全局 npm 安装的 HS"), z.const("custom").description("自定义安装目录")]).default("bundled").description("HS 核心来源").volatile(),
   corePath: z.string().default("").description("自定义 HS 安装目录（仅自定义模式需要）").volatile(),
@@ -79,7 +79,8 @@ async function mount(ctx, config, state) {
   assertCapabilities(info);
   const metadataClient = new SupervisorClient({ stateDir, autoStart: false, connectTimeoutMs: 1000 });
   ctx.effect(() => () => metadataClient.close(), "HS observation-only IPC connection");
-  const masters = createMasterPublisher({ agents: ctx.agents, namespace, titles: ctx.sessionTitle,
+  // Optional presentation services must not gate plugin activation.
+  const masters = createMasterPublisher({ agents: ctx.agents, namespace, titles: ctx.get("sessionTitle"),
     request: (method, params) => metadataClient.request(method, params, { timeoutMs: 5000 }),
     report: message => ctx.logger.warn(`HS Master context: ${message}`),
   });

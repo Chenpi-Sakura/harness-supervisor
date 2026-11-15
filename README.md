@@ -68,23 +68,6 @@ harness-sup wait <workerId> --timeout-ms 60000
 
 人工界面可查看本机当前 HS 实例的全部 Worker，默认展开当前对话；模型的查询、操作和通知 ACK 仍受会话归属约束。
 
-## Codex 与 Claude Code Worker
-
-两者的 ACP 适配器随 HS 安装，更新发布时采用最新版本，并在发布物中固定依赖。无需另行安装适配器；启动任务时不下载。
-
-```powershell
-harness-sup spawn --runtime codex --model gpt-6-luna --thinking low --cwd D:/work/demo --prompt "完成任务并总结" --persistence persistent
-harness-sup spawn --runtime claude --cwd D:/work/demo --prompt "完成任务并总结" --persistence persistent
-```
-
-复用原生 Harness 的认证和设置。支持持续会话、审批、取消；重启恢复要求适配器声明 `session/load`。模型与推理等级必须由适配器提供并确认；暂不接入执行中 steering、问题表单或适配器专用终端扩展。缺少安装、认证或能力时会明确报错，不自动换模型或重新创建会话。
-
-可用 `HARNESS_SUPERVISOR_CODEX_ACP_ENTRY` / `HARNESS_SUPERVISOR_CLAUDE_ACP_ENTRY` 指定适配器的绝对 JS 入口或原生可执行文件；Windows 不接受 `.cmd`/`.ps1` 启动脚本。适配器官方的 `CODEX_PATH` / `CLAUDE_CODE_EXECUTABLE` 可选择现有原生 CLI。已有 Worker 不会被热替换，升级后应验证所需能力。
-
-### Qoder CN
-
-`--runtime qoder-cn` 复用 Qoder 的 ACP / stream-json 适配器，使用 `qodercn`（兼容旧命令 `qoderclicn`）和独立的 `~/.qoder-cn` 配置。自定义配置目录使用 `QODERCN_CONFIG_DIR`；HS 启动参数使用 `HARNESS_SUPERVISOR_QODER_CN_ENTRY` / `_BIN` / `_ARGS` / `_PROTOCOL` / `_PERMISSION_MODE` / `_INPUT_TIMEOUT_MS`，与国际版分别配置。WebUI 使用 Qoder 图标和品牌色，名称区分为 Qoder CN。
-
 ## MCP 接入
 
 MCP server 是 daemon 的客户端。建议先在普通终端启动 daemon，尤其是宿主会在退出时清理 MCP 子进程树的场景：
@@ -116,22 +99,24 @@ harness-sup-mcp --mode production --owner-ref <stable-session-reference> --notif
 
 该连接只能操作所属会话的 Worker 与通知 ACK，不继承共享 daemon 的 Codex 通知目标。旧 Worker 不自动归入新会话，仍可通过全局 CLI 查询。DSH 插件会自动设置归属。归属检查是路由护栏，不是操作系统沙箱。
 
-## 可选 WebUI
+## WebUI
 
-daemon 启动时默认开启 WebUI：独立 HS 监听 `127.0.0.1:61114`，DSH 插件实例监听 `127.0.0.1:61115`，不会自动打开浏览器。浏览器仍需通过可信入口取得访问凭证，独立 HS 用户可运行：
+WebUI 是 Worker 的统一管理界面。可按“工作目录 → 会话 → Worker”浏览侧栏与关系图，查看状态、结果、执行轨迹和用量，处理输入或取消任务。任务创建与续接由 Master 通过 CLI / MCP 完成。
+
+WebUI 随 daemon 默认启动：独立 HS 监听 `127.0.0.1:61114`，DSH 插件实例监听 `127.0.0.1:61115`。页面不会自动打开，独立 HS 用户可运行：
 
 ```powershell
 harness-sup ui          # 在系统浏览器中打开
 harness-sup ui --stop   # 关闭 WebUI，Worker 继续运行
 ```
 
-独立 HS 与 DSH 插件使用各自的实例和默认端口，可以同时开启 WebUI。端口被其他程序占用时会记录启动失败，Worker 与 IPC 仍可使用；释放端口后可通过对应入口重试开启。
+DSH 用户可从右侧栏入口、对话顶部标签或 `/hs` 打开同一套界面。独立 HS 与 DSH 插件使用各自的实例和端口，可同时运行。端口被占用时会记录启动失败，释放端口后可通过对应入口重试。
 
-可在启动 daemon 前设置 `HARNESS_SUPERVISOR_UI=0`，关闭默认监听；之后仍可用 `harness-sup ui` 手动开启。`ui --stop` 会关闭当前监听，直到再次手动开启或 daemon 重启。
+各 Worker 显示对应 Harness 的图标与品牌色。模型信息优先采用原生会话的上报值；只有请求配置时标注“请求”，未上报时显示未知。用量未上报时会明确提示，不代表实际消耗为零。
 
-浏览器和 DSH 使用同一套界面，可按“工作目录 → 会话 → Worker”查看状态、结果、轨迹和用量，回答输入或取消任务；任务创建与续接由 Master 完成。界面仅监听 `127.0.0.1`，一次性入口兑换独立浏览器凭证，不向网页暴露 IPC Token。刷新不会唤醒模型或自动 ACK；daemon 或 WebUI 重启后需从可信入口重新打开。
+界面仅监听本机，通过 CLI 或插件入口取得访问凭证，不向网页暴露 IPC Token。刷新页面不会唤醒模型或自动确认通知；daemon 或 WebUI 重启后需从入口重新打开。
 
-Codex、Claude Code 与其他 Harness 共用侧栏、关系图和详情，显示各自的本地图标与品牌色。运行信息优先显示原生会话初始化时上报的模型配置；仅有请求配置时标注“请求”，未上报时保留未知。这些身份信息不是逐轮计费用量。新增运行时的完整检查项见 [Harness 接入指南](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/docs/harness-integration.md)。
+可在启动 daemon 前设置 `HARNESS_SUPERVISOR_UI=0` 关闭默认监听，之后仍可运行 `harness-sup ui` 开启。`ui --stop` 关闭当前监听，Worker 继续运行；再次开启或重启 daemon 后恢复。
 
 ## 更新 HS
 
@@ -190,10 +175,13 @@ HS 的目标：以尽可能低的开销，让独立的原生 Harness Worker 被�
 | --- | --- | --- |
 | Pi Agent | Pi 原生 RPC（Pi v1.3+） | 完整支持 |
 | Qoder CLI | 官方 ACP 默认，stream-json 可回退 | 实验性 |
+| Qoder CN | 复用 Qoder 适配器，独立启动入口与配置 | 实验性 |
 | MiniMax Code | ACP over ndJSON | 实验性 |
 | DeepSeek Harness / DSH | 官方 ACP（`dsh --profile acp`） | PoC |
-| Codex | 外部 `@agentclientprotocol/codex-acp` | 实验性，已通过真实任务与持续会话验收 |
-| Claude Code | 外部 `@agentclientprotocol/claude-agent-acp` | 实验性，已通过真实任务与持续会话验收 |
+| Codex | ACP（随包适配器） | 实验性 |
+| Claude Code | ACP（随包适配器） | 实验性 |
+
+各运行时的能力差异、限制与验证范围见[运行时支持](#运行时支持)。
 
 ## 功能
 
@@ -204,9 +192,7 @@ HS 的目标：以尽可能低的开销，让独立的原生 Harness Worker 被�
 - **可选队列投递**：登记 Codex thread 后，可用官方 `codex queue` 把简短通知写入该 thread；是否真正唤醒 Master 取决于宿主是否加载该 thread。
 - **可选请求幂等**：`spawn` / `resume` / `send` 支持 `requestId`；重复请求不会重复执行，结果不确定时报 `UNCERTAIN`。
 - **任务度量**：每次 `spawn` 自动创建或关联一个委托任务；记录 Worker 终态、耗时、可得的运行时 Token 用量，并生成带覆盖率、来源和未知字段的单任务/汇总报告。费用不采集，验收、返工与干预尚未采集。
-- **Qoder 双传输**：默认使用官方 ACP，可回退 stream-json；两种传输的会话句柄不互换，能力差异如实报告。
-- **DSH ACP 接入**：支持 spawn / 事件 / 取消 / `session/resume` / 模型与推理强度配置 / 权限提权应答；桌面端安装可自动发现，也可用 `HARNESS_SUPERVISOR_DSH_ENTRY` 指定入口。
-- **Codex / Claude Code ACP 接入**：复用原生认证与设置，支持持续会话、权限审批、取消和能力协商后的恢复。适配器独立安装、独立更新，不绑定 HS 发布版本。
+- **原生运行时适配**：通过 RPC / ACP 连接 Harness，保留其原生认证、配置、权限和会话语义；能力差异由适配器明确报告。
 - **统一入口**：CLI、MCP、IPC 共享同一个 daemon 与同一份状态。
 
 ## 架构
@@ -257,7 +243,7 @@ flowchart TB
 
 | 模块 | 职责 |
 | --- | --- |
-| `src/adapters/` | Pi / Qoder / MiniMax Code / DSH / Codex / Claude Code 的运行时适配，以及通用 ACP ndJSON 传输 |
+| `src/adapters/` | 各原生 Harness 的协议适配，以及通用 ACP ndJSON 传输 |
 | `src/supervisor.ts` | 状态机、wait、send/answer、cancel、resume、重启对账 |
 | `src/store.ts` | Worker 记录、追加式事件日志、游标、持久化 |
 | `src/metrics.ts` | 任务/用量记录、独立追加日志、覆盖率与报告计算 |
@@ -525,6 +511,8 @@ npm test
 `npm test` 包含构建与核心套件，默认同时运行 2 个独立测试文件（单核机器为 1）；可用 `HARNESS_SUPERVISOR_TEST_CONCURRENCY=1` 串行排障，或设置为 `1`–`8` 调整并行度。日常迭代优先运行受影响文件，完整套件用于阶段验收和发版。真实 Harness 验收另需相应运行时、账号及测试开关。开发结束后，可用 `node dist/src/cli.js down --state-dir $hsDevState` 关闭自己的开发实例；该命令会取消其中的活动 Worker。
 
 发布包由 `npm run pack:core` 生成固定生产依赖的核心 `.tgz`，DSH 插件打包见[插件开发说明](https://github.com/Chenpi-Sakura/harness-supervisor/tree/main/packages/dsh-plugin#开发与打包)。
+
+新增运行时的接入步骤见 [Harness 接入指南](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/docs/harness-integration.md)。
 
 ## License
 

@@ -51,6 +51,24 @@ function setup() {
   return { ui, ...fake };
 }
 
+test("Master reports obey browser owner scope, replace stale model fields and protect newer publishers", async t => {
+  const { ui } = setup(); t.after(() => ui.stop());
+  const master = { ownerRef: "dsh:session-a", harness: "dsh", cwd: "/master", title: "Actual conversation", selection: { model: "selected", reasoningEffort: "high" }, status: "running" };
+  ui.updateMasterContext({ sourceId: "old-host", context: master });
+  ui.updateMasterContext({ sourceId: "other-host", context: { ownerRef: "dsh:session-b", harness: "codex", cwd: "/private-other" } });
+  ui.updateMasterContext({ sourceId: "new-host", context: { ...master, selection: { model: "new-model" } } });
+  assert.equal(ui.updateMasterContext({ sourceId: "old-host", ownerRef: master.ownerRef, remove: true }).updated, false);
+  assert.throws(() => ui.updateMasterContext({ sourceId: "bad", context: { ...master, apiKey: "secret" } }), /Invalid/);
+  const scoped = await ui.launch({ ownerRef: master.ownerRef });
+  const token = (await exchange(scoped)).data.token;
+  const rows = await fetch(`${scoped.origin}/api/workers`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as { masters: Array<{ ownerRef: string; cwd: string; selection: { model: string; reasoningEffort?: string } }> };
+  assert.equal(rows.masters.length, 1); assert.equal(rows.masters[0]!.cwd, "/master");
+  assert.deepEqual(rows.masters[0]!.selection, { model: "new-model" });
+  ui.updateMasterContext({ sourceId: "new-host", ownerRef: master.ownerRef, remove: true });
+  const cleared = await fetch(`${scoped.origin}/api/workers`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as { masters: unknown[] };
+  assert.deepEqual(cleared.masters, []);
+});
+
 test("WebUI defaults to loopback port 61114", async (t) => {
   const ui = new WebUiServer({ supervisor: fakeSupervisor().supervisor, staticDir: path.resolve("web") });
   t.after(() => ui.stop());

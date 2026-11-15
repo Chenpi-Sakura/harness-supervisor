@@ -66,6 +66,18 @@ export const NotifyTargetSchema = z.discriminatedUnion("channel", [
 
 const NotifyTargetField = { notifyTarget: NotifyTargetSchema.optional() };
 export const OwnerRefSchema = z.string().min(1).max(300).regex(/^[^\x00-\x1f\x7f]+$/);
+const MasterModelSchema = z.object({ provider: z.string().max(200).optional(), model: z.string().min(1).max(200), reasoningEffort: z.string().max(100).optional() }).strict();
+export const MasterContextSchema = z.object({
+  ownerRef: OwnerRefSchema, harness: z.string().min(1).max(100),
+  title: z.string().max(500).optional(), cwd: z.string().max(4096).optional(),
+  selection: MasterModelSchema.optional(), lastRequest: MasterModelSchema.optional(),
+  status: z.enum(["idle", "running"]).optional(),
+}).strict();
+export type MasterContext = z.infer<typeof MasterContextSchema>;
+export const MasterContextUpdateSchema = z.union([
+  z.object({ sourceId: z.string().min(1).max(100), context: MasterContextSchema }).strict(),
+  z.object({ sourceId: z.string().min(1).max(100), ownerRef: OwnerRefSchema, remove: z.literal(true) }).strict(),
+]);
 export const ClientScopeSchema = z.object({
   ownerRef: OwnerRefSchema.optional(),
   notifyNone: z.boolean().optional(),
@@ -223,6 +235,7 @@ export const METHOD_SCHEMAS = {
   }).strict(),
   ui_stop: z.object({}).strict(),
   ui_status: z.object({}).strict(),
+  ui_context: MasterContextUpdateSchema,
   runtime_prepare: z.object({ sourceRoot: z.string().min(1).max(4096) }).strict(),
   runtime_update: z.object({ intentId: z.string().min(1).max(200), runtimeId: z.string().min(1).max(200) }).strict(),
   runtime_update_status: z.object({}).strict(),

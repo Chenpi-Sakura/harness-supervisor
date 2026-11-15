@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { NativeAcpAdapter } from "../../src/adapters/native-acp/adapter.js";
-import { resolveNativeAcpLaunch } from "../../src/adapters/native-acp/launch.js";
+import { resolveNativeAcpLaunch, type NativeAcpRuntime } from "../../src/adapters/native-acp/launch.js";
 import { NativeAcpSession } from "../../src/adapters/native-acp/session.js";
 import type { HarnessEvent, HarnessSession } from "../../src/types.js";
 const fixture = fileURLToPath(new URL("../fixtures/fake-native-acp.js", import.meta.url));
-async function setup(t: { after: (fn: () => Promise<void>) => void }, runtime: "codex" | "claude" = "codex", extraEnv = {}, nativeDefaults = false) {
+async function setup(t: { after: (fn: () => Promise<void>) => void }, runtime: NativeAcpRuntime = "codex", extraEnv = {}, nativeDefaults = false) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hs-native-acp-"));
   const owned: HarnessSession[] = [];
   t.after(async () => { for (const session of owned) await session.close({ graceMs: 100 }); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
-  const adapter = new NativeAcpAdapter(runtime, { launch: { file: process.execPath, args: [fixture], env: { ...process.env, ...extraEnv }, description: "fake ACP" }, abortTimeoutMs: 200 });
+  const adapter = new NativeAcpAdapter(runtime, { launch: { file: process.execPath, args: [fixture], env: { ...process.env, FAKE_ACP_RUNTIME: runtime, ...extraEnv }, description: "fake ACP" }, abortTimeoutMs: 200 });
   const events: HarnessEvent[] = [];
   const callbacks = { onEvent: (event: HarnessEvent) => events.push(event), onExit: () => {} };
   const spec = { workerId: "test", cwd: dir, sessionDir: dir, model: nativeDefaults ? undefined : "GPT 6 Luna", thinking: nativeDefaults ? undefined : "low" };
@@ -25,10 +25,10 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }, runtime: "
   };
   return { adapter, session, spec, callbacks, events, wait, owned };
 }
-for (const runtime of ["codex", "claude"] as const) test(`${runtime} ACP uses exact advertised model/effort and supports repeated prompts`, async t => {
+for (const runtime of ["codex", "claude", "opencode"] as const) test(`${runtime} ACP uses exact advertised model/effort and supports repeated prompts`, async t => {
   const { session, wait, events } = await setup(t, runtime);
   assert.deepEqual((await session.getState()).runtimeInfo, {
-    modelId: "gpt-6-luna", modelName: "GPT 6 Luna", reasoningEffort: "low", adapter: undefined,
+    modelId: "gpt-6-luna", modelName: "GPT 6 Luna", reasoningEffort: "low", adapter: runtime === "opencode" ? "opencode 2.3.0" : undefined,
   });
   await session.prompt("one");
   assert.deepEqual((await wait("settled")), { type: "settled", aborted: false, finalText: "DONE one", error: undefined, stopReason: "end_turn" });
@@ -66,8 +66,8 @@ test("ACP cancel settles the accepted turn as aborted", async t => {
   const result = await wait("settled");
   assert.equal(result.type === "settled" && result.aborted, true);
 });
-test("ACP resume uses the original session and rejects cwd/runtime mismatches", async t => {
-  const { session, adapter, spec, callbacks, events, wait, owned } = await setup(t);
+for (const runtime of ["codex", "opencode"] as const) test(`${runtime} ACP resume uses the original session and rejects cwd/runtime mismatches`, async t => {
+  const { session, adapter, spec, callbacks, events, wait, owned } = await setup(t, runtime);
   const state = await session.getState();
   await session.close();
   const resumed = await adapter.resume(spec, state.sessionFile!, callbacks);
@@ -78,6 +78,7 @@ test("ACP resume uses the original session and rejects cwd/runtime mismatches", 
   assert.equal(result.type === "settled" && result.finalText, "DONE resumed");
   assert.equal(events.some(event => event.type === "progress" && event.preview?.includes("REPLAY")), false);
   await assert.rejects(adapter.resume({ ...spec, cwd: os.tmpdir() }, state.sessionFile!, callbacks), /different cwd/);
+  await assert.rejects(new NativeAcpAdapter(runtime === "codex" ? "opencode" : "codex").resume(spec, state.sessionFile!, callbacks), /another runtime/);
 });
 test("native ACP launch rejects shell shims and missing adapters instead of downloading", () => {
   assert.throws(() => resolveNativeAcpLaunch("codex", { HARNESS_SUPERVISOR_CODEX_ACP_ENTRY: "codex.cmd" }), /shell shim/);
@@ -109,4 +110,54 @@ test("a declined permission reply racing with a broken pipe cannot become an unh
   const session = Reflect.construct(NativeAcpSession, [{ pid: 1, reply: async () => { throw new Error("EPIPE"); } }, { callbacks: { onEvent() {}, onExit() {} } }]) as { request(method: string, value: unknown, id: string): boolean };
   assert.equal(session.request("session/request_permission", {}, "closed"), true);
   await new Promise(resolve => setImmediate(resolve));
+});
+
+test("OpenCode rejects unverified major versions before creating a session", async t => {
+  for (const version of ["1.19.5", "3.0.0", ""]) {
+    await assert.rejects(setup(t, "opencode", { FAKE_ACP_AGENT_VERSION: version }), /requires OpenCode v2/);
+  }
+});
+
+test("OpenCode refuses premature slash-command completion and keeps child output out of its result", async t => {
+  const { session, events, wait } = await setup(t, "opencode");
+  await assert.rejects(session.prompt("/review repository"), /slash commands are not enabled/);
+  assert.equal(events.some(event => event.type === "run_started"), false);
+  await session.prompt("child-and-usage");
+  const result = await wait("settled");
+  assert.equal(result.type === "settled" && result.finalText, "PARENT");
+  assert.ok(events.some(event => event.type === "progress" && event.preview === "CHILD" && event.detail?.includes("child-session")));
+  assert.deepEqual(events.filter(event => event.type === "progress" && event.tool === "Write proof").map(event => event.type === "progress" && event.kind), ["tool_start", "tool_update", "tool_end"]);
+  assert.deepEqual(events.find(event => event.type === "usage"), { type: "usage", usage: { inputTokens: 12, outputTokens: 3, cacheReadTokens: 5, cacheWriteTokens: 2, reportedTotalTokens: 22 } });
+});
+
+test("OpenCode discovers an external v2 installation without executing npm shims or downloading", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hs-opencode-launch-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "node_modules"), pkg = path.join(modules, "@opencode/cli");
+  await mkdir(pkg, { recursive: true });
+  const script = path.join(pkg, "opencode.cjs"), binary = path.join(pkg, "opencode.exe");
+  await writeFile(script, ""); await writeFile(binary, "");
+  const manifest = (version: string, bin: string) => writeFile(path.join(pkg, "package.json"), JSON.stringify({ version, bin: { opencode2: bin } }));
+  const discovery = { modules: [modules], executables: [] };
+  await manifest("2.3.0", "opencode.cjs");
+  const js = resolveNativeAcpLaunch("opencode", {}, discovery);
+  assert.equal(js.file, process.execPath); assert.deepEqual(js.args, [script, "acp"]);
+  await manifest("2.3.0", "opencode.exe");
+  const exe = resolveNativeAcpLaunch("opencode", {}, discovery);
+  assert.equal(exe.file, binary); assert.deepEqual(exe.args, ["acp"]);
+  await manifest("1.19.5", "opencode.exe");
+  assert.throws(() => resolveNativeAcpLaunch("opencode", {}, discovery), /HS does not install or download/);
+  const explicit = resolveNativeAcpLaunch("opencode", { HARNESS_SUPERVISOR_OPENCODE_ACP_ENTRY: script }, discovery);
+  assert.deepEqual(explicit.args, [script, "acp"]);
+  assert.throws(() => resolveNativeAcpLaunch("opencode", { HARNESS_SUPERVISOR_OPENCODE_ACP_ENTRY: "opencode.cmd" }, discovery), /shell shim/);
+  for (const runtime of ["codex", "claude"] as const) {
+    const name = runtime === "codex" ? "codex-acp" : "claude-agent-acp";
+    const bridge = path.join(modules, "@agentclientprotocol", name);
+    await mkdir(bridge, { recursive: true });
+    await writeFile(path.join(bridge, "package.json"), JSON.stringify({ version: "1.0.0", bin: { [name]: "entry-without-extension" } }));
+    await writeFile(path.join(bridge, "entry-without-extension"), "");
+    const launch = resolveNativeAcpLaunch(runtime, {}, discovery);
+    assert.equal(launch.file, process.execPath);
+    assert.deepEqual(launch.args, [path.join(bridge, "entry-without-extension")]);
+  }
 });

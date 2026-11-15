@@ -279,18 +279,18 @@ const RequestIdShape = {
 };
 
 const ConfigShape = {
-  model: z.string().min(1).max(200).optional().describe("Pi model override"),
-  provider: z.string().min(1).max(200).optional().describe("Pi provider override"),
+  model: z.string().min(1).max(200).optional().describe("Requested model; ACP requires an advertised id (OpenCode: provider/model)"),
+  provider: z.string().min(1).max(200).optional().describe("Provider override where supported; otherwise uses native runtime settings"),
   tools: z
     .array(z.string())
     .min(1)
     .max(50)
     .optional()
-    .describe("Pi tool allowlist, e.g. ['read','bash','edit','write']"),
+    .describe("Tool allowlist where supported, e.g. ['read','bash','edit','write']"),
   thinking: z
     .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
     .optional()
-    .describe("Pi thinking level"),
+    .describe("Requested reasoning effort where supported"),
   maxDurationMs: z
     .number()
     .int()
@@ -428,7 +428,7 @@ server.registerTool(
         .min(1)
         .optional()
         .describe(
-          `Runtime adapter: ${Object.entries(harnessNames).map(([id, name]) => `${id}=${name}`).join(", ")} (default: pi). Codex and Claude ACP adapters are included with HS.`,
+          `Runtime adapter: ${Object.entries(harnessNames).map(([id, name]) => `${id}=${name}`).join(", ")} (default: pi). Codex and Claude ACP adapters are included with HS. OpenCode v2 uses a separately installed native CLI.`,
         ),
       name: z.string().min(1).max(200).optional().describe("Human-readable worker label"),
       persistence: z

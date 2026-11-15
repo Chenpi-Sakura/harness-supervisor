@@ -107,7 +107,7 @@ export function localApplicationOrigin(value) {
   return url.origin;
 }
 
-export function createRpcHandler({ agents, namespace, request, status, applyCore, cancelUpdate }) {
+export function createRpcHandler({ agents, namespace, request, status, applyCore, cancelUpdate, syncMasters }) {
   return async (endpoint, payload, signal, peer) => {
     try {
       if (peer?.principal?.kind !== "owner") throw new Error("Only the authenticated DSH owner may manage HS");
@@ -127,6 +127,7 @@ export function createRpcHandler({ agents, namespace, request, status, applyCore
           preferredOwnerRef = ownerRefFor(namespace, agent.id);
         }
         const frameOrigin = localApplicationOrigin(payload.applicationOrigin);
+        await syncMasters?.();
         try {
           // This route is authenticated owner UI, not a model tool. Its access
           // is global; the live session is only a default expansion preference.

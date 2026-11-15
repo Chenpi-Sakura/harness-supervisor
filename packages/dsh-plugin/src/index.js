@@ -10,9 +10,10 @@ import { resolvePluginState } from "./state-dir.js";
 import { findGlobalCore, validateCoreRoot } from "./core-source.js";
 import { createSourceBinding } from "./source-binding.js";
 import { syncPairedCore } from "./paired-update.js";
+import { createMasterPublisher, sessionCwd } from "./host-context.js";
 
 export const name = "harness-supervisor";
-export const inject = ["agents", "connection", "webServer"];
+export const inject = { required: ["agents", "connection", "webServer"], optional: ["sessionTitle"] };
 export const Config = z.object({
   coreSource: z.union([z.const("bundled").description("插件内置 HS"), z.const("npm").description("全局 npm 安装的 HS"), z.const("custom").description("自定义安装目录")]).default("bundled").description("HS 核心来源").volatile(),
   corePath: z.string().default("").description("自定义 HS 安装目录（仅自定义模式需要）").volatile(),
@@ -21,7 +22,7 @@ export const Config = z.object({
 });
 
 const coreRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve("harness-supervisor"))), "../..");
-const EXPECTED_CORE_VERSION = "0.13.0";
+const EXPECTED_CORE_VERSION = "0.14.0";
 
 export function assertCapabilities(info) {
   const required = ["ownerScope", "webUi", "managedRuntime", "drain"];
@@ -76,22 +77,32 @@ async function mount(ctx, config, state) {
   const info = await request("info");
   if (state.desired !== config) return;
   assertCapabilities(info);
+  const metadataClient = new SupervisorClient({ stateDir, autoStart: false, connectTimeoutMs: 1000 });
+  ctx.effect(() => () => metadataClient.close(), "HS observation-only IPC connection");
+  const masters = createMasterPublisher({ agents: ctx.agents, namespace, titles: ctx.sessionTitle,
+    request: (method, params) => metadataClient.request(method, params, { timeoutMs: 5000 }),
+    report: message => ctx.logger.warn(`HS Master context: ${message}`),
+  });
+  ctx.effect(() => () => masters.dispose(), "HS live Master context");
 
   bridge = new AgentBridge({
     namespace,
     attach: (agent, ownerRef) => agent.ctx.plugin(mcpClient, {
       transport: "stdio", serverName: "harness_supervisor", command: nodeExecutable,
       args: [path.join(selectedRuntime.root, "dist/src/mcp.js"), "--state-dir", stateDir, "--owner-ref", ownerRef, "--notify-none"],
-      env: { HARNESS_SUPERVISOR_UI_PORT: String(uiPort) }, cwd: agent.session.meta?.cwd || process.cwd(), toolCallTimeoutMs: 150_000,
+      env: { HARNESS_SUPERVISOR_UI_PORT: String(uiPort) }, cwd: sessionCwd(agent.session) || process.cwd(), toolCallTimeoutMs: 150_000,
       startupTimeoutMs: 30_000, closeTimeoutMs: 5_000, expandTemplates: false, failOnStartupError: true,
     }),
     report: (agent, status) => {
       connections.set(agent, status);
+      if (status.state === "connected") void masters.update(agent);
       if (status.state === "failed") ctx.logger.warn(`HS session connection failed: ${status.message}`);
     },
   });
-  ctx.on("agent/created", async ({ agent }) => bridge.attachAgent(agent));
-  ctx.on("agent/disposed", ({ agent }) => { connections.delete(agent); return bridge.detachAgent(agent); });
+  ctx.on("agent/created", async ({ agent }) => { void masters.update(agent); return bridge.attachAgent(agent); });
+  ctx.on("agent/disposed", ({ agent }) => { void masters.remove(agent); connections.delete(agent); return bridge.detachAgent(agent); });
+  ctx.on("agent/status", ({ agent }) => { void masters.update(agent); });
+  ctx.on("session/event", masters.sessionEvent);
   let applying;
   let pairedUpdate;
   const applyCore = () => applying ??= (async () => {
@@ -105,7 +116,7 @@ async function mount(ctx, config, state) {
     return request("runtime_update", { intentId, runtimeId: selectedRuntime.id });
   })().finally(() => { applying = undefined; });
   const status = async () => ({
-      pluginVersion: "0.4.0", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
+      pluginVersion: "0.5.0", pairedCoreVersion: EXPECTED_CORE_VERSION, externalCore: Boolean(external), coreSource: config.coreSource || "bundled", sourceRoot: selectedRoot,
       pairedUpdate,
       supervisor: await request("info"), update: await request("runtime_update_status"),
       sessions: [...connections].map(([agent, status]) => ({ sessionId: agent.id, ...status })),
@@ -114,6 +125,7 @@ async function mount(ctx, config, state) {
   ctx.effect(() => () => { if (state.readStatus === status) state.readStatus = undefined; }, "HS diagnostics owner");
   const rpc = createRpcHandler({
     agents: ctx.agents, namespace, request, status,
+    syncMasters: () => Promise.all(ctx.agents.list().map(agent => masters.update(agent))),
     applyCore,
     cancelUpdate: (intentId) => { if (external) throw new Error("请通过独立 HS 管理其更新"); return request("runtime_update_cancel", { intentId }); },
   });
@@ -121,6 +133,7 @@ async function mount(ctx, config, state) {
     ctx.effect(() => ctx.connection.fetch.register(route), `HS owner-only ${route.path}`);
   }
   await Promise.all(ctx.agents.list().map((agent) => bridge.attachAgent(agent)));
+  await Promise.all(ctx.agents.list().map(agent => masters.update(agent)));
   try {
     pairedUpdate = await syncPairedCore({ external, candidate: selectedRuntime, request,
       isCurrent: () => state.desired === config, intentId: `plugin-${randomUUID()}` });

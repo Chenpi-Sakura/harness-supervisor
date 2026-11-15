@@ -1080,7 +1080,7 @@ test("metrics report production tasks are a summary; development keeps task metr
 });
 
 test("development event reads and waits merge ACP output without raw JSON arrays or cursor changes", () => {
-  for (const runtime of ["qoder", "qoder-cn", "codex", "claude"]) {
+  for (const runtime of ["qoder", "qoder-cn", "codex", "claude", "opencode"]) {
     const worker = { id: "w-group", runtime, status: "running" } as WorkerSummary;
     const events = [1, 2].map(seq => ({ workerId: worker.id, seq, ts: "2026-11-13T00:00:00Z", type: "run.progress", data: { kind: "assistant_message", preview: seq === 1 ? "Hello" : " world" } })) as WorkerEvent[];
     const source = structuredClone(events);

@@ -1,3 +1,5 @@
+import type { MasterContext } from "../../src/ipc/protocol";
+
 export interface WorkerListRow {
   id: string;
   createdAt: string;
@@ -7,6 +9,7 @@ export interface WorkerListRow {
 export interface WorkerListPage<T extends WorkerListRow> {
   workers: T[];
   preferredWorkers?: T[];
+  masters?: MasterContext[];
   hasMore: boolean;
 }
 

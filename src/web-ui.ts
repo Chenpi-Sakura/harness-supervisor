@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { SupervisorError, serializeError } from "./errors.js";
-import { OwnerRefSchema } from "./ipc/protocol.js";
+import { OwnerRefSchema, MasterContextUpdateSchema, type MasterContext } from "./ipc/protocol.js";
 import type { Supervisor } from "./supervisor.js";
 import type { WorkerSummary } from "./types.js";
 import { VERSION } from "./version.js";
@@ -133,9 +133,21 @@ export class WebUiServer {
   private readonly views = new Map<string, Credential>();
   private readonly panelViews = new Map<string, string>();
   private readonly panelGenerations = new Map<string, number>();
+  private readonly masters = new Map<string, { sourceId: string; context: MasterContext }>();
 
   constructor(options: WebUiOptions) {
     this.options = options;
+  }
+
+  /** Observational host reports only. Scoped model clients cannot publish these. */
+  updateMasterContext(value: unknown): { updated: boolean } {
+    const input = parse(MasterContextUpdateSchema, value);
+    if ("remove" in input) {
+      return { updated: this.masters.get(input.ownerRef)?.sourceId === input.sourceId && this.masters.delete(input.ownerRef) };
+    }
+    if (!this.masters.has(input.context.ownerRef) && this.masters.size >= 1024) throw new SupervisorError("BAD_REQUEST", "Too many live Master contexts");
+    this.masters.set(input.context.ownerRef, { sourceId: input.sourceId, context: input.context });
+    return { updated: true };
   }
 
   status(): { running: boolean; origin?: string } {
@@ -386,6 +398,7 @@ export class WebUiServer {
       const workers = supervisor.list({ limit, ownerRef: credential.ownerRef, after });
       const summarize = (records: WorkerSummary[]) => records.map(({ id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence, config, runtimeInfo }) => ({
         id, name, ownerRef, runtime, status, lifecycle, createdAt, updatedAt, cwd, promptPreview, persistence, model: config?.model, runtimeInfo,
+        sessionTitle: this.masters.get(ownerRef ?? "")?.context.title,
       }));
       // Keep the global createdAt cursor intact while making the current
       // conversation visible even when its workers are older than page one.
@@ -393,6 +406,7 @@ export class WebUiServer {
         ? supervisor.list({ limit, ownerRef: credential.preferredOwnerRef }) : undefined;
       this.json(res, {
         workers: summarize(workers),
+        masters: [...this.masters.values()].map(entry => entry.context).filter(master => credential.ownerRef === undefined || master.ownerRef === credential.ownerRef),
         ...(preferred === undefined ? {} : { preferredWorkers: summarize(preferred) }),
         hasMore: workers.length === limit,
         scope: credential.ownerRef ?? null,

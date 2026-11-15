@@ -99,8 +99,12 @@ test("snapshots, unknown shapes/runtimes and already-truncated records are not b
 
 test("ACP model output chunks fold into one markdown entry", () => {
   const output = (seq, preview) => ({ ...event("run.progress", { kind: "assistant_message", preview }), seq });
-  const rows = buildTimelineEntries([output(1, "# Report\n"), output(2, "\n**Done**"), fragment(3, "think"), output(4, "next")], "qoder");
+  for (const runtime of ["qoder", "codex", "claude", "opencode"]) {
+  const rows = buildTimelineEntries([output(1, "# Report\n"), output(2, "\n**Done**"), fragment(3, "think"), output(4, "next")], runtime);
   assert.equal(rows.length, 3);
   assert.equal(rows[0].recordedText, "# Report\n\n**Done**");
   assert.equal(rows[0].events.length, 2);
+  const child = { ...output(2, "child"), data: { ...output(2, "child").data, detail: "child-session" } };
+  assert.equal(buildTimelineEntries([output(1, "parent"), child, output(3, "parent")], runtime).length, 3);
+  }
 });

@@ -10,7 +10,7 @@ const update = (text: string) => send({ jsonrpc: "2.0", method: "session/update"
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
   switch (request.method) {
-    case "initialize": reply(request.id, { protocolVersion: 1, agentCapabilities: { loadSession: process.env.FAKE_ACP_NO_LOAD !== "1" } }); break;
+    case "initialize": reply(request.id, { protocolVersion: 1, ...(process.env.FAKE_ACP_RUNTIME === "opencode" ? { agentInfo: { name: "opencode", version: process.env.FAKE_ACP_AGENT_VERSION ?? "2.3.0" } } : {}), agentCapabilities: { loadSession: process.env.FAKE_ACP_NO_LOAD !== "1" } }); break;
     case "session/new":
       if (process.env.FAKE_ACP_DEFAULT_MODEL === "1") configOptions[0] = { ...configOptions[0]!, currentValue: "default", options: [{ value: "default", name: "Default (recommended)", description: "Native configured model" }] };
       reply(request.id, { sessionId, ...(process.env.FAKE_ACP_NO_CONFIG === "1" ? {} : { configOptions }) }); break;
@@ -22,6 +22,12 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       const text = request.params.prompt[0].text;
       if (text === "crash") { process.exit(7); break; }
       if (text === "slow") { active = request.id; break; }
+      if (text === "child-and-usage") {
+        for (const [sessionUpdate, status] of [["tool_call", "pending"], ["tool_call_update", "in_progress"], ["tool_call_update", "completed"]]) send({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: { sessionUpdate, status, title: "Write proof", toolCallId: "proof" } } });
+        update("PARENT");
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "CHILD" }, _meta: { "opencode/child-session": { id: "child-session", parentID: sessionId } } } } });
+        reply(request.id, { stopReason: "end_turn", usage: { inputTokens: 12, outputTokens: 3, cachedReadTokens: 5, cachedWriteTokens: 2, totalTokens: 22 } }); break;
+      }
       if (text === "approve") {
         active = request.id;
         send({ jsonrpc: "2.0", id: "native-permission", method: "session/request_permission", params: { sessionId, toolCall: { toolCallId: "write", title: "Write a test file", rawInput: { path: "test.txt" } }, options: [{ optionId: "allow", name: "Allow once", kind: "allow_once" }, { optionId: "deny", name: "Reject", kind: "reject_once" }] } });

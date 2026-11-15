@@ -15,6 +15,8 @@ test("fixed IPC owner scope isolates operations, retries, inbox and ACK batches"
   const a = new SupervisorClient({ stateDir: daemon.stateDir, autoStart: false, scope: { ownerRef: "dsh:session-a", notifyNone: true } });
   const b = new SupervisorClient({ stateDir: daemon.stateDir, autoStart: false, scope: { ownerRef: "dsh:session-b", notifyNone: true } });
   t.after(() => { a.close(); b.close(); });
+  await global.request("ui_context", { sourceId: "host", context: { ownerRef: "dsh:session-a", harness: "dsh", cwd: "/host-project" } });
+  await assert.rejects(a.request("ui_context", { sourceId: "spoof", context: { ownerRef: "dsh:session-b", harness: "codex" } }), /unavailable to a scoped Master/);
   const [wa, wb] = await Promise.all([
     spawnWorker(a, cwd, "[scenario:report] scoped", { requestId: "same-key", persistence: "persistent", ownerRef: "spoofed", notifyTarget: { channel: "codex-queue", codexThreadId: "spoofed-target" } }),
     spawnWorker(b, cwd, "[scenario:report] scoped", { requestId: "same-key" }),

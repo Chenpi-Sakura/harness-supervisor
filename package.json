@@ -1,6 +1,6 @@
 {
   "name": "harness-supervisor",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Make other harnesses work for yours. Turn native AI harnesses into subagents your main harness can command and manage. | 让你的主 Harness 当老板，其他 Harness 来干活。把各家原生 Harness 变成它可委派、可管理的子智能体。",
   "type": "module",
   "license": "MIT",
@@ -56,7 +56,8 @@
     "e2e:qoder:acp": "npm run build && node scripts/e2e-qoder-acp.mjs",
     "e2e:mcp:runtimes": "npm run build && node scripts/e2e-mcp-runtimes.mjs",
     "e2e:dsh:acp": "npm run build && node scripts/e2e-dsh-acp.mjs",
-    "e2e:codex:wake": "npm run build && node scripts/e2e-codex-wake.mjs"
+    "e2e:codex:wake": "npm run build && node scripts/e2e-codex-wake.mjs",
+    "e2e:opencode": "npm run build && node scripts/e2e-opencode.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

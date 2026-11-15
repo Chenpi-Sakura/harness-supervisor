@@ -1,8 +1,10 @@
 # DSH Harness Supervisor
 
-将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、Qoder CN、MiniMax Code、DeepSeek Harness、Codex、Claude Code 等原生 Worker。社区独立维护。Codex 与 Claude Code 的 ACP 适配器及配套原生程序随包安装，沿用原生账号认证和设置。
+将 DSH 会话作为 Harness Supervisor 的 Master，委派 Pi、Qoder、Qoder CN、MiniMax Code、DeepSeek Harness、Codex、Claude Code、OpenCode v2 等原生 Worker。社区独立维护。Codex 与 Claude Code 的 ACP 适配器及配套原生程序随包安装，沿用原生账号认证和设置。OpenCode 使用本机已安装并认证的 v2 CLI，不随插件安装；支持 PATH、全局 npm 安装位置或 `HARNESS_SUPERVISOR_OPENCODE_ACP_ENTRY` 指定入口。
 
 [项目仓库](https://github.com/Chenpi-Sakura/harness-supervisor) · [完整项目 README](https://github.com/Chenpi-Sakura/harness-supervisor/blob/main/README.md) · [npm](https://www.npmjs.com/package/dsh-harness-supervisor)
+
+Master 信息从 DSH 的 live Agent 读取：使用 `session.header.cwd`（兼容旧 `meta.cwd`），只读标题与模型 getter，按原生事件更新。当前选择与最近请求配置分开保留；未提供的字段显示未知。WebUI 通过既有认证接口读取，模型工具不能伪造这份宿主快照。
 
 ## 安装与使用
 

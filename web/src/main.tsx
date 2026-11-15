@@ -33,6 +33,7 @@ interface Worker {
   id: string;
   name?: string;
   ownerRef?: string;
+  sessionTitle?: string;
   runtime: string;
   status: string;
   lifecycle: string;
@@ -86,6 +87,7 @@ function App({ demo = false }: { demo?: boolean }) {
   const [token, setToken] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [masters, setMasters] = useState<NonNullable<WorkerListPage<Worker>["masters"]>>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<Worker | null>(null);
   const [eventHistory, setEventHistory] = useState(emptyEventHistory);
@@ -179,6 +181,7 @@ function App({ demo = false }: { demo?: boolean }) {
     setToken(null);
     setSession(null);
     setWorkers([]);
+    setMasters([]);
     setDetail(null);
     detailRef.current = null;
     globalCursor.current = undefined;
@@ -278,6 +281,7 @@ function App({ demo = false }: { demo?: boolean }) {
         }
         if (disposed) return;
         const fresh = mergeWorkerPages(pages);
+        setMasters(pages[0]?.masters ?? []);
         // A slow refresh must not discard a page the user loaded meanwhile.
         if (revision === listRevision.current && !paging.current) {
           globalCursor.current = fresh.cursor;
@@ -425,7 +429,7 @@ function App({ demo = false }: { demo?: boolean }) {
       </aside>
       <div className={`workspace-content${drawerOpen && view === "relations" ? " has-worker-drawer" : ""}`} style={{ "--drawer-width": `${drawerWidth}px` } as React.CSSProperties}>
       {error && <div className="notice error workspace-error" role="alert">{error}</div>}
-      {token ? <div><WorkerRelations workers={workers} onGroupSelect={owner => { setCanvasOwnerRef(owner); setDisplayScope("session"); setDrawerOpen(false); }} displayScope={displayScope} onScopeChange={value => { setDisplayScope(value); setDrawerOpen(false); }} transitionDirection={sceneDirection} selectedWorkerId={drawerOpen ? selected : null} selectedOwnerRef={canvasOwnerRef} projectCwd={projectCwd} onProjectChange={cwd => { setProjectCwd(cwd); setDrawerOpen(false); }} preferredOwnerRef={preferredOwnerRef} onOpen={id => { setSelected(id); setDrawerOpen(true); }} demo={demo} /></div> : <section className="detail" aria-label="Worker 详情">
+      {token ? <div><WorkerRelations workers={workers} masters={masters} onGroupSelect={owner => { setCanvasOwnerRef(owner); setDisplayScope("session"); setDrawerOpen(false); }} displayScope={displayScope} onScopeChange={value => { setDisplayScope(value); setDrawerOpen(false); }} transitionDirection={sceneDirection} selectedWorkerId={drawerOpen ? selected : null} selectedOwnerRef={canvasOwnerRef} projectCwd={projectCwd} onProjectChange={cwd => { setProjectCwd(cwd); setDrawerOpen(false); }} preferredOwnerRef={preferredOwnerRef} onOpen={id => { setSelected(id); setDrawerOpen(true); }} demo={demo} /></div> : <section className="detail" aria-label="Worker 详情">
         {!token ? <div className="empty welcome"><span className="empty-icon" aria-hidden="true">◇</span><h2>{connecting ? "正在连接 Supervisor" : "从可信入口连接"}</h2><p>通过命令行 <code>harness-sup ui</code> 或 DSH 的 Harness Supervisor 入口打开。连接仅限本机。</p><p className="muted">服务重启后需要重新打开入口。关闭页面不会取消 Worker。</p></div> : !detail ? <div className="empty"><h2>{selected ? "读取 Worker…" : preferredOwnerRef ? "当前会话暂无 Worker" : "选择一个 Worker"}</h2><p>{preferredOwnerRef && !selected ? "可以展开左侧其它会话，查看已有 Worker。" : "查看运行状态、结果与需要你处理的输入。"}</p></div> : <>
           <WorkerDetails key={detail.id} detail={detail} usage={usage} usageAvailable={usageAvailable} eventHistory={eventHistory} loadPrompt={loadPrompt} act={act} pageEvents={pageEvents} busy={busy} readOnly={demo} />
         </>}

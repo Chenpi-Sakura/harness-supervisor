@@ -45,6 +45,9 @@ export class NativeAcpSession implements HarnessSession {
   private async initialize() {
     const init = object(await this.client.request("initialize", { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "harness-supervisor", version: "1" } }, 30_000));
     if (init.protocolVersion !== 1) throw new SupervisorError("UNSUPPORTED", "This adapter requires ACP v1");
+    if (this.options.runtime === "opencode" && (!/^opencode$/i.test(String(object(init.agentInfo).name)) || !/^2\./.test(String(object(init.agentInfo).version)))) {
+      throw new SupervisorError("UNSUPPORTED", "The opencode runtime requires OpenCode v2; refusing an unverified agent or another major version");
+    }
     const { spec, resumeSessionId } = this.options;
     if (resumeSessionId && object(init.agentCapabilities).loadSession !== true) throw new SupervisorError("UNSUPPORTED", "The installed ACP adapter does not advertise session/load; refusing a fake resume");
     this.sessionId = resumeSessionId || "";
@@ -93,6 +96,9 @@ export class NativeAcpSession implements HarnessSession {
   stderrTail() { return this.client.stderrTail(); }
   async prompt(message: string) {
     if (this.active || !this.isAlive()) throw new SupervisorError("INVALID_STATE", "ACP session is busy or no longer alive");
+    // OpenCode 2.3.0's command path acknowledges submission before execution finishes.
+    // Do not infer completion from silence or silently turn a native command into a different task.
+    if (this.options.runtime === "opencode" && /^\s*\/\S/.test(message)) throw new SupervisorError("UNSUPPORTED", "OpenCode native slash commands are not enabled: upstream ACP can report completion before command execution finishes. Send a plain-text task instead.");
     this.active = true; this.abortRequested = false; this.assistantText = ""; this.messageId = undefined; this.seenMessages.clear();
     this.emit({ type: "run_started" });
     this.turn = this.runPrompt(message);
@@ -103,6 +109,12 @@ export class NativeAcpSession implements HarnessSession {
     try {
       const response = object(await this.client.request("session/prompt", { sessionId: this.sessionId, prompt: [{ type: "text", text: message }] }, 0));
       stopReason = typeof response.stopReason === "string" ? response.stopReason : undefined;
+      if (this.options.runtime === "opencode") {
+        const usage = object(response.usage);
+        const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+        const reported = { inputTokens: count(usage.inputTokens), outputTokens: count(usage.outputTokens), cacheReadTokens: count(usage.cachedReadTokens), cacheWriteTokens: count(usage.cachedWriteTokens), reportedTotalTokens: count(usage.totalTokens) };
+        if (Object.values(reported).some(value => value !== undefined)) this.emit({ type: "usage", usage: reported });
+      }
       if (stopReason !== "end_turn" && stopReason !== "cancelled") error = `ACP returned an unsuccessful stopReason: ${stopReason ?? "missing"}`;
     } catch (cause) { error = safeText(errorMessage(cause), 2000); }
     this.active = false;
@@ -129,16 +141,19 @@ export class NativeAcpSession implements HarnessSession {
     const params = object(value);
     if (!this.active || params.sessionId !== this.sessionId) return;
     const update = object(params.update), kind = update.sessionUpdate;
+    const child = this.options.runtime === "opencode" ? object(object(update._meta)["opencode/child-session"]) : {};
+    const childId = typeof child.id === "string" ? child.id : undefined;
     const text = object(update.content).type === "text" ? object(update.content).text : undefined;
     if (typeof text === "string" && (kind === "agent_message_chunk" || kind === "agent_thought_chunk")) {
-      if (kind === "agent_message_chunk") {
+      if (kind === "agent_message_chunk" && !childId) {
         const id = typeof update.messageId === "string" ? update.messageId : undefined;
         if (id && id !== this.messageId) { if (this.seenMessages.has(id)) return; this.seenMessages.add(id); this.messageId = id; this.assistantText = ""; }
         this.assistantText += text;
       }
-      this.emit({ type: "progress", kind: kind === "agent_message_chunk" ? "assistant_message" : "thinking", preview: safeText(text, 8000) });
+      this.emit({ type: "progress", kind: kind === "agent_message_chunk" ? "assistant_message" : "thinking", preview: safeText(text, 8000), ...(childId ? { detail: safeText(JSON.stringify({ childSession: child }), 2000) } : {}) });
     } else if (kind === "tool_call" || kind === "tool_call_update") {
-      this.emit({ type: "progress", kind: kind === "tool_call" ? "tool_start" : "tool_end", tool: typeof update.title === "string" ? update.title : undefined, detail: safeText(JSON.stringify(update), 8000), isError: update.status === "failed" });
+      const terminal = update.status === "completed" || update.status === "failed";
+      this.emit({ type: "progress", kind: kind === "tool_call" ? "tool_start" : terminal ? "tool_end" : "tool_update", tool: typeof update.title === "string" ? update.title : undefined, detail: safeText(JSON.stringify(update), 8000), isError: update.status === "failed" });
     }
   }
   private request(method: string, value: unknown, id: string | number): boolean {

@@ -11,6 +11,7 @@
   <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/dsh.svg" alt="DeepSeek Harness" height="28">
   <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/codex.svg" alt="Codex" height="28">
   <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/claude.svg" alt="Claude Code" height="28">
+  <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/opencode.svg" alt="OpenCode" height="28">
 </p>
 
 <hr />
@@ -23,7 +24,7 @@
 
 ## 安装
 
-普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Codex、Claude Code 的 ACP 适配器和配套原生程序随包安装；其他 Harness 需先安装对应 CLI。账号认证和设置沿用原生 Harness。
+普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Codex、Claude Code 的 ACP 适配器和配套原生程序随包安装；其他 Harness 需先安装对应 CLI。账号认证和设置沿用原生 Harness。OpenCode 使用本机 v2 CLI，HS 不携带或下载它；优先查找 `opencode2`、`opencode` 或全局 npm 的 `@opencode/cli`，也可用 `HARNESS_SUPERVISOR_OPENCODE_ACP_ENTRY` 指定原生可执行文件或 JavaScript 入口。
 
 ### 独立 CLI / MCP
 
@@ -127,6 +128,8 @@ DSH 用户可从右侧栏入口、对话顶部标签或 `/hs` 打开同一套界
 
 可在启动 daemon 前设置 `HARNESS_SUPERVISOR_UI=0` 关闭默认监听，之后仍可运行 `harness-sup ui` 开启。`ui --stop` 关闭当前监听，Worker 继续运行；再次开启或重启 daemon 后恢复。
 
+DSH 的 Master 卡片直接读取宿主会话目录、标题、Harness、模型和运行状态，随宿主事件更新，不从 Worker 反推。当前选择模型与最近请求配置分别保留；卡片注明配置来源，状态表示宿主最近上报值。通用 MCP 客户端未提供的宿主信息保留未知。
+
 ## 更新 HS
 
 ### DSH 用户
@@ -186,6 +189,7 @@ HS 的目标：以尽可能低的开销，让独立的原生 Harness Worker 被�
 | DeepSeek Harness / DSH | 官方 ACP（`dsh --profile acp`） | PoC |
 | Codex | ACP（随包适配器） | 实验性 |
 | Claude Code | ACP（随包适配器） | 实验性 |
+| OpenCode v2 | 原生 ACP（本机 CLI） | 实验性 |
 
 各运行时的能力差异、限制与验证范围见[运行时支持](#运行时支持)。
 
@@ -229,6 +233,7 @@ flowchart TB
         Dsh["DeepSeek Harness ACP（ndJSON）<br/>dsh --profile acp 子进程"]
         Codex["Codex ACP 适配器<br/>Codex App Server"]
         Claude["Claude ACP 适配器<br/>Claude Agent SDK"]
+        OpenCode["OpenCode v2<br/>原生 ACP"]
     end
 
     Client --> CLI
@@ -245,6 +250,7 @@ flowchart TB
     Lifecycle --> Dsh
     Lifecycle --> Codex
     Lifecycle --> Claude
+    Lifecycle --> OpenCode
 ```
 
 | 模块 | 职责 |
@@ -439,19 +445,22 @@ $env:HARNESS_SUPERVISOR_WORKER_PROTOCOL = '0'
 | DSH | PoC | ACP v1：spawn / resume / 模型与推理配置 / 工作区写入 / 工作区外提权 / 完全权限 / 取消 / Persistent 3 轮连续协作 |
 | Codex | 实验性 | 随包 Codex ACP 2.6.0 + Codex CLI 0.166.0：`gpt-6-luna` / `low`；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 CLI 0.169.0 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
 | Claude Code | 实验性 | 随包 Claude ACP 0.107.0 + Agent SDK 0.3.323：原生 MiniMax-M3.1-Flash 配置；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 Claude Code 2.1.325 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
+| OpenCode v2 | 实验性 | 本机 OpenCode 2.3.0 + 官方免费 DeepSeek V4.1 Flash：真实三轮、逐轮文件内容校验、daemon 重启后的原会话恢复与上下文回忆、取消及进程退出检查通过；审批有协议与集成测试 |
+
+OpenCode 沿用原生认证、项目配置和权限规则，支持权限审批，不接入提问表单或运行中 steering。模型和推理等级必须由 ACP 提供并确认。原生斜杠命令暂不开放：OpenCode 2.3.0 可能提前返回完成；请用普通文本委派任务。原生子会话输出保留在轨迹中，不混入父任务最终结果；已上报的回合用量不含其内部子会话。父回合结束后会关闭 ACP 进程，不承诺保活或通知仍在后台运行的内部子任务。
 
 ### 操作能力对比
 
 Qoder CN 复用 Qoder 的能力列，具体能力由安装版本协商。`是` 表示适配器实现了该能力；`有条件` 表示依赖特定传输、扩展或版本，或只有协议/单元测试；`否` 表示明确不支持。真实运行覆盖范围见上表。
 
-| 操作 | Pi | Qoder ACP（默认） | Qoder stream-json 回退 | MiniMax Code | DSH | Codex / Claude ACP |
+| 操作 | Pi | Qoder ACP（默认） | Qoder stream-json 回退 | MiniMax Code | DSH | 标准 ACP（Codex / Claude / OpenCode） |
 | --- | --- | --- | --- | --- | --- | --- |
 | 协议 | Pi RPC | ACP v1 | stream-json | ACP | ACP v1 | ACP v1 |
 | spawn / 单轮 prompt | 是 | 是 | 是 | 是 | 是 | 是 |
 | 流式文本 / 思考 / 工具事件 | 是 | 是 | 是 | 是 | 是（无 plan） | 是 |
 | 取消 | 是 | 是 | 是 | 是 | 是 | 是 |
 | resume | 是（Pi session 文件） | 是（`session/load`） | 是（`--resume`，校验 session id） | 是（`session/load`） | 是（`session/resume`，要求相同绝对 cwd） | 有条件（适配器声明 session/load） |
-| Idle continue（同一 Worker / Session 下一轮） | L3（真实 3 轮） | L3（真实 3 轮） | L2（未跑 3 轮；resume 已真实验证） | L3（真实 3 轮） | L3（真实 3 轮） | L3（真实 3 轮，含重启恢复） |
+| Idle continue（同一 Worker / Session 下一轮） | L3（真实 3 轮） | L3（真实 3 轮） | L2（未跑 3 轮；resume 已真实验证） | L3（真实 3 轮） | L3（真实 3 轮） | L3（验证范围见上表） |
 | 运行中 steer | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 steer 扩展；活跃回合内已验证） | 否 | 否 |
 | follow-up 队列 | 是 | 否 | 有条件（被接受，未验证生效） | 有条件（需 queue 扩展；已验证入队） | 否 | 否 |
 | 交互输入（审批 / 提问 / 对话框） | 是（extension dialog） | 是（permission + elicitation） | 1.1.79 及以前支持；1.1.82 不支持提问/审批 | 是（Ask 模式触发时） | 仅审批；请求不含工具名/输入，无 elicitation | 仅权限审批；未接入提问扩展 |

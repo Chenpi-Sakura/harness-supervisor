@@ -157,6 +157,7 @@
 .relation-worker.relation-master footer { margin-top:10px; }
 .relation-worker.relation-master .relation-frame-motion { stroke:#b48aff; }
 .relation-worker.relation-master .relation-state { font-size:11px; --frame-color:var(--relation-running); }
+.relation-worker.relation-master .relation-state.state-idle { --frame-color:var(--secondary); }
 .relation-worker.relation-master footer .master-details { font-size:14px; }
 .app[data-theme="light"] .relation-worker.relation-master .relation-frame-motion { stroke:#9765ea; }
 .workspace-content { min-width:0; }
@@ -341,3 +342,4 @@
 .app .brand-codex { --brand-color: #d4d4d4; }
 .app .brand-claude { --brand-color: #d97757; }
 .app[data-theme="light"] .brand-codex { --brand-color: #404040; }
+.app .brand-opencode { --brand-color: var(--secondary); }

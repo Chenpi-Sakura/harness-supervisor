@@ -5,6 +5,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { HarnessIcon } from "./harness-icons";
 import { Markdown } from "./Markdown";
 import "./worker-relations.css";
+import type { MasterContext } from "../../src/ipc/protocol";
 
 export interface RelationWorker extends ModelDisplaySource {
   id: string; name?: string; ownerRef?: string; runtime: string; status: string; model?: string; sessionTitle?: string;
@@ -25,15 +26,17 @@ function Frame({ status, persistent }: { status: string; persistent: boolean }) 
   </svg>;
 }
 
-export function WorkerRelations({ workers, preferredOwnerRef, onOpen, demo = false, displayScope, onScopeChange, onGroupSelect, projectCwd, transitionDirection = -1, selectedOwnerRef, selectedWorkerId, onProjectChange }: {
+export function WorkerRelations({ workers, masters = [], preferredOwnerRef, onOpen, demo = false, displayScope, onScopeChange, onGroupSelect, projectCwd, transitionDirection = -1, selectedOwnerRef, selectedWorkerId, onProjectChange }: {
+  masters?: MasterContext[];
   workers: RelationWorker[]; onGroupSelect?: (ownerRef: string) => void; displayScope?: "session" | "project"; onScopeChange?: (scope: "session" | "project") => void; transitionDirection?: -1 | 1; selectedWorkerId?: string | null; selectedOwnerRef?: string; projectCwd?: string; onProjectChange?: (cwd: string) => void; preferredOwnerRef?: string; onOpen?: (id: string) => void; demo?: boolean;
 }) {
   const reduceMotion = useReducedMotion();
-  const projects = [...new Set(workers.map(worker => worker.cwd))];
+  const masterByOwner = new Map(masters.map(master => [master.ownerRef, master]));
+  const projects = [...new Set([...workers.map(worker => worker.cwd), ...masters.flatMap(master => master.cwd ? [master.cwd] : [])])];
   const [localProject, setLocalProject] = useState<string | null>(null);
-  const project = projectCwd ?? localProject ?? workers.find(worker => worker.ownerRef === preferredOwnerRef)?.cwd ?? projects[0] ?? "";
+  const project = projectCwd ?? localProject ?? workers.find(worker => worker.ownerRef === preferredOwnerRef)?.cwd ?? masterByOwner.get(preferredOwnerRef ?? "")?.cwd ?? projects[0] ?? "";
   const projectWorkers = workers.filter(worker => worker.cwd === project);
-  const owners = [...new Set(projectWorkers.map(worker => worker.ownerRef).filter((value): value is string => Boolean(value)))];
+  const owners = [...new Set([...projectWorkers.map(worker => worker.ownerRef).filter((value): value is string => Boolean(value)), ...masters.filter(master => master.cwd === project).map(master => master.ownerRef)])];
   const [chosenOwner, setOwner] = useState<string | null>(preferredOwnerRef ?? null);
   const owner = selectedOwnerRef !== undefined && (selectedOwnerRef === "" || owners.includes(selectedOwnerRef)) ? selectedOwnerRef : chosenOwner !== null && (owners.includes(chosenOwner) || chosenOwner === "") ? chosenOwner : owners[0] ?? "";
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -79,7 +82,7 @@ export function WorkerRelations({ workers, preferredOwnerRef, onOpen, demo = fal
   const selected = workers.find(worker => worker.id === selectedId);
   const sessionWorkers = scope === "project" ? projectWorkers : projectWorkers.filter(worker => (worker.ownerRef ?? "") === owner);
   const visible = sessionWorkers.filter(worker => filter === "all" || (filter === "active" ? active.has(worker.status) : !active.has(worker.status)));
-  const groupOwners = scope === "project" ? [...new Set(projectWorkers.map(worker => worker.ownerRef ?? ""))] : [owner];
+  const groupOwners = scope === "project" ? [...new Set([...projectWorkers.map(worker => worker.ownerRef ?? ""), ...owners])] : [owner];
   let nextX = 0;
   const groups = groupOwners.map((groupOwner, index) => {
     const originals = projectWorkers.filter(worker => (worker.ownerRef ?? "") === groupOwner);
@@ -135,15 +138,24 @@ export function WorkerRelations({ workers, preferredOwnerRef, onOpen, demo = fal
         element.addEventListener("pointermove", move); element.addEventListener("pointerup", end); element.addEventListener("pointercancel", end);
       }}>
         <motion.div className="relations-stage" style={{ width, height, x: panX, y: panY, scale: scaleValue }}><AnimatePresence mode="wait" initial={false} custom={transitionDirection} onExitComplete={() => { setOffset({ x: 0, y: 0 }); setZoom(1); if (canvasRef.current) canvasRef.current.scrollTop = 0; }}><motion.div key={`${project}:${scope === "project" ? "project" : owner}:${scope}`} className="relations-scene" custom={transitionDirection} variants={{ enter: (direction: number) => ({ opacity: 1, y: reduceMotion ? 0 : -direction * (height + (canvasRef.current?.clientHeight ?? 800) + Math.abs(offsetRef.current.y) / zoomRef.current + 100) }), visible: { opacity: 1, y: 0 }, leave: (direction: number) => ({ opacity: 1, y: reduceMotion ? 0 : direction * (height + (canvasRef.current?.clientHeight ?? 800) + Math.abs(offsetRef.current.y) / zoomRef.current + 100) }) }} initial="enter" animate="visible" exit="leave" transition={{ duration: reduceMotion ? 0 : .32, ease: [.4, 0, .2, 1] }}>
-          {scope === "project" && groups.map(group => <motion.div layout="position" layoutDependency={`${group.x}:${group.width}:${group.height}`} key={group.owner} data-session-group={group.owner} role="button" tabIndex={0} aria-label={`进入会话 ${group.originals[0]?.sessionTitle ?? group.owner}`} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOwner(group.owner); setScope("session"); onGroupSelect?.(group.owner); } }} className={`session-boundary group-state-${group.state}`} style={{ left: group.x, top: 0, width: group.width, height: group.height, "--group-tint": ["#6584ff", "#ba8aff", "#65c6aa", "#d5a761"][group.index % 4] } as React.CSSProperties}><Frame status={group.state === "running" ? "running" : "master"} persistent /><h3>{group.originals[0]?.sessionTitle ?? (group.owner || "未归属记录")}</h3></motion.div>)}
-          {groups.map(group => (<motion.article key={group.owner} layoutDependency={width} layout="position" transition={{ layout: { duration: reduceMotion ? 0 : .28 } }} className={`relation-worker relation-master ${demo ? "state-running" : ""} ${demo ? "brand-dsh" : "brand-generic"}`} style={{ left: group.masterX, top: group.masterY }}>
-            <Frame status={demo ? "running" : "master"} persistent />
-            <div className="relation-node-top"><span className="relation-brand-mark"><HarnessIcon runtime={demo ? "dsh" : "unknown"} size={24} /></span><span>{demo ? "DeepSeek Harness" : "Harness 未上报"}</span><small>MASTER</small></div>
-            <h3>{demo ? group.originals[0]?.sessionTitle ?? project.split(/[\\/]/).filter(Boolean).at(-1) ?? "项目协作" : "Master 会话"}</h3>
-            <div className="relation-model"><span>{demo ? "MiniMax-M3.1-Flash（演示）" : "型号未上报"}</span></div>
-            <p className="relation-master-directory" title={demo ? project : undefined}>{demo ? project : "工作目录未上报"}</p>
-            <footer>{demo ? <span className="relation-state state-running"><i />正在工作</span> : <span>来源会话</span>}</footer>
-          </motion.article>))}
+          {scope === "project" && groups.map(group => <motion.div layout="position" layoutDependency={`${group.x}:${group.width}:${group.height}`} key={group.owner} data-session-group={group.owner} role="button" tabIndex={0} aria-label={`进入会话 ${masterByOwner.get(group.owner)?.title ?? group.originals[0]?.sessionTitle ?? group.owner}`} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOwner(group.owner); setScope("session"); onGroupSelect?.(group.owner); } }} className={`session-boundary group-state-${group.state}`} style={{ left: group.x, top: 0, width: group.width, height: group.height, "--group-tint": ["#6584ff", "#ba8aff", "#65c6aa", "#d5a761"][group.index % 4] } as React.CSSProperties}><Frame status={group.state === "running" ? "running" : "master"} persistent /><h3>{masterByOwner.get(group.owner)?.title ?? group.originals[0]?.sessionTitle ?? (group.owner || "未归属记录")}</h3></motion.div>)}
+          {groups.map(group => {
+            const master = masterByOwner.get(group.owner);
+            const runtime = demo ? "dsh" : master?.harness;
+            const state = demo ? "running" : master?.status;
+            const model = master?.selection ?? master?.lastRequest;
+            const selectedModel = model ? [model.provider, model.model].filter(Boolean).join("/") : undefined;
+            const requestModel = master?.lastRequest ? [master.lastRequest.provider, master.lastRequest.model].filter(Boolean).join("/") : undefined;
+            const modelTitle = [selectedModel && (master?.selection ? "会话配置：" : "最近请求：") + selectedModel, requestModel && "最近请求：" + requestModel, model?.reasoningEffort && "推理等级：" + model.reasoningEffort].filter(Boolean).join("；");
+            return <motion.article key={group.owner} layoutDependency={width} layout="position" transition={{ layout: { duration: reduceMotion ? 0 : .28 } }} className={`relation-worker relation-master ${state ? "state-" + state : ""} brand-${runtime ?? "generic"}`} style={{ left: group.masterX, top: group.masterY }}>
+              <Frame status={state ?? "master"} persistent />
+              <div className="relation-node-top"><span className="relation-brand-mark"><HarnessIcon runtime={runtime ?? "unknown"} size={24} /></span><span>{runtime ? harnessName(runtime) : "Harness 未上报"}</span><small>MASTER</small></div>
+              <h3>{demo ? masterByOwner.get(group.owner)?.title ?? group.originals[0]?.sessionTitle ?? "项目协作" : master?.title || "Master 会话"}</h3>
+              <div className="relation-model"><span title={modelTitle}>{demo ? "MiniMax-M3.1-Flash（演示）" : selectedModel ? selectedModel + (master?.selection ? "（会话配置）" : "（最近请求）") : "型号未上报"}</span></div>
+              <p className="relation-master-directory" title={demo ? project : master?.cwd}>{demo ? project : master?.cwd || "工作目录未上报"}</p>
+              <footer>{state ? <span className={`relation-state state-${state}`} title="宿主最近上报的状态"><i />{state === "running" ? "正在工作" : "空闲"}</span> : <span>状态未上报</span>}</footer>
+            </motion.article>;
+          })}
           {<>
             {<svg className="relation-edges" width={width} height={height} aria-hidden="true">{visible.map((worker, index) => {
               const x = positions[index]!.x + 142; const y = positions[index]!.y;
@@ -174,7 +186,8 @@ export const demoRelationWorkers: RelationWorker[] = [
   ["claude", "completed", "persistent", "审查边界条件", "检查并发、取消与恢复路径，给出可复核的审查结论。"],
   ["codex", "cancelled", "oneshot", "探索替代方案", "比较两种缓存方案；方向调整后已取消本轮任务。"],
   ["dsh", "crashed", "oneshot", "检查运行环境", "核对依赖与运行环境；原生进程异常退出，保留执行记录。"],
-].map(([runtime, status, persistence, name, promptPreview], index) => ({ id: `demo-${index}`, runtimeInfo: { modelName: ({ codex: "GPT 6 Luna", claude: "MiniMax-M3.1-Flash", pi: "Claude Sonnet 4.5", qoder: "Qwen3-Coder", mcode: "MiniMax-M3.1", dsh: "DeepSeek-V4" } as Record<string, string>)[runtime!] + "（演示）" }, runtime: runtime!, status: status!, persistence: persistence!, name, promptPreview: promptPreview!, ownerRef: "demo:project-workspace", lifecycle: status === "completed" ? "idle" : status === "running" ? "busy" : "stopped", cwd: "D:/workspace/project", ...(status === "completed" ? { result: { text: "### 审查完成\n\n- 检查了取消与恢复路径。\n- 未发现阻断性问题。\n\n可继续安排验证任务。", truncated: false } } : {}) }));
+  ["opencode", "running", "persistent", "验证 OpenCode 接入", "复用本机 OpenCode v2，检查原生会话续接和执行结果。"],
+].map(([runtime, status, persistence, name, promptPreview], index) => ({ id: `demo-${index}`, runtimeInfo: { modelName: ({ opencode: "DeepSeek V4.1 Flash", codex: "GPT 6 Luna", claude: "MiniMax-M3.1-Flash", pi: "Claude Sonnet 4.5", qoder: "Qwen3-Coder", mcode: "MiniMax-M3.1", dsh: "DeepSeek-V4" } as Record<string, string>)[runtime!] + "（演示）" }, runtime: runtime!, status: status!, persistence: persistence!, name, promptPreview: promptPreview!, ownerRef: "demo:project-workspace", lifecycle: status === "completed" ? "idle" : status === "running" ? "busy" : "stopped", cwd: "D:/workspace/project", ...(status === "completed" ? { result: { text: "### 审查完成\n\n- 检查了取消与恢复路径。\n- 未发现阻断性问题。\n\n可继续安排验证任务。", truncated: false } } : {}) }));
 
 // Synthetic projects are only used by the development preview entry.
 for (const [projectName, names, ownerRef] of [

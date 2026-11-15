@@ -15,6 +15,7 @@ test("every supported Harness has a local licensed icon and theme color", () => 
     assert.match(colors, new RegExp(`brand-${runtime} \\{ --brand-color:`));
   }
   assert.equal(harnessName("claude"), "Claude Code");
+  assert.equal(harnessName("opencode"), "OpenCode");
   assert.equal(harnessName("future-runtime"), "future-runtime");
 });
 

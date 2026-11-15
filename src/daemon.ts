@@ -136,7 +136,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       ...qoderAdapters,
       ["mcode", mcodeAdapter],
       ["dsh", dshAdapter],
-      ...(["codex", "claude"] as const).map(runtime => [runtime, new NativeAcpAdapter(runtime, { abortTimeoutMs,
+      ...(["codex", "claude", "opencode"] as const).map(runtime => [runtime, new NativeAcpAdapter(runtime, { abortTimeoutMs,
         onStderr: (workerId: string, text: string) => { void store.appendStderr(workerId, text).catch(error => logger.warn("Failed to persist native ACP stderr", { error: errorMessage(error) })); },
       })] as const),
     ]),
@@ -221,6 +221,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       },
       ui_stop: async () => { await webUi.stop(); return { stopped: true }; },
       ui_status: () => webUi.status(),
+      ui_context: (params) => webUi.updateMasterContext(params),
       runtime_prepare: async (params) => {
         const runtime = await updater.prepare((params as { sourceRoot: string }).sourceRoot);
         return { id: runtime.id, runtimeId: runtime.id, version: runtime.version, root: runtime.root };

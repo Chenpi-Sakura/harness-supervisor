@@ -77,10 +77,10 @@ export function presentEvent(event: TimelineEvent): EventPresentation {
   const result = (category: EventCategory, label: string, summary: string, failed = false): EventPresentation => ({ category, label, summary: compact(summary), failed });
   const message = text(data, "message", "reason", "error", "detail", "preview", "text");
   if (event.type === "run.progress") {
-    if (kind === "tool_start" || kind === "tool_end") {
+    if (kind === "tool_start" || kind === "tool_end" || kind === "tool_update") {
       const failed = kind === "tool_end" && data.isError === true;
       const duration = finiteNumber(data.durationMs) ? `${data.durationMs} ms` : "";
-      return result("tool", kind === "tool_start" ? "调用工具" : failed ? "工具失败" : "工具结束",
+      return result("tool", kind === "tool_start" ? "调用工具" : kind === "tool_update" ? "工具进度" : failed ? "工具失败" : "工具结束",
         joined(text(data, "tool") || "工具", text(data, "detail"), duration), failed);
     }
     if (kind === "assistant_message" || kind === "thinking") {

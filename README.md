@@ -138,9 +138,7 @@ harness-sup runtime status
 
 安装新版 npm 包不等于切换正在运行的核心。上述命令需要指向现有实例的同一 `--state-dir`；HS 会暂停接收新任务，等待已有任务和队列结束，再切换并验证新核心。等待期间仍可回答输入、取消 Worker，也可用 `harness-sup runtime cancel --intent-id <同一标识>` 取消更新。切换完成后，使用该状态目录的受支持客户端共用新核心，WebUI 需重新打开。
 
-从旧 `0.9.2` 等缺少受控更新能力的实例首次迁入时，须先安排维护窗口、处理活动 Worker 并停止旧 daemon。无法确认进程退出时自动切换会停止；不要删除锁或并行拉起旧核心。状态目录中的 `runtime-update.json`、`runtime-update.log` 与 `runtime-backups/` 保留恢复线索。
-
-托管核心在启动或升级验收完成后默认清理旧缓存，保留当前核心和上一个已验证核心；正在使用、更新尚未完成或无法确认引用的版本暂缓清理。淘汰旧核心时同步删除带版本归属记录的对应状态备份，删除中断会在后续启动时继续；历史无归属信息的备份保守保留。首次迁入清理机制时，旧 CLI/MCP 客户端及 DeepSeek Harness 宿主需重启后才能安全释放其历史引用。版本不低于当前核心的更新候选不作为旧版本删除。
+托管核心在启动或升级验收完成后默认清理旧缓存，保留当前核心和上一个已验证核心；正在使用、更新尚未完成或无法确认引用的版本暂缓清理。淘汰旧核心时同步删除带版本归属记录的对应状态备份，删除中断会在后续启动时继续；历史无归属信息的备份保守保留。版本不低于当前核心的更新候选不作为旧版本删除。
 
 <details>
 <summary>离线安装备用方式</summary>
@@ -174,8 +172,7 @@ HS 的目标：以尽可能低的开销，让独立的原生 Harness Worker 被�
 | Runtime | 传输 | 状态 |
 | --- | --- | --- |
 | Pi Agent | Pi 原生 RPC（Pi v1.3+） | 完整支持 |
-| Qoder CLI | 官方 ACP 默认，stream-json 可回退 | 实验性 |
-| Qoder CN | 复用 Qoder 适配器，独立启动入口与配置 | 实验性 |
+| Qoder CLI / Qoder CN CLI | 官方 ACP 默认，stream-json 可回退 | 实验性 |
 | MiniMax Code | ACP over ndJSON | 实验性 |
 | DeepSeek Harness / DSH | 官方 ACP（`dsh --profile acp`） | PoC |
 | Codex | ACP（随包适配器） | 实验性 |
@@ -266,12 +263,12 @@ flowchart TB
 
 HS 的推荐默认是让原生 Harness 直接执行完整任务，不为普通文件/命令操作增加人工审批：
 
-| 运行时 | 推荐设置 | 说明 |
-| --- | --- | --- |
-| Qoder CLI | `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE=bypass_permissions` | ACP 下映射为 `yolo`（Auto-approves all tools）；不设置时也是该默认 |
-| MiniMax Code | `HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=bypassPermissions` | 宿主原生默认；不设置时也是该默认 |
-| DSH | `HARNESS_SUPERVISOR_DSH_PERMISSION_MODE=danger-full-access` | 原生默认 `workspace-write` + 审批 `ask`：工作区内写入免审批，工作区外写入会被拒绝并可触发一次性提权。设为 `danger-full-access` 才移除文件沙箱且不再询问；`read-only` 只读。桌面端 UI 的三种模式属于 desktop profile，不会自动传给 ACP |
-| Pi | 由 Pi 自身配置决定 | HS 不管理 Pi 的权限模式 |
+| 运行时 | 推荐设置 |
+| --- | --- |
+| Qoder CLI | `HARNESS_SUPERVISOR_QODER_PERMISSION_MODE=bypass_permissions` |
+| MiniMax Code | `HARNESS_SUPERVISOR_MCODE_PERMISSION_MODE=bypassPermissions` |
+| DSH | `HARNESS_SUPERVISOR_DSH_PERMISSION_MODE=danger-full-access` |
+| Pi | 由 Pi 自身配置决定 |
 
 建议在**启动 daemon 的环境**中显式写出上述值，修改后重启 daemon。只有确实需要逐工具人工审批时，才改为 `default`（Qoder 在 ACP 下会通过 `session/request_permission` 暴露原生选项）。桌面端权限选择器只影响桌面会话。
 
@@ -428,8 +425,7 @@ $env:HARNESS_SUPERVISOR_WORKER_PROTOCOL = '0'
 | Runtime | 状态 | 已验证范围 |
 | --- | --- | --- |
 | Pi | 完整 | 原生 RPC；spawn / steer / follow-up / cancel / resume；Persistent 3 轮连续协作（同 Worker / 同 Session）；dialog 尚未单独真实覆盖 |
-| Qoder CLI | 实验性 | ACP 默认：spawn / resume / 审批 / 提问 / 取消 / Persistent 3 轮连续协作。stream-json 回退：spawn / cancel / resume；steer、follow-up 被接受但未生效 |
-| Qoder CN | 实验性 | 复用 Qoder 协议适配器；独立启动入口、配置及会话身份；协议与集成验证通过。原生 1.1.89 的 ACP 初始化与认证失败路径已实测，本机未登录，模型任务未实测 |
+| Qoder CLI / Qoder CN CLI | 实验性 | Qoder CLI：ACP 已验证 spawn / resume / 审批 / 提问 / 取消 / Persistent 3 轮连续协作；stream-json 已验证 spawn / cancel / resume，steer、follow-up 被接受但未生效。Qoder CN CLI：协议与集成测试通过，原生 1.1.89 的 ACP 初始化与认证失败路径已实测，模型任务未实测 |
 | MiniMax Code | 实验性 | ACP：spawn / 完成 / 取消 / resume / Persistent 3 轮连续协作；活跃回合内 steer；queue 入队；Ask 模式尚未触发 |
 | DSH | PoC | ACP v1：spawn / resume / 模型与推理配置 / 工作区写入 / 工作区外提权 / 完全权限 / 取消 / Persistent 3 轮连续协作 |
 | Codex | 实验性 | 随包 Codex ACP 2.6.0 + Codex CLI 0.166.0：`gpt-6-luna` / `low`；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 CLI 0.169.0 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |

@@ -24,7 +24,7 @@
 
 ## 安装
 
-普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Codex、Claude Code 的 ACP 适配器为可选安装，HS 默认不携带也不安装其配套原生程序；需要时另行安装 `@agentclientprotocol/codex-acp` 或 `@agentclientprotocol/claude-agent-acp`，也可用 `HARNESS_SUPERVISOR_CODEX_ACP_ENTRY` / `HARNESS_SUPERVISOR_CLAUDE_ACP_ENTRY` 指定适配器入口。其他 Harness 需先安装对应 CLI。账号认证和设置沿用原生 Harness。OpenCode 使用本机 v2 CLI，HS 不携带或下载它；优先查找 `opencode2`、`opencode` 或全局 npm 的 `@opencode/cli`，也可用 `HARNESS_SUPERVISOR_OPENCODE_ACP_ENTRY` 指定原生可执行文件或 JavaScript 入口。
+普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Codex、Claude Code 的 ACP 适配器为可选安装，HS 默认不携带也不安装其配套原生程序；需要时另行安装 `@agentclientprotocol/codex-acp` 或 `@agentclientprotocol/claude-agent-acp`，也可用 `HARNESS_SUPERVISOR_CODEX_ACP_ENTRY` / `HARNESS_SUPERVISOR_CLAUDE_ACP_ENTRY` 指定适配器入口。其他 Harness 需先安装对应 CLI。需要这两个适配器时，见[运行时支持](#运行时支持)章节的『按需安装 Codex / Claude ACP 适配器』。账号认证和设置沿用原生 Harness。OpenCode 使用本机 v2 CLI，HS 不携带或下载它；优先查找 `opencode2`、`opencode` 或全局 npm 的 `@opencode/cli`，也可用 `HARNESS_SUPERVISOR_OPENCODE_ACP_ENTRY` 指定原生可执行文件或 JavaScript 入口。
 
 ### 独立 CLI / MCP
 
@@ -434,6 +434,52 @@ $env:HARNESS_SUPERVISOR_WORKER_PROTOCOL = '0'
 | Codex | 实验性 | 可选安装后验证：Codex ACP 2.6.0 + Codex CLI 0.166.0（0.14.2 及更早版本随包安装，0.14.3 起改为可选）：`gpt-6-luna` / `low`；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 CLI 0.169.0 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
 | Claude Code | 实验性 | 可选安装后验证：Claude ACP 0.107.0 + Agent SDK 0.3.323（0.14.2 及更早版本随包安装，0.14.3 起改为可选）：原生 MiniMax-M3.1-Flash 配置；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 Claude Code 2.1.325 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
 | OpenCode v2 | 实验性 | 本机 OpenCode 2.3.0 + 官方免费 DeepSeek V4.1 Flash：真实三轮、逐轮文件内容校验、daemon 重启后的原会话恢复与上下文回忆、取消及进程退出检查通过；审批有协议与集成测试 |
+
+### 按需安装 Codex / Claude ACP 适配器
+
+Codex 与 Claude Code 的 ACP 适配器默认**不随 HS 安装**。它们的原生程序体积很大——Windows 上 `codex.exe` 约 355 MB、`claude.exe` 约 351 MB，连同辅助二进制合计约 830 MB——而多数部署用不到这两个运行时，因此 HS 把它们声明为可选 peer 依赖：不声明就不会安装，需要时再单独安装。
+
+**方式一：全局安装（推荐）**
+
+```powershell
+npm i -g @agentclientprotocol/codex-acp
+npm i -g @agentclientprotocol/claude-agent-acp
+```
+
+全局安装会被源码运行与**托管核心**同时发现：HS 的模块解析路径包含全局 npm 的 `node_modules`（Windows 上是 `%APPDATA%\npm\node_modules`）。已经运行的 daemon 需要重启后才会看到新适配器。
+
+**方式二：在项目内安装**
+
+```powershell
+npm i @agentclientprotocol/codex-acp
+```
+
+只对从该目录启动的 HS 生效；托管核心不包含它。
+
+**方式三：指定适配器入口**
+
+```powershell
+$env:HARNESS_SUPERVISOR_CODEX_ACP_ENTRY = "C:\path\to\codex-acp\index.js"
+$env:HARNESS_SUPERVISOR_CLAUDE_ACP_ENTRY = "C:\path\to\claude-agent-acp\index.js"
+```
+
+必须是**绝对路径**，指向已存在的可执行文件或 JavaScript 入口；`.cmd` / `.bat` / `.ps1` 这类 shell shim 会被拒绝。
+
+**验证**
+
+```powershell
+node dist/src/cli.js spawn --runtime codex --name codex-probe --prompt "只回复一行：OK" --wait --json
+```
+
+**Windows 注意**：npm 全局安装生成的是 `codex-acp.cmd` 之类的 shim，而 PATH 兜底只识别 `.exe`。请用方式一的全局 `node_modules` 路径（已被模块解析覆盖），不要依赖 PATH 里的 shim。
+
+**卸载**
+
+```powershell
+npm uninstall -g @agentclientprotocol/codex-acp
+```
+
+不安装时的行为：`spawn --runtime codex` 返回可读的 `HARNESS_ERROR` 并给出安装命令，不会崩溃或挂起。
 
 OpenCode 沿用原生认证、项目配置和权限规则，支持权限审批，不接入提问表单或运行中 steering。模型和推理等级必须由 ACP 提供并确认。原生斜杠命令暂不开放：OpenCode 2.3.0 可能提前返回完成；请用普通文本委派任务。原生子会话输出保留在轨迹中，不混入父任务最终结果；已上报的回合用量不含其内部子会话。父回合结束后会关闭 ACP 进程，不承诺保活或通知仍在后台运行的内部子任务。
 

@@ -6,7 +6,7 @@ import { SupervisorError } from "../../errors.js";
 export type NativeAcpRuntime = "codex" | "claude" | "opencode";
 export interface NativeAcpLaunch { file: string; args: string[]; env: NodeJS.ProcessEnv; description: string }
 
-/** Bridge adapters are bundled; OpenCode is discovered from the user's v2 installation. */
+/** Codex and Claude adapters are optional and are not bundled; OpenCode is discovered from the user's v2 installation. */
 export function resolveNativeAcpLaunch(runtime: NativeAcpRuntime, env = process.env,
   discovery?: { modules: readonly string[]; executables: readonly string[] }): NativeAcpLaunch {
   const key = `HARNESS_SUPERVISOR_${runtime.toUpperCase()}_ACP_ENTRY`;
@@ -48,5 +48,5 @@ export function resolveNativeAcpLaunch(runtime: NativeAcpRuntime, env = process.
     }
   }
   if (runtime === "opencode") throw new SupervisorError("HARNESS_ERROR", `OpenCode v2 is not installed or its executable is unavailable. Install OpenCode v2, complete native authentication, and put opencode2/opencode on PATH or set ${key} to its absolute executable. HS does not install or download OpenCode.`);
-  throw new SupervisorError("HARNESS_ERROR", `The ${binName} adapter is missing from this HS installation. Reinstall or update harness-supervisor (including optional dependencies), or set ${key} to an existing adapter entry.`);
+  throw new SupervisorError("HARNESS_ERROR", `The ${binName} adapter is not installed. Install it with \`npm i -g ${packageName}\`, or set ${key} to an existing adapter entry. HS does not bundle it by default.`);
 }

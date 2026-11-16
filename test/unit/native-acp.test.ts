@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { NativeAcpAdapter } from "../../src/adapters/native-acp/adapter.js";
@@ -143,15 +143,42 @@ for (const runtime of ["codex", "opencode"] as const) test(`${runtime} ACP resum
 });
 test("native ACP launch rejects shell shims and missing adapters instead of downloading", () => {
   assert.throws(() => resolveNativeAcpLaunch("codex", { HARNESS_SUPERVISOR_CODEX_ACP_ENTRY: "codex.cmd" }), /shell shim/);
-  assert.throws(() => resolveNativeAcpLaunch("claude", { PATH: "" }, { modules: [], executables: [] }), /missing from this HS installation/);
+  assert.throws(() => resolveNativeAcpLaunch("claude", { PATH: "" }, { modules: [], executables: [] }), /adapter is not installed/);
+  assert.throws(() => resolveNativeAcpLaunch("codex", { PATH: "" }, { modules: [], executables: [] }), /npm i -g @agentclientprotocol\/codex-acp/);
 });
 
-test("both ACP adapters resolve from the HS package without a global PATH install", () => {
+test("both ACP adapters resolve from an installed module without a global PATH install", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hs-native-acp-launch-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "node_modules");
   for (const runtime of ["codex", "claude"] as const) {
-    const launch = resolveNativeAcpLaunch(runtime, { PATH: "" });
+    const name = runtime === "codex" ? "codex-acp" : "claude-agent-acp";
+    const bridge = path.join(modules, "@agentclientprotocol", name);
+    await mkdir(bridge, { recursive: true });
+    await writeFile(path.join(bridge, "package.json"), JSON.stringify({ version: "1.0.0", bin: { [name]: "entry.js" } }));
+    await writeFile(path.join(bridge, "entry.js"), "");
+    const launch = resolveNativeAcpLaunch(runtime, { PATH: "" }, { modules: [modules], executables: [] });
     assert.equal(launch.file, process.execPath);
     assert.match(launch.args[0]!, /node_modules[\\/]@agentclientprotocol[\\/]/);
     assert.match(launch.description, /@agentclientprotocol/);
+  }
+});
+
+test("Codex and Claude adapters stay optional peer dependencies and are never bundled by default", async () => {
+  let directory = path.dirname(fileURLToPath(import.meta.url));
+  let manifest: Record<string, any> | undefined;
+  for (let depth = 0; depth < 6 && !manifest; depth++) {
+    try {
+      const candidate = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
+      if (candidate.name === "harness-supervisor") manifest = candidate;
+    } catch { /* keep walking up */ }
+    directory = path.dirname(directory);
+  }
+  assert.ok(manifest, "the core package.json must be discoverable from the test location");
+  for (const name of ["@agentclientprotocol/codex-acp", "@agentclientprotocol/claude-agent-acp"]) {
+    assert.equal(manifest.dependencies?.[name], undefined, `${name} must not be a runtime dependency`);
+    assert.ok(manifest.peerDependencies?.[name], `${name} must stay declared as a peer dependency`);
+    assert.equal(manifest.peerDependenciesMeta?.[name]?.optional, true, `${name} must be an optional peer`);
   }
 });
 

@@ -24,7 +24,7 @@
 
 ## 安装
 
-普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Codex、Claude Code 的 ACP 适配器和配套原生程序随包安装；其他 Harness 需先安装对应 CLI。账号认证和设置沿用原生 Harness。OpenCode 使用本机 v2 CLI，HS 不携带或下载它；优先查找 `opencode2`、`opencode` 或全局 npm 的 `@opencode/cli`，也可用 `HARNESS_SUPERVISOR_OPENCODE_ACP_ENTRY` 指定原生可执行文件或 JavaScript 入口。
+普通使用直接安装 npm 包，无需 Clone 仓库或本地构建。Codex、Claude Code 的 ACP 适配器为可选安装，HS 默认不携带也不安装其配套原生程序；需要时另行安装 `@agentclientprotocol/codex-acp` 或 `@agentclientprotocol/claude-agent-acp`，也可用 `HARNESS_SUPERVISOR_CODEX_ACP_ENTRY` / `HARNESS_SUPERVISOR_CLAUDE_ACP_ENTRY` 指定适配器入口。其他 Harness 需先安装对应 CLI。账号认证和设置沿用原生 Harness。OpenCode 使用本机 v2 CLI，HS 不携带或下载它；优先查找 `opencode2`、`opencode` 或全局 npm 的 `@opencode/cli`，也可用 `HARNESS_SUPERVISOR_OPENCODE_ACP_ENTRY` 指定原生可执行文件或 JavaScript 入口。
 
 ### 独立 CLI / MCP
 
@@ -187,8 +187,8 @@ HS 的目标：以尽可能低的开销，让独立的原生 Harness Worker 被�
 | Qoder CLI / Qoder CN CLI | 官方 ACP 默认，stream-json 可回退 | 实验性 |
 | MiniMax Code | ACP over ndJSON | 实验性 |
 | DeepSeek Harness / DSH | 官方 ACP（`dsh --profile acp`） | PoC |
-| Codex | ACP（随包适配器） | 实验性 |
-| Claude Code | ACP（随包适配器） | 实验性 |
+| Codex | ACP（可选适配器，默认不安装） | 实验性 |
+| Claude Code | ACP（可选适配器，默认不安装） | 实验性 |
 | OpenCode v2 | 原生 ACP（本机 CLI） | 实验性 |
 
 各运行时的能力差异、限制与验证范围见[运行时支持](#运行时支持)。
@@ -431,8 +431,8 @@ $env:HARNESS_SUPERVISOR_WORKER_PROTOCOL = '0'
 | Qoder CLI / Qoder CN CLI | 实验性 | Qoder CLI：ACP 已验证 spawn / resume / 审批 / 提问 / 取消 / Persistent 3 轮连续协作；stream-json 已验证 spawn / cancel / resume，steer、follow-up 被接受但未生效。Qoder CN CLI：协议与集成测试通过，原生 1.1.89 的 ACP 初始化与认证失败路径已实测，模型任务未实测 |
 | MiniMax Code | 实验性 | ACP：spawn / 完成 / 取消 / resume / Persistent 3 轮连续协作；活跃回合内 steer；queue 入队；Ask 模式尚未触发 |
 | DSH | PoC | ACP v1：spawn / resume / 模型与推理配置 / 工作区写入 / 工作区外提权 / 完全权限 / 取消 / Persistent 3 轮连续协作 |
-| Codex | 实验性 | 随包 Codex ACP 2.6.0 + Codex CLI 0.166.0：`gpt-6-luna` / `low`；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 CLI 0.169.0 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
-| Claude Code | 实验性 | 随包 Claude ACP 0.107.0 + Agent SDK 0.3.323：原生 MiniMax-M3.1-Flash 配置；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 Claude Code 2.1.325 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
+| Codex | 实验性 | 可选安装后验证：Codex ACP 2.6.0 + Codex CLI 0.166.0（0.14.2 及更早版本随包安装，0.14.3 起改为可选）：`gpt-6-luna` / `low`；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 CLI 0.169.0 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
+| Claude Code | 实验性 | 可选安装后验证：Claude ACP 0.107.0 + Agent SDK 0.3.323（0.14.2 及更早版本随包安装，0.14.3 起改为可选）：原生 MiniMax-M3.1-Flash 配置；干净安装后真实三轮、进程重启恢复及文件内容核对。外部 Claude Code 2.1.325 的 HS daemon/IPC 文件任务另已验证；审批和取消有协议与集成测试 |
 | OpenCode v2 | 实验性 | 本机 OpenCode 2.3.0 + 官方免费 DeepSeek V4.1 Flash：真实三轮、逐轮文件内容校验、daemon 重启后的原会话恢复与上下文回忆、取消及进程退出检查通过；审批有协议与集成测试 |
 
 OpenCode 沿用原生认证、项目配置和权限规则，支持权限审批，不接入提问表单或运行中 steering。模型和推理等级必须由 ACP 提供并确认。原生斜杠命令暂不开放：OpenCode 2.3.0 可能提前返回完成；请用普通文本委派任务。原生子会话输出保留在轨迹中，不混入父任务最终结果；已上报的回合用量不含其内部子会话。父回合结束后会关闭 ACP 进程，不承诺保活或通知仍在后台运行的内部子任务。

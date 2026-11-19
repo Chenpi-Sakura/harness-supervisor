@@ -43,6 +43,8 @@ import {
 } from "./mcp-presentation.js";
 import {
   isTerminal,
+  MIN_RUN_DURATION_MS,
+  MAX_RUN_DURATION_MS,
   type ExtensionUiResponse,
   type ForgetWorkerResult,
   type NotificationsResult,
@@ -274,9 +276,12 @@ const RequestIdShape = {
     .max(200)
     .optional()
     .describe(
-      "Optional idempotency key. Retrying the same requestId with identical parameters replays the first result instead of executing again; different parameters return CONFLICT; an interrupted (unfinished) request returns UNCERTAIN and is never re-executed automatically.",
+      "Idempotency key. Reuse with identical parameters to replay the recorded result.",
     ),
 };
+
+const turnDurationRange = "Set maxDurationMs from 1 second to 24 hours.";
+const inheritedTurnDuration = turnDurationRange + " Omit to inherit the previous limit, or default to 1 hour.";
 
 const ConfigShape = {
   model: z.string().min(1).max(200).optional().describe("Requested model; ACP requires an advertised id (OpenCode: provider/model)"),
@@ -294,15 +299,15 @@ const ConfigShape = {
   maxDurationMs: z
     .number()
     .int()
-    .min(1000)
-    .max(86_400_000)
+    .min(MIN_RUN_DURATION_MS)
+    .max(MAX_RUN_DURATION_MS)
     .optional()
-    .describe("Automatically cancel the worker after this duration"),
+    .describe("Turn execution limit in milliseconds."),
 };
 
 const NotifyTargetShape = {
   notifyTarget: NotifyTargetSchema.optional().describe(
-    "Explicit notification destination. Pass {channel:'codex-queue',codexThreadId:<verified originating thread id>} or {channel:'none'} for inbox-only. An explicit target overrides auto-binding. Spawn auto-binds to the current Codex thread when the host supplies per-call thread metadata, otherwise it snapshots the daemon default; resume preserves its original binding if omitted. Never guess the most recent session. Explicit resume binding authorizes takeover and affects future events only.",
+    "Explicit destination for future notifications. Use codex-queue with the originating Codex thread ID, or none for inbox-only delivery.",
   ),
 };
 
@@ -312,97 +317,34 @@ const DEVELOPMENT_INSTRUCTIONS =
 const PRODUCTION_INSTRUCTIONS =
   "Harness Supervisor manages independent native " + Object.values(harnessNames).join("/") + " workers and is pull-based: it does not poll; a bound codex-queue target can start a turn when the host has that thread loaded. worker_spawn/worker_resume/worker_continue return acceptance, not completion; keep the returned id and lastSeq, reuse the worker, and when notificationBinding.wake=bound and the host is known to deliver wake-ups for this thread, end the turn and let the completion notification bring you back; otherwise use worker_wait or worker_status. A worker spawned with persistence='persistent' keeps its id, native session and lifecycle=idle after each Turn; send the next instruction with worker_continue instead of spawning a replacement. Every task prompt is prefixed with the HS worker protocol: a worker finishes with its final answer and must not call `codex queue` or otherwise inject into this conversation; its PATH also rejects that subcommand. When a run needs input, answer it with worker_answer using pendingInput.requestId; worker_send only queues steering/follow-up. Pass requestId on side-effecting calls: an identical retry replays, different parameters CONFLICT, and an interrupted request reports UNCERTAIN and is not re-executed. Durable notifications are read with supervisor_notifications (default: all unacknowledged) and acknowledged after processing. Omit notifyTarget to snapshot the daemon default for new workers unless the host supplied per-call thread metadata, in which case HS auto-binds to the current Codex thread (source=caller); an explicit notifyTarget wins. resume omission preserves the binding. For a long-running independent task, spawn once, verify notificationBinding.wake=bound, then end the turn instead of polling worker_wait/worker_status/worker_events; use worker_wait when unbound, when the user asks for an immediate result, or after a notification. A bound target is not proof of wake-up; delivery is at-least-once. Task metrics are phase 1-2: a spawn auto-creates or links a task, and supervisor_metrics_* expose task and report data. Main-agent usage is never read from the host and must be recorded explicitly; unknown is not zero. Cost, acceptance, rework and intervention are not collected yet.";
 
-interface ToolDescriptions {
-  spawn: string;
-  status: string;
-  list: string;
-  events: string;
-  wait: string;
-  send: string;
-  answer: string;
-  cancel: string;
-  resume: string;
-  continue: string;
-  admin: string;
-  forget: string;
-  info: string;
-  notifications: string;
-  ack: string;
-  wakeTarget: string;
-}
-
-const PRODUCTION_DESCRIPTIONS: ToolDescriptions = {
-  spawn:
-    "Start an independent native harness process (Pi by default) in its own working directory. Returns when the prompt is accepted, not when the task completes. Keep the returned id/lastSeq and observe with worker_wait or worker_status. Pass persistence='persistent' when the same worker should accept later Turns via worker_continue; the process still exits after each Turn, but the worker id and native session are kept. The task prompt is prefixed with the HS worker protocol: finish the run with the final answer and never call `codex queue`. When notifyTarget is omitted and the Codex host supplies per-call thread metadata, HS auto-binds this worker to the current Codex thread (source=caller); an explicit notifyTarget always wins, and the daemon default is used only when no caller identity is available. The response includes notificationBinding: effective target, source (explicit / caller / daemon-default), wake (bound / unbound), observation (wake / wait) and warnings. For a long-running independent task with wake=bound and a host known to wake this thread, end the turn after spawn instead of polling; otherwise use worker_wait. A bound target is not a guarantee of wake-up.",
-  status:
-    "Return a bounded status snapshot: identity, status, lastSeq, session availability, a bounded result/error preview (chars/truncated) and a bounded pending input. The default response stays within 2 KiB and never includes recent events, run.progress, lastProgress, timeline or inputState; worker_status is not a result API. Use worker_wait for the full final result, worker_events for lifecycle history, and supervisor_notifications for the inbox. includeInput=true returns the complete pending input while the result/error face stays a bounded preview; this explicit read may exceed the default budget. includeResult and recentEvents are rejected in production with UNSUPPORTED.",
-  list:
-    "List managed workers (newest first) as {workers,nextCursor,hasMore}. Ordering is createdAt DESC with id as the tie-breaker. Each entry carries identity, runtime, status, persistence, lifecycle, needsInput and lastSeq; call worker_status or worker_wait for details. Archived workers are hidden unless includeArchived=true. Pass nextCursor with the same statuses/includeArchived filters to read the next page; the cursor is a keyset position, so newly added, archived or deleted workers do not shift the remaining sequence. State persists across daemon restarts.",
-  events:
-    "Read lifecycle events. Without sinceSeq this is a compact tail snapshot: the newest allowed lifecycle events (seq/ts/type/summary), no run.progress, staying within 4 KiB. Use nextSeq as the cursor; pass sinceSeq for strict incremental reads and use hasMore/eventsOmitted to continue. Production exposes only decision-relevant lifecycle events and caps an incremental page at 200; includeProgress=true and seq pointing to run.progress are rejected with UNSUPPORTED. A single seq returns a compact event for an allowed type. Development mode exposes raw progress and full data. Never assume a truncated response is complete: eventsOmitted and progressOmitted say what was left out.",
-  wait:
-    "Bounded long-poll (default 30s, maximum 120s). MCP is pull-based: the supervisor never wakes the main agent by itself, although optional codex-queue notifications can start a turn when the host has that thread loaded. Without sinceSeq it checks current state first, then waits from the current tail. Returns early when terminal, awaiting_input, or a requested types event appears. On completion it returns the full final result; on input it returns pendingInput; on timeout only status and cursor. Ordinary progress is never returned in production: includeProgress=true or types containing run.progress is rejected with UNSUPPORTED. until='event' without types waits only for allowlisted lifecycle events, so progress alone cannot end the wait; pass explicit lifecycle types to narrow it further. Pass sinceSeq for strict cursor delivery. Timeout is not failure.",
-  send:
-    "Queue a steering message (before the next model turn) or follow-up (after the current run) through the native harness. Valid only while running; it returns acceptance, not completion. Pi applies both natively. Qoder 1.1.76 accepts the stream message without a verified effect on the running turn. MiniMax Code steers an active turn through its steer extension and was verified to act on it; a steer sent after the turn ended is rejected by the agent. DSH ACP exposes neither, so it returns UNSUPPORTED. This does not answer extension dialogs; use worker_answer.",
-  answer:
-    "Answer a current pending input request. Read worker_status first: wake messages may be old, request ids may be reused after resume, and inputState may already say expired/answered/closed. Provide exactly one of value, confirmed, or cancelled=true using pendingInput.requestId; any other combination is rejected at the schema boundary. If the request expired or was already answered, INVALID_STATE includes reason and nextActions: do not retry worker_answer, and resume the same worker only when that is the appropriate next step. Native permission options are answered by their offered value.",
-  cancel:
-    "Clear queued messages, abort the run, stop the harness process tree and return the final cancelled state. Other workers are unaffected. An orphaned process left by a supervisor restart returns UNSUPPORTED because its control channel is gone; verify and terminate it out-of-band. Cancellation cannot be undone.",
-  resume:
-    "Start a new harness process attached to an existing persisted session and send a new instruction. Only a terminal worker whose old process is gone can resume; the session is verified. It does not continue the interrupted in-memory run or automatically retry the old task. Auto-binding does not apply to resume: omit notifyTarget to keep the existing binding (notificationBinding.source=preserved); an explicit target is a takeover for future events only (source=explicit). The response also reports wake, observation and warnings, so an unbound worker is not mistaken for an automatic notification.",
-  "continue":
-    "Submit the next Turn to an idle persistent Worker on its existing native session. Requires persistence=persistent and a restorable session; it never creates a replacement session. worker_resume keeps its historical meaning (recover a terminal or interrupted worker); worker_continue is the normal way to give more work after a completed Turn. The response reports lifecycle and session.restorable so callers can tell a finished Turn from an unusable worker.",
-  admin:
-    "Change HS-level management flags without touching the native session. pin protects a worker from prune and from worker_forget; archive hides it from the default worker_list while keeping identity, events and session reference; retire stops worker_continue/worker_resume until unretired. Active workers cannot be archived or retired. Returns the current flags.",
-  forget:
-    "Remove the HS record and event directory for a terminal worker. Pinned workers and workers with unacknowledged notifications are refused; active workers are refused. The native session file is deliberately preserved, so this is not a harness-side delete. This operation cannot be undone.",
-  info:
-    "Return the supervisor version, this MCP process mode, the advertised runtimes and active/total worker counts. Production is a minimal availability snapshot: limits, wake details, storage diagnostics and runtime notes are available in development mode. Delivery remains at-least-once and does not prove wake-up.",
-  notifications:
-    "Read actionable unacknowledged notifications for important lifecycle events. Each record carries id, workerId, seq, eventType, kind, createdAt, summary, deliveryState, acked and actionable. Superseded requests are omitted by default; state='all' includes history with actionable=false. Wake messages carry a cursor, not the report or current question: read worker_wait or worker_status for the current result/input before acting. Filter by workerId and acknowledge processed ids afterwards. Delivery history and routing targets are development diagnostics; includeDelivery is rejected in production. Counts are scoped explicitly: filteredCounts covers the same filter as this list (before limit), globalCounts covers the whole inbox, scope records state/workerId/limit/returned, and the legacy counts field remains the global view.",
-  ack:
-    "Mark notification ids as processed. Idempotent; unknown ids are reported rather than treated as errors.",
-  wakeTarget:
-    "Set the default notification destination for NEW workers; existing workers keep their persisted targets. An explicit worker_spawn.notifyTarget overrides auto-binding; when no caller identity is available, this default is the fallback for new workers. channel='codex-queue' requires a verified thread id and starts a turn only while the host has that thread loaded. Without arguments it returns the current default target.",
+const descriptions = {
+  spawn: "Start a native Harness Worker and return prompt acceptance. Set persistence='persistent' to enable worker_continue. Use worker_wait for the result.",
+  status: mode === "production"
+    ? "Read the current Worker status, session availability, and a short result preview. Use includeInput for the full pending input or worker_wait for the final result."
+    : "Read the current Worker status, result, pending input, and lifecycle diagnostics. Use recentEvents to include history.",
+  list: "List Workers newest first. Use nextCursor with the same filters to get the next page. Set includeArchived to include archived Workers.",
+  events: mode === "production"
+    ? "Read compact lifecycle events. Omit sinceSeq for recent events, pass nextSeq as sinceSeq to continue, or use seq for one event."
+    : "Read stored Worker events and payloads. Pass nextSeq as sinceSeq to continue, or use seq for one event.",
+  wait: mode === "production"
+    ? "Wait for a Worker result, input request, or selected lifecycle event. Use sinceSeq to resume from a cursor. Defaults to 30 seconds and allows up to 120 seconds."
+    : "Wait for a Worker result, input request, or selected event. Use sinceSeq for a cursor and includeProgress for progress events. Defaults to 30 seconds and allows up to 120 seconds.",
+  send: "Send steering or queue a follow-up for an active Worker when its Harness supports the requested mode.",
+  answer: "Answer the Worker’s current input or approval request. Use pendingInput.requestId and provide one of value, confirmed, or cancelled.",
+  cancel: "Cancel the Worker’s active run, clear queued messages, and stop its Harness process.",
+  resume: "Run a new instruction on a terminal Worker’s persisted native session. Omit notifyTarget to keep its notification binding.",
+  continue: "Give an idle persistent Worker its next instruction on the same native session.",
+  admin: "Pin a Worker, archive it from the default list, or retire it to stop future runs. Each action is reversible.",
+  forget: "Delete a terminal Worker’s HS record and events while preserving its native session. Requires an unpinned Worker with no unacknowledged notifications.",
+  info: mode === "production"
+    ? "Read the supervisor version, available runtimes, and Worker counts."
+    : "Read the supervisor version, runtime capabilities, limits, and storage diagnostics.",
+  notifications: mode === "production"
+    ? "Read unacknowledged Worker notifications. Filter by workerId or delivery state."
+    : "Read pending Worker notifications with delivery details. Filter by workerId or delivery state.",
+  ack: "Mark notification IDs as processed. Repeating an acknowledgement is safe.",
+  wakeTarget: "Read or set the default notification target for new Workers. Use none for inbox-only delivery or codex-queue with a Codex thread ID.",
 };
-
-const DEVELOPMENT_DESCRIPTIONS: ToolDescriptions = {
-  spawn:
-    "Start an independent native harness process (Pi by default) in its own working directory. Returns as soon as the prompt is accepted, NOT when the task completes. Save the returned worker id and lastSeq; use worker_wait for progress/completion. Do not spawn a duplicate worker for the same task while this one is active. Pass persistence='persistent' to keep the worker available for later Turns via worker_continue after its process exits. The worker survives this MCP client disconnecting because the supervisor daemon owns it.",
-  status:
-    "Return the current lifecycle status, lastSeq cursor, recent incremental events, pending input request, result/error, and the last harness stderr tail. Status 'running' means the prompt is being processed; only terminal statuses (completed, failed, cancelled, crashed, orphaned, interrupted) end the task. This is an explicit development whitelist, not the raw stored record: it includes session availability/ref, timing, resume counters, pid/exit facts and full result/pending input. Production status is a bounded snapshot and rejects includeResult/recentEvents.",
-  list:
-    "List workers managed by the supervisor, newest first, as {workers,nextCursor,hasMore}. Ordering is createdAt DESC with id as the tie-breaker; nextCursor is a keyset position, so concurrent additions, archivals and deletions do not shift the remaining sequence. Each entry is the explicit development whitelist (status, timing, session, result and lifecycle diagnostics), never the raw record. Pass nextCursor with the same filters for the next page. State persists across daemon restarts.",
-  events:
-    "Read stored normalized events after a sequence cursor. Without sinceSeq it starts at seq 1; with sinceSeq it returns events after that cursor, up to limit (default 100, max 500). Use the returned nextSeq as the next sinceSeq. This is a fast, non-blocking read; use worker_wait to block for progress or completion. Development returns the full stored stream including run.progress and event data; includeProgress is accepted for cross-mode compatibility but does not change the development result. Pass seq=<n> for one event in full. Stored text may be clipped before storage; storedTruncated/note and data.*Truncated/originalChars make that explicit.",
-  wait:
-    "Bounded long-poll. MCP tools are pull-based: this call returns only when the host invokes it; the supervisor never wakes the main agent by itself (optional codex-queue notifications can start a turn only while the host has that thread loaded). Default 30s, maximum 120s. Without sinceSeq, it first checks current status and the latest 20 events: if the worker is already terminal or awaiting_input, or a requested 'types' event is already in that window, it returns immediately; otherwise it waits from the current tail. With sinceSeq, it uses strict cursor semantics and only returns events after that sequence. Normal run.progress events are omitted by default to keep context small; only queue_cleared (a cancellation fact) is retained, so tool calls and tool errors require includeProgress=true. Pass includeProgress=true (or request types=['run.progress']) for full progress, or use worker_events for complete history. By default waits until terminal OR awaiting_input; use until='event' to return on the first matching new event. Pass sinceSeq (from lastSeq/nextSeq) when you need lossless incremental delivery.",
-  send:
-    "Queue a steering message (delivered before the next model turn) or a follow-up (delivered after the current run) through the native harness. Only valid while the worker is running; if it already reached a terminal state this returns INVALID_STATE, and you should not spawn a replacement automatically. This does not answer extension dialogs; use worker_answer for run.needs_input events. Delivery differs per runtime: Pi applies steering/follow-ups natively, while Qoder 1.1.76 accepts the stream message (run.message_sent) without a verified effect on the running turn, so do not assume the model acted on it. MiniMax Code applies steering through its mcode/session/steer extension and queues follow-ups through mcode/session/queue/enqueue, both of which require a build that advertises them. A real 0.6.12 process accepted a steer sent during an active turn and the agent acted on it (mode 'steered'), but the same call outside an admitted turn is rejected ('Steering requires an admitted, active ACP prompt Turn'), so a steering message can reach a running turn and still be dropped when the turn has ended; check the worker state before assuming it was delivered. DSH ACP exposes no steer/follow-up method and returns UNSUPPORTED. Pass requestId to make a retry after a timeout replay the recorded outcome instead of enqueueing the same text twice; if the daemon crashed mid-send the outcome is reported as UNCERTAIN, because the harness may already have received the message.",
-  answer:
-    "Respond to a run.needs_input event (Pi extension select/confirm/input/editor). Provide exactly one of value, confirmed, or cancelled. The worker must currently have a matching pending request.",
-  cancel:
-    "Clear queued steering/follow-up messages, abort the native run, stop the harness process (force-killing its process tree if needed), and return the final cancelled state. Other workers are unaffected. If the worker is an orphaned process left by a supervisor restart, this returns UNSUPPORTED because the supervisor no longer owns its control channel; verify and terminate that PID out-of-band. Cancellation is not a pause and cannot be undone.",
-  resume:
-    "Start a new harness process attached to an existing Pi session file and send a new instruction. Only works for a terminal worker with a persisted session that still exists and whose old process is not alive. The supervisor verifies the session id and refuses to fake a resume. This does not continue the interrupted in-memory run, replay its tool calls, or automatically retry the old task. Pass requestId so a retry after a timeout cannot start a second process for the same instruction.",
-  "continue":
-    "Submit the next Turn to an idle persistent Worker on its existing native session. Spawn with persistence='persistent' first; worker_continue then reuses the same worker id and native session, and the lifecycle stays idle between Turns because only the activation process exits. It returns a real error when the session cannot be restored instead of creating a replacement worker. Use worker_resume only for its historical recovery semantics.",
-  admin:
-    "Change HS-level flags: pin/unpin, archive/unarchive, retire/unretire. Archive only hides the worker from the default list; it keeps the record, events and session reference. Retire blocks continue/resume until unretired. Active workers cannot be archived or retired.",
-  forget:
-    "Permanently remove the HS record and events for a terminal worker. The native session file is kept. Pinned workers, workers with unacknowledged notifications, and active workers are refused.",
-  info:
-    "Show daemon information, limits, runtimes, and the explicit event-delivery boundary: events are persisted and pull-based; the supervisor does not claim background wake-up of the main agent.",
-  notifications:
-    "List durable notifications for important lifecycle events. Ordinary progress never creates notifications. Pending requests are checked before host delivery; resolved undelivered requests become superseded, not delivered. Default pending view excludes them; state='all' retains diagnostic history. Read worker_status for current input/result before acting and acknowledge processed ids. Codex queue messages already accepted by the host cannot be withdrawn.",
-  ack:
-    "Mark notification ids as processed. Idempotent: acknowledging the same id twice is a no-op. Unknown ids are reported, not treated as errors.",
-  wakeTarget:
-    "Set the default destination for NEW workers. Existing workers and notifications retain their persisted targets. For parallel Codex conversations, pass an explicit notifyTarget to worker_spawn instead of changing this shared default. channel='none' keeps the inbox only; channel='codex-queue' requires a verified Codex thread id. The official codex queue CLI accepts delivery, and the host starts a turn only while the target is loaded. Delivery is at-least-once and does not prove wake-up. Use worker_resume.notifyTarget only for explicitly authorized takeover; omission preserves binding.",
-};
-
-const descriptions =
-  mode === "production" ? PRODUCTION_DESCRIPTIONS : DEVELOPMENT_DESCRIPTIONS;
 
 const server = new McpServer(
   {
@@ -419,7 +361,7 @@ server.registerTool(
   "worker_spawn",
   {
     title: "Spawn a native harness worker",
-    description: descriptions.spawn,
+    description: `${descriptions.spawn} ${turnDurationRange} The default is 1 hour.`,
     inputSchema: {
       cwd: z.string().min(1).describe("Working directory for the harness process"),
       prompt: z.string().min(1).describe("Task/instruction sent to the native harness"),
@@ -428,14 +370,14 @@ server.registerTool(
         .min(1)
         .optional()
         .describe(
-          `Runtime adapter: ${Object.entries(harnessNames).map(([id, name]) => `${id}=${name}`).join(", ")} (default: pi). Codex and Claude ACP adapters are included with HS. OpenCode v2 uses a separately installed native CLI.`,
+          `Runtime adapter: ${Object.entries(harnessNames).map(([id, name]) => `${id}=${name}`).join(", ")} (default: pi). Codex and Claude use optional ACP adapters. OpenCode v2 uses its native CLI.`,
         ),
       name: z.string().min(1).max(200).optional().describe("Human-readable worker label"),
       persistence: z
         .enum(["oneshot", "persistent"])
         .optional()
         .describe(
-          "Opt-in persistent collaboration. 'persistent' lets the same worker receive later Turns via worker_continue after the process exits; the default 'oneshot' keeps the historical single-run behavior.",
+          "Choose oneshot for a single Turn (default) or persistent to enable worker_continue.",
         ),
       taskId: z
         .string()
@@ -512,13 +454,13 @@ server.registerTool(
         .max(100)
         .optional()
         .describe(
-          "Development only: include recent events. Production status is a snapshot and rejects this parameter; use worker_events.",
+          "Include recent events in development mode.",
         ),
       includeResult: z
         .boolean()
         .optional()
         .describe(
-          "Production rejects this parameter; use worker_wait for the full result. Development returns the full result by default.",
+          "Compatibility flag. Development mode includes the result by default.",
         ),
       includeInput: z
         .boolean()
@@ -640,13 +582,13 @@ server.registerTool(
         .min(1)
         .optional()
         .describe(
-          "Read exactly one stored event by seq. Development returns it in full; production returns a compact allowed lifecycle event and rejects run.progress.",
+          "Read one event by sequence number. Production returns a compact lifecycle event.",
         ),
       includeProgress: z
         .boolean()
         .optional()
         .describe(
-          "Development already returns the complete stored stream; this flag is accepted for compatibility and has no additional effect. Production rejects it with UNSUPPORTED.",
+          "Compatibility flag. Development includes progress by default.",
         ),
     },
   },
@@ -732,7 +674,7 @@ server.registerTool(
         .boolean()
         .optional()
         .describe(
-          "Development only: include run.progress events. Production rejects this with UNSUPPORTED; use worker_events in development for full history.",
+          "Include progress events in development mode.",
         ),
     },
   },
@@ -950,7 +892,7 @@ server.registerTool(
   "worker_resume",
   {
     title: "Resume a persisted native session with a new instruction",
-    description: descriptions.resume,
+    description: `${descriptions.resume} ${inheritedTurnDuration}`,
     inputSchema: {
       workerId: z.string().min(1),
       prompt: z.string().min(1),
@@ -991,7 +933,7 @@ server.registerTool(
   "worker_continue",
   {
     title: "Continue an idle persistent worker with a new Turn",
-    description: descriptions.continue,
+    description: `${descriptions.continue} ${inheritedTurnDuration}`,
     inputSchema: {
       workerId: z.string().min(1),
       prompt: z.string().min(1),
@@ -1106,8 +1048,7 @@ if (ownerRef === undefined) server.registerTool(
   "metrics_task_create",
   {
     title: "Create a delegated task for metrics",
-    description:
-      "Create a delegated task that one or more workers can join through worker_spawn.taskId. Spawn without taskId auto-creates a task, so create explicitly only when several workers share one acceptance unit. Phase 1-2 records timing and usage; cost, acceptance, rework and intervention are not collected. A supplied taskId makes creation idempotent only when the title/category/parent reference match.",
+    description: "Create a metrics task shared by Workers. Pass its taskId to worker_spawn to link a Worker.",
     inputSchema: {
       title: z.string().min(1).max(200).describe("Short task title, not the full prompt"),
       category: z.string().min(1).max(50).optional(),
@@ -1138,8 +1079,7 @@ if (ownerRef === undefined) server.registerTool(
   "metrics_task_show",
   {
     title: "Show one task's metrics",
-    description:
-      "Read one task's derived status, worker timings, usage coverage and warnings. Development mode also returns the raw usage records. Worker completion is not acceptance. Unknown values stay null; all-zero runtime usage is unverified and excluded from known totals. Parent-agent usage appears only when explicitly recorded.",
+    description: "Read a task’s status, Worker timings, and recorded usage. Development mode includes individual usage records.",
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: { taskId: z.string().min(1).max(120) },
   },
@@ -1160,8 +1100,7 @@ if (ownerRef === undefined) server.registerTool(
   "metrics_report",
   {
     title: "Summarize task metrics over a time range",
-    description:
-      "Aggregate tasks whose createdAt falls in the optional since/until window. Reports task status counts, worker/parent/session-level usage separately, per-field coverage, durations, unknown fields and data-quality warnings. Token categories are never added together. Cost, first-pass acceptance, rework and intervention are not tracked in phases 1-2. includeTasks returns task summaries (full task details in development mode); limit applies, while aggregate counts still cover all selected tasks.",
+    description: "Summarize task status, duration, and token usage over a creation-time range. Use includeTasks to include task summaries.",
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       since: z.string().min(1).max(100).optional().describe("ISO 8601 lower bound on task.createdAt"),
@@ -1187,8 +1126,7 @@ if (ownerRef === undefined) server.registerTool(
   "metrics_record_usage",
   {
     title: "Record task usage manually",
-    description:
-      "Record one usage record for a task. Parent-agent usage is never read from the Codex host; record it explicitly with role=parent_agent, and leave attribution=session_level unless you actually measured a task-level before/after increment. Session-level parent usage is reported separately and excluded from task totals. Worker usage requires a workerId already linked to the task. At least one token field is required; unknown must not be recorded as zero. Pass usageId to make retries idempotent; the same usageId with different values returns CONFLICT.",
+    description: "Record token usage for a task. Supply a linked workerId for Worker usage and a usageId for safe retries.",
     annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: false },
     inputSchema: {
       taskId: z.string().min(1).max(120),
@@ -1245,7 +1183,7 @@ server.registerTool(
         .boolean()
         .optional()
         .describe(
-          "Development includes delivery diagnostics by default. Production rejects this flag; delivery is at-least-once and does not prove host consumption.",
+          "Include delivery diagnostics in development mode.",
         ),
     },
   },

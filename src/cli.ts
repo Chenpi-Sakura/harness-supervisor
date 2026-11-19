@@ -84,11 +84,16 @@ Workers:
   answer <workerId> --request-id <id> (--value <v> | --confirmed | --denied | --cancelled)
   cancel <workerId> [--timeout-ms 10000]
   resume <workerId> --prompt <text> [--model <m>] [--provider <p>] [--json]
+        [--max-duration-ms <ms>]
         [--notify-thread <verified-thread-id> | --notify-none]
         Omit notification flags to preserve the original worker binding.
   continue <workerId> --prompt <text> [--model <m>] [--provider <p>] [--json]
+        [--max-duration-ms <ms>]
         Submit the next Turn to an idle persistent worker on its existing session.
         The worker must have been spawned with --persistence persistent.
+        Resume and continue inherit the previous limit if omitted.
+        Without a previous limit, the default is 3600000 ms (1 hour).
+        An explicit limit may be 1000–86400000 ms.
   admin <workerId> --action pin|unpin|archive|unarchive|retire|unretire
   forget <workerId>       Remove the HS record and events; the native session file is kept.
   compact [workerId] [--keep-progress 200] [--dry-run] [--json]

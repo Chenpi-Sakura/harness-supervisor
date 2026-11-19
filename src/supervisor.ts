@@ -79,7 +79,7 @@ import {
   type WorkerSummary,
   type WorkerTimeline,
 } from "./types.js";
-import { SCHEMA_VERSION } from "./types.js";
+import { DEFAULT_RUN_DURATION_MS, MAX_RUN_DURATION_MS, MIN_RUN_DURATION_MS, SCHEMA_VERSION } from "./types.js";
 import { clampInt, Deferred, isPidAlive, newWorkerId, sleep, withTimeout } from "./util/async.js";
 import { inspectProcess } from "./util/process.js";
 import type { Logger } from "./util/logger.js";
@@ -1333,6 +1333,7 @@ export class Supervisor {
       expectedSessionId = headerId;
     }
     const previous = {
+      config: record.config,
       status: record.status,
       statusReason: record.statusReason,
       result: record.result,
@@ -2666,6 +2667,7 @@ export class Supervisor {
       }
     }
     record.status = previous.status ?? "interrupted";
+    if (previous.config) record.config = previous.config;
     record.statusReason = previous.statusReason;
     record.result = previous.result;
     record.error = previous.error;
@@ -3500,15 +3502,17 @@ function validateConfig(
     if (
       typeof input.maxDurationMs !== "number" ||
       !Number.isFinite(input.maxDurationMs) ||
-      input.maxDurationMs < 1000 ||
-      input.maxDurationMs > 24 * 60 * 60 * 1000
+      input.maxDurationMs < MIN_RUN_DURATION_MS ||
+      input.maxDurationMs > MAX_RUN_DURATION_MS
     ) {
       throw new SupervisorError(
         "BAD_REQUEST",
-        "maxDurationMs must be between 1000 and 86400000",
+        `maxDurationMs must be between ${MIN_RUN_DURATION_MS} and ${MAX_RUN_DURATION_MS}`,
       );
     }
     config.maxDurationMs = Math.trunc(input.maxDurationMs);
+  } else {
+    config.maxDurationMs ??= DEFAULT_RUN_DURATION_MS;
   }
   if (input.extraArgs !== undefined) {
     if (!Array.isArray(input.extraArgs) || input.extraArgs.length > 30) {

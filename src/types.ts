@@ -1,4 +1,7 @@
 export const SCHEMA_VERSION = 1;
+export const DEFAULT_RUN_DURATION_MS = 3_600_000;
+export const MIN_RUN_DURATION_MS = 1000;
+export const MAX_RUN_DURATION_MS = 86_400_000;
 
 export type WorkerStatus =
   | "starting"
@@ -125,6 +128,7 @@ export interface WorkerConfig {
   tools?: string[];
   thinking?: string;
   extraArgs?: string[];
+  /** Effective execution limit for the recorded Turn. Older records may omit it. */
   maxDurationMs?: number;
 }
 

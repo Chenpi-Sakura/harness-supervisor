@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { SupervisorError } from "../errors.js";
+import { MAX_RUN_DURATION_MS, MIN_RUN_DURATION_MS } from "../types.js";
 
 export const IPC_VERSION = 1;
 export const DEFAULT_STATE_DIR = path.join(os.homedir(), ".harness-supervisor");
@@ -47,7 +48,7 @@ const ConfigFields = {
   provider: z.string().min(1).max(200).optional(),
   tools: z.array(z.string().min(1).max(100)).min(1).max(50).optional(),
   thinking: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
-  maxDurationMs: z.number().int().min(1000).max(86_400_000).optional(),
+  maxDurationMs: z.number().int().min(MIN_RUN_DURATION_MS).max(MAX_RUN_DURATION_MS).optional(),
   extraArgs: z.array(z.string().max(2000)).max(30).optional(),
 };
 

@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.14.2-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.14.5-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <p>
   <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/pi.svg" alt="Pi" height="28">
@@ -393,6 +393,10 @@ MCP server 有两种呈现模式，只影响当前 MCP 进程如何返回结果�
 `continue` 与 `resume` 分工：`continue` 用于正常交付下一轮工作；`resume` 保留原有恢复语义。Worker 为 `persistent` 但 session 不可恢复时，`continue` 返回真实错误，不会静默新建 Worker 或伪造上下文连续性。旧记录没有该字段时按 `oneshot` 读取。
 
 进程退出只释放运行资源；HS 不会因 Turn 结束删除 native session，也不会自动把 Worker 标记为退役。`pin` 保护记录，`archive` 只影响默认列表，`retire` 阻止新的 Turn，`forget` 删除 HS 记录与事件但保留 native session 文件，`compact` 只裁剪旧进度事件、不改动 session。原生 Session 删除尚未提供。
+
+- **每轮限时**：Master 可在 `worker_spawn`、`worker_continue` 或 `worker_resume` 传入 `maxDurationMs`（CLI 为 `--max-duration-ms`），允许 1 秒到 24 小时。续派或恢复时省略会继承上次的限时，没有记录时默认 1 小时。每轮重新计时，超时由 HS 取消本轮。例如 `harness-sup continue <workerId> --prompt "继续监控" --max-duration-ms 86400000`。
+- **可调整的运行配置**：续派和恢复时可覆盖 `model`、`provider`、`thinking` 和 `tools`，以及通过 CLI 或 IPC 覆盖 `extraArgs`。省略这些配置时保留已有值，是否支持取决于运行时。通知目标也可显式调整，受当前连接的会话归属和通知策略限制。
+- **续派时固定的身份**：Worker ID、运行时、工作目录、持久模式、会话归属、关联任务以及原生会话身份均沿用原记录。Worker 名称也无续派修改入口。
 
 ### 存储诊断
 

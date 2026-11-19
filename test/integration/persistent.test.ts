@@ -4,6 +4,7 @@ import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { SupervisorError } from "../../src/errors.js";
 import type { NotificationsResult, WorkerSummary } from "../../src/types.js";
+import { MAX_RUN_DURATION_MS } from "../../src/types.js";
 import { isPidAlive, sleep } from "../../src/util/async.js";
 import {
   TestDaemon,
@@ -37,10 +38,11 @@ test("a persistent worker runs three Turns on one native session", async (t) => 
     client,
     cwd,
     `[scenario:slow] remember ${firstToken} for later`,
-    { persistence: "persistent" },
+    { persistence: "persistent", maxDurationMs: 60_000 },
   );
   assert.equal(worker.persistence, "persistent");
   assert.equal(worker.lifecycle, "active");
+  assert.equal(worker.config.maxDurationMs, 60_000);
 
   const turn1 = await waitTerminal(client, worker.id);
   assert.equal(turn1.worker.status, "completed");
@@ -58,10 +60,11 @@ test("a persistent worker runs three Turns on one native session", async (t) => 
   const secondToken = "TURN_TWO_SECRET_9a17";
   const turn2 = await client.request<typeof worker>(
     "continue",
-    { workerId: worker.id, prompt: `[scenario:recall] keep ${secondToken} too` },
+    { workerId: worker.id, prompt: `[scenario:recall] keep ${secondToken} too`, maxDurationMs: MAX_RUN_DURATION_MS },
     { timeoutMs: 60_000 },
   );
   assert.equal(turn2.id, worker.id, "continuation must keep the worker identity");
+  assert.equal(turn2.config.maxDurationMs, MAX_RUN_DURATION_MS);
   assert.ok(
     ["active", "idle"].includes(turn2.lifecycle),
     `unexpected lifecycle after continue: ${turn2.lifecycle}`,
@@ -88,6 +91,7 @@ test("a persistent worker runs three Turns on one native session", async (t) => 
   assert.equal(settled3.worker.sessionId, sessionId);
   assert.equal(settled3.worker.sessionFile, sessionFile);
   assert.equal(settled3.worker.resumeCount, 2);
+  assert.equal(settled3.worker.config.maxDurationMs, MAX_RUN_DURATION_MS);
   assert.match(
     settled3.worker.result?.text ?? "",
     new RegExp(secondToken),

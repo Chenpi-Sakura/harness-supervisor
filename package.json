@@ -1,6 +1,6 @@
 {
   "name": "harness-supervisor",
-  "version": "0.14.5",
+  "version": "0.14.6",
   "description": "Make other harnesses work for yours. Turn native AI harnesses into subagents your main harness can command and manage. | 让你的主 Harness 当老板，其他 Harness 来干活。把各家原生 Harness 变成它可委派、可管理的子智能体。",
   "type": "module",
   "license": "MIT",

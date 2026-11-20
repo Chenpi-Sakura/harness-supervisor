@@ -169,6 +169,125 @@ export interface WorkerResult {
   truncated: boolean;
 }
 
+/** Scalar-only input/config entry; larger detail belongs in an artifact file. */
+export type StructuredScalar = string | number | boolean;
+
+export interface StructuredThreshold {
+  name: string;
+  requested?: string;
+  adopted?: string;
+  unit?: string;
+  met?: boolean;
+  note?: string;
+}
+
+export interface StructuredResultItem {
+  name: string;
+  status: "passed" | "failed" | "skipped" | "unknown";
+  detail?: string;
+  artifact?: string;
+}
+
+export interface StructuredArtifact {
+  name?: string;
+  path: string;
+  note?: string;
+}
+
+/** Versioned, size-capped result a Worker submits once per Turn. */
+export interface StructuredResultV1 {
+  v: 1;
+  summary: string;
+  inputs?: Record<string, StructuredScalar>;
+  config?: Record<string, StructuredScalar>;
+  thresholds?: StructuredThreshold[];
+  items?: StructuredResultItem[];
+  anomalies?: string[];
+  artifacts?: StructuredArtifact[];
+}
+
+/**
+ * Exit evidence is derived from the execution record, never from the
+ * Worker's own report. `missing` means no exit was observed.
+ */
+export interface JobExecutionEvidence {
+  jobId: string;
+  state: JobObservation["state"];
+  exitCode: number | null;
+  exitCodeKnown: boolean;
+  observedAt: string;
+  source: "job_evidence";
+}
+
+export interface ResultExecutionEvidence {
+  exitCode: number | null;
+  signal: string | null;
+  observedAt?: string;
+  source: "worker_process" | "missing";
+  /** Job-side exits observed for this Turn, kept separate from the harness exit. */
+  jobs?: JobExecutionEvidence[];
+}
+
+export interface WorkerTurnResult {
+  turn: number;
+  submittedAt: string;
+  report: StructuredResultV1;
+  execution: ResultExecutionEvidence;
+}
+
+/**
+ * Explicit link to a long-running job executed outside the Worker process.
+ * Attaching never starts the job; it only records identity and evidence.
+ */
+export interface WorkerJobLink {
+  jobId: string;
+  /** Execution host or queue label; not credentials or a shell command. */
+  location: string;
+  stage?: string;
+  turn: number;
+  expectedArtifacts?: string[];
+  /** Host-local path to the execution-side evidence JSON. */
+  evidencePath: string;
+  /** Only meaningful on the same host and when process identity was verified. */
+  pid?: number;
+  attachedAt: string;
+  updatedAt?: string;
+}
+
+/** Execution-side evidence file, written by the job itself. */
+export interface JobEvidenceV1 {
+  v: 1;
+  jobId: string;
+  state: "running" | "exited" | "failed";
+  updatedAt: string;
+  exitCode?: number;
+  stage?: string;
+  artifacts?: StructuredArtifact[];
+  detail?: string;
+}
+
+export interface JobObservation {
+  jobId: string;
+  location: string;
+  /** Persisted stage, used to tell the operator where to inspect. */
+  stage?: string;
+  workerTurn: number;
+  /** Job state is never folded into the Worker lifecycle status. */
+  state: "running" | "exited" | "failed" | "stale" | "unknown";
+  evidenceState?: JobEvidenceV1["state"];
+  exitCode: number | null;
+  exitCodeKnown: boolean;
+  artifacts: StructuredArtifact[];
+  /** Expected artifacts the evidence does not list; reported, not enforced. */
+  missingArtifacts: string[];
+  updatedAt?: string;
+  evidencePath: string;
+  problem?: string;
+  inspectStage?: string;
+  /** Corroboration only; null when the job is remote or unverified. */
+  pidAlive: boolean | null;
+}
+
 export interface WorkerRecord {
   schemaVersion: number;
   id: string;
@@ -244,6 +363,15 @@ export interface WorkerRecord {
   /** Persisted at spawn; global defaults never move an existing worker. */
   notifyTarget?: NotifyTarget;
   /**
+   * 1-based Turn counter for structured results. New records start at 1;
+   * resume/continue start a new Turn. Absent on legacy records.
+   */
+  turn?: number;
+  /** Immutable structured results, one per Turn (capped, oldest dropped). */
+  results?: WorkerTurnResult[];
+  /** Explicit long-job links; observation reads evidence on demand. */
+  jobs?: WorkerJobLink[];
+  /**
    * Task this worker belongs to. Optional on purpose: workers created before
    * task metrics existed are not retroactively attributed to a guessed task.
    */
@@ -296,6 +424,8 @@ export type WorkerEventType =
   | "run.completed"
   | "run.failed"
   | "run.cancelled"
+  | "run.result_submitted"
+  | "worker.job_attached"
   | "worker.cancel_requested"
   | "worker.exited"
   | "worker.crashed"
@@ -448,6 +578,8 @@ export interface WorkerInputState {
 
 export interface WorkerStatusResult {
   worker: WorkerSummary;
+  /** 1-based Turn currently accepting a structured result. */
+  currentTurn: number;
   recentEvents: WorkerEvent[];
   stderrTail: string;
   /** Newest usable progress derived from the persisted event log. */
@@ -456,14 +588,22 @@ export interface WorkerStatusResult {
   timeline?: WorkerTimeline;
   /** Last/current input request and the actions that are still valid. */
   inputState?: WorkerInputState;
+  /** Newest structured Turn result; compacted by MCP presentation. */
+  latestResult?: WorkerTurnResult;
+  /** Job state is reported separately from the Worker lifecycle. */
+  jobs?: JobObservation[];
 }
 
 export interface WaitResult extends ReadEventsResult {
+  /** 1-based Turn the settled/current run belongs to. */
+  currentTurn: number;
   timedOut: boolean;
   terminal: boolean;
   lastProgress?: WorkerLastProgress;
   timeline?: WorkerTimeline;
   inputState?: WorkerInputState;
+  latestResult?: WorkerTurnResult;
+  jobs?: JobObservation[];
 }
 
 export interface SupervisorLimits {

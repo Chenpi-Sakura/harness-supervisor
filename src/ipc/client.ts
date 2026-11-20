@@ -348,7 +348,11 @@ export class SupervisorClient {
         detached: true,
         windowsHide: true,
         stdio: ["ignore", out, out],
-        env: this.options.uiPort === undefined ? process.env : { ...process.env, HARNESS_SUPERVISOR_UI_PORT: String(this.options.uiPort) },
+        env: {
+          ...process.env,
+          HARNESS_SUPERVISOR_START_TRIGGER: "client",
+          ...(this.options.uiPort === undefined ? {} : { HARNESS_SUPERVISOR_UI_PORT: String(this.options.uiPort) }),
+        },
       });
       child.unref();
       this.options.logger?.info("Spawned supervisor daemon", { pid: child.pid, logPath });

@@ -22,12 +22,15 @@ import {
   resolveMcpMode,
 } from "../../src/mcp-presentation.js";
 import type {
+  JobObservation,
   NotificationsResult,
   ReadEventsResult,
   SupervisorInfo,
   WaitResult,
   WorkerEvent,
+  WorkerStatusResult,
   WorkerSummary,
+  WorkerTurnResult,
 } from "../../src/types.js";
 import type { MetricsReport, TaskMetrics, TaskRecord, UsageRecord } from "../../src/metrics.js";
 
@@ -289,6 +292,7 @@ function waitFixture(
       startedAt: undefined,
       ...worker,
     } as unknown as WorkerSummary,
+    currentTurn: 1,
     events,
     nextSeq: events.at(-1)?.seq ?? 0,
     hasMore: false,
@@ -405,6 +409,7 @@ test("production wait timeout is a status check, not a progress dump", () => {
     includeEvents: true,
   }) as any;
   assert.deepEqual(Object.keys(view).sort(), [
+    "currentTurn",
     "hasMore",
     "nextSeq",
     "terminal",
@@ -445,6 +450,7 @@ END`;
     session: { available: false, restorable: false },
   } as unknown as WorkerSummary;
   const status = {
+    currentTurn: 1,
     worker,
     recentEvents: [
       {
@@ -481,7 +487,7 @@ END`;
   };
 
   const view = presentStatus(status, "production") as any;
-  assert.deepEqual(Object.keys(view), ["worker"]);
+  assert.deepEqual(Object.keys(view).sort(), ["currentTurn", "worker"]);
   assert.equal("result" in view.worker, false, "status never returns the full result");
   assert.equal(
     "error" in view.worker,
@@ -560,7 +566,7 @@ test("production status budgets long native input labels without changing answer
     resumeAvailable: false,
     session: { available: true, restorable: false, reason: "process_may_be_running" },
   } as unknown as WorkerSummary;
-  const status = { worker, recentEvents: [], stderrTail: "" };
+  const status = { worker, currentTurn: 1, recentEvents: [], stderrTail: "" };
   const view = presentStatus(status, "production") as any;
   assert.ok(Buffer.byteLength(JSON.stringify(view), "utf8") <= 2048);
   assert.equal(view.budgetExceeded, undefined);
@@ -593,7 +599,7 @@ test("production status budgets oversized native request ids with an explicit fu
     pendingInput,
     resumeAvailable: false,
   } as unknown as WorkerSummary;
-  const status = { worker, recentEvents: [], stderrTail: "" };
+  const status = { worker, currentTurn: 1, recentEvents: [], stderrTail: "" };
   const view = presentStatus(status, "production") as any;
   assert.ok(Buffer.byteLength(JSON.stringify(view), "utf8") <= 2048);
   assert.equal(view.worker.pendingInput.requestId, undefined, "a partial request id cannot be used as an answer id");
@@ -1093,10 +1099,87 @@ test("development event reads and waits merge ACP output without raw JSON arrays
     assert.equal(read.nextSeq, 2);
     assert.equal(read.hasMore, true);
     assert.equal(read.events[0].events, undefined);
-    const waited = presentWait({ worker, nextSeq: 2, hasMore: false, timedOut: false, terminal: false } as WaitResult, { events, eventsOmitted: 0 }, "development") as any;
+    const waited = presentWait({ worker, currentTurn: 1, nextSeq: 2, hasMore: false, timedOut: false, terminal: false } as WaitResult, { events, eventsOmitted: 0 }, "development") as any;
     assert.deepEqual(waited.events, read.events);
     assert.deepEqual(events, source);
     const pi = presentEventsDevelopment({ worker: { ...worker, runtime: "pi" }, events, nextSeq: 2, hasMore: false } as ReadEventsResult) as any;
     assert.equal(pi.events.length, 2, "Pi messages are complete snapshots, not ACP deltas");
   }
+});
+
+test("production status bounds the structured result and job projection", () => {
+  const worker = {
+    id: "w-1",
+    runtime: "pi",
+    status: "completed",
+    lastSeq: 5,
+    result: { text: "done", truncated: false },
+  } as unknown as WorkerSummary;
+  const latestResult: WorkerTurnResult = {
+    turn: 2,
+    submittedAt: "2026-01-01T00:00:05.000Z",
+    report: {
+      v: 1,
+      summary: "S".repeat(2000),
+      thresholds: Array.from({ length: 20 }, (_, index) => ({
+        name: `threshold-${index}`,
+        requested: ">0.9",
+        adopted: "0.91",
+      })),
+      items: Array.from({ length: 50 }, (_, index) => ({
+        name: `item-${index}`,
+        status: "passed" as const,
+        artifact: `artifact-${index}.log`,
+      })),
+      anomalies: Array.from({ length: 20 }, (_, index) => `anomaly-${index}`),
+      artifacts: Array.from({ length: 30 }, (_, index) => ({
+        name: `artifact-${index}`,
+        path: `out/artifact-${index}.log`,
+      })),
+    },
+    execution: {
+      exitCode: 0,
+      signal: null,
+      observedAt: "2026-01-01T00:00:05.000Z",
+      source: "worker_process",
+    },
+  };
+  const jobs: JobObservation[] = Array.from({ length: 10 }, (_, index) => ({
+    jobId: `job-${index}`,
+    location: "local",
+    workerTurn: 2,
+    state: "running",
+    exitCode: null,
+    exitCodeKnown: false,
+    artifacts: [],
+    missingArtifacts: [],
+    evidencePath: `jobs/job-${index}.json`,
+    pidAlive: null,
+  }));
+  const status = {
+    currentTurn: 2,
+    worker,
+    recentEvents: [],
+    stderrTail: "",
+    latestResult,
+    jobs,
+  } as unknown as WorkerStatusResult;
+
+  const view = presentStatus(status, "production") as any;
+  assert.ok(Buffer.byteLength(JSON.stringify(view), "utf8") <= 2048);
+  assert.equal("report" in view.worker.structuredResult, false, "full report stays behind result_get");
+  assert.equal(view.worker.structuredResult.summaryTruncated, true);
+  assert.ok(view.worker.structuredResult.summary.length <= 201);
+  assert.equal(view.worker.structuredResult.thresholds.length, 3);
+  assert.equal(view.worker.structuredResult.items.length, 3);
+  assert.equal(view.worker.structuredResult.detailAvailable, true);
+  assert.equal(view.worker.jobs.length, 2);
+  assert.equal(view.worker.jobsOmitted, 8);
+  assert.equal(view.worker.jobs[0].artifacts.length, 0);
+  assert.equal(view.worker.jobs[0].artifactCount, 0);
+
+  const development = presentStatus(status, "development") as any;
+  assert.equal(development.latestResult.report.summary.length, 2000);
+  assert.equal(development.latestResult.report.items.length, 50);
+  assert.equal(development.jobs.length, 10);
 });

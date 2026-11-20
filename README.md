@@ -322,6 +322,10 @@ MCP server 有两种呈现模式，只影响当前 MCP 进程如何返回结果�
 | `worker_cancel` | 取消并确认终态；不影响其他 Worker |
 | `worker_resume` | 用新指令恢复已有 session |
 | `worker_continue` | 在 idle 的 persistent Worker 上提交下一轮；沿用同一 native session |
+| `worker_result_submit` | 为当前 Turn 提交一份版本化结构化结果；同一 Turn 重试幂等、内容不可变 |
+| `worker_result_get` | 读取指定 Turn 的结构化结果；省略 turn 时返回最近提交的结果和可查询的 Turn 编号 |
+| `worker_job_attach` | 关联一个已存在的长作业（稳定 jobId、执行位置、证据路径）；不会启动或重跑作业 |
+| `worker_job_status` | 从执行侧证据读取作业状态与退出码；与 Worker 状态分开报告 |
 | `worker_admin` | pin / unpin、archive / unarchive、retire / unretire |
 | `worker_forget` | 删除终态 Worker 的 HS 记录与事件；保留 native session 文件 |
 | `supervisor_info` | Production 为版本、模式、runtime 与 Worker 计数快照；完整诊断在 Development |
@@ -340,6 +344,7 @@ MCP server 有两种呈现模式，只影响当前 MCP 进程如何返回结果�
 | 守护进程 | `up` `down` `daemon` `info` | 启动、关闭、前台运行 daemon，查看版本与状态目录 |
 | Worker 管理 | `spawn` `list` `status` `events` | 创建 Worker，列出、查询状态，增量读取事件 |
 | Worker 通信 | `wait` `send` `answer` `cancel` `resume` `continue` | 有界等待、追加指令、回答输入、取消、恢复、继续同一 Worker 的下一轮 |
+| 结果与作业 | `result-submit` `result-get` `job-attach` `job-status` | 提交/读取当前 Turn 的结构化结果，关联并观测独立长作业 |
 | Worker 管理 | `admin` `forget` | 固定、归档、退役、取消退役；删除 HS 记录但保留 native session |
 | 通知 | `inbox` `ack` `notify-target` `retry-notifications` | 读取与确认收件箱，登记投递目标，重试投递 |
 | 度量 | `metrics create\|show\|report\|export\|record-usage` | 创建任务，查看单任务/汇总报告，导出，补录用量 |
@@ -352,12 +357,18 @@ MCP server 有两种呈现模式，只影响当前 MCP 进程如何返回结果�
 | 非终态 | `starting` `running` `awaiting_input` |
 | 终态 | `completed` `failed` `cancelled` `crashed` `orphaned` `interrupted` |
 | Worker 事件 | `worker.starting` `worker.started` `worker.session` |
-| 运行事件 | `run.accepted` `run.started` `run.progress` `run.usage` `run.needs_input` `run.input_answered` `run.message_sent` `run.error` `run.completed` `run.failed` `run.cancelled` |
-| 生命周期事件 | `worker.cancel_requested` `worker.exited` `worker.crashed` `worker.orphaned` `worker.interrupted` `worker.resumed` `worker.continued` `worker.resume_failed` |
+| 运行事件 | `run.accepted` `run.started` `run.progress` `run.usage` `run.needs_input` `run.input_answered` `run.message_sent` `run.error` `run.completed` `run.failed` `run.cancelled` `run.result_submitted` |
+| 生命周期事件 | `worker.cancel_requested` `worker.exited` `worker.crashed` `worker.orphaned` `worker.interrupted` `worker.resumed` `worker.continued` `worker.resume_failed` `worker.job_attached` |
 
 `run.usage` 是结构化、低频的运行时用量报告；`run.progress` 中旧的 `kind=usage` 仍保留以兼容既有事件消费者，但任务度量只消费 `run.usage`。`run.usage` 只描述 Token，不包含费用。
 
 `orphaned` 表示 daemon 重启后进程可能仍存活但已失去控制；`interrupted` 表示进程已不在或 PID 已被复用。两者都不代表任务成功，也不会被自动重跑。
+
+### 结构化结果与长作业
+
+每个 Turn 最多保留一份结构化结果，按 `currentTurn`（`status` / `wait` 返回）提交；同一 Turn 的重复提交必须内容一致，否则返回 `CONFLICT`。结果中的 `summary`、实际输入/配置、请求与实际采用的阈值、分项结果、异常和产物引用会被持久化；大段细节应写入产物文件。`execution` 由 HS 根据本轮真实退出记录生成，缺失时明确标记为 `missing`，不接受 Worker 自报覆盖；同一 Turn 已关联作业的退出状态放在 `execution.jobs`，与 Harness 进程的 `exitCode` 分开。
+
+长作业通过 `worker_job_attach` 显式关联，记录稳定 `jobId`、执行位置、所属 Turn 和执行侧证据路径。`worker_job_status` 读取证据并单独报告 `running` / `exited` / `failed` / `stale` / `unknown`；证据缺失、过期或 jobId 不符时不会猜测成功。关联和恢复只恢复观测，不会重新启动作业；PID 只在同主机且可验证时作为佐证。独立 Worker 可读取其 cwd 内的证据。绑定到 Master 会话的 Worker 仅使用 daemon 环境变量 `HARNESS_SUPERVISOR_JOB_EVIDENCE_DIRS` 配置的可信证据目录。该变量也可为独立 Worker 增加目录，填写绝对路径并按平台的路径分隔符分隔。单次读取有大小、文件类型和 1 秒时限，失败按 `unknown` 返回。
 
 ### 关键语义
 

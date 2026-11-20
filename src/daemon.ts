@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { DshAdapter } from "./adapters/dsh/adapter.js";
 import { NativeAcpAdapter } from "./adapters/native-acp/adapter.js";
@@ -10,18 +11,20 @@ import { IpcServer } from "./ipc/server.js";
 import {
   acquireDaemonLock,
   ensureIpcToken,
+  isPidReuse,
   removeEndpointInfoIfOwned,
   releaseDaemonLockSync,
   writeEndpointInfo,
   type DaemonLock,
 } from "./ipc/daemon-state.js";
-import { ipcEndpoint, resolveStateDir } from "./ipc/protocol.js";
+import { ipcEndpoint, resolveStateDir, type EndpointInfo } from "./ipc/protocol.js";
 import { Store } from "./store.js";
 import { Supervisor } from "./supervisor.js";
 import type { HarnessAdapter } from "./types.js";
 import { Deferred, clampInt } from "./util/async.js";
-import { ensureDir } from "./util/fsx.js";
+import { ensureDir, atomicWriteJson, readJsonFile } from "./util/fsx.js";
 import { createLogger, type Logger } from "./util/logger.js";
+import { inspectProcess } from "./util/process.js";
 import { prepareWorkerGuard } from "./worker-guard.js";
 import { VERSION, TOOL_NAME } from "./version.js";
 import { WebUiServer } from "./web-ui.js";
@@ -32,6 +35,17 @@ export interface DaemonOptions {
   stateDir?: string;
   foreground?: boolean;
   logger?: Logger;
+}
+
+interface DaemonExitRecord {
+  instanceId: string;
+  pid: number;
+  version: string;
+  trigger: string;
+  reason: string;
+  requestedAt: string;
+  stoppedAt?: string;
+  status: "stopping" | "stopped";
 }
 
 function intEnv(name: string, fallback: number, min: number, max: number): number {
@@ -61,14 +75,129 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   await ensureDir(stateDir);
   const logger =
     options.logger ?? createLogger(path.join(stateDir, "daemon.log"), options.foreground === true);
+  const instanceId = randomUUID();
+  const trigger = process.env.HARNESS_SUPERVISOR_START_TRIGGER?.trim() || "direct";
+  const endpointFile = path.join(stateDir, "endpoint.json");
+  const exitRecordFile = path.join(stateDir, "daemon-exit.json");
+  logger.info("Supervisor daemon entry", {
+    instanceId,
+    version: VERSION,
+    pid: process.pid,
+    ppid: process.ppid,
+    node: process.version,
+    processStartedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+    stateDir,
+    trigger,
+    foreground: options.foreground === true,
+  });
   const done = new Deferred<void>();
-  const lock = await acquireDaemonLock(stateDir);
+  let lock: DaemonLock;
+  try {
+    lock = await acquireDaemonLock(stateDir, {
+      onConflict: ({ existing, identity, decision }) => {
+        logger.warn("Supervisor daemon lock conflict", {
+          instanceId,
+          lockPid: existing.pid,
+          lockStateDir: existing.stateDir,
+          holderStartedAt: existing.startedAt ?? null,
+          holderAlive: identity.alive,
+          holderVerified: identity.verified,
+          holderStartedAtObserved: identity.startedAt,
+          lockFile: path.join(stateDir, "daemon.lock"),
+          decision: decision.outcome,
+          decisionReason: "reason" in decision ? decision.reason : undefined,
+        });
+      },
+    });
+  } catch (error) {
+    // The refusal is written through an async logger queue; flush before the
+    // entry point exits or the only diagnostic for the conflict is lost.
+    await logger.flush();
+    throw error;
+  }
+  logger.info("Supervisor daemon lock acquired", { instanceId, lockFile: lock.path, pid: process.pid });
   // Every exit path has to release the lock, including the ones that skip the
   // graceful shutdown (hard exit timer, second signal, throw during startup).
   registerDaemonLockExitRelease(lock);
+  const previousEndpoint = await readJsonFile<EndpointInfo>(endpointFile).catch(() => null);
+  const previousExitRecord = await readJsonFile<DaemonExitRecord>(exitRecordFile).catch(() => null);
+  if (previousEndpoint || previousExitRecord) {
+    const previousIdentity = previousEndpoint && previousEndpoint.pid !== process.pid
+      ? await inspectProcess(previousEndpoint.pid, [previousEndpoint.stateDir ?? stateDir, "daemon-entry"]).catch(() => null)
+      : null;
+    const recordMatchesEndpoint = previousExitRecord !== null && previousExitRecord !== undefined &&
+      (previousEndpoint
+        ? previousEndpoint.instanceId
+          ? previousExitRecord.instanceId === previousEndpoint.instanceId
+          : previousExitRecord.pid === previousEndpoint.pid
+        : true);
+    const previousCompleted = recordMatchesEndpoint &&
+      (previousExitRecord?.status === "stopped" || previousExitRecord?.status === "stopping");
+    const previousPidReused = previousEndpoint !== null && previousEndpoint !== undefined &&
+      (previousEndpoint.pid === process.pid ||
+        isPidReuse(previousEndpoint.startedAt, previousIdentity?.startedAt));
+    const previousProcess = !previousEndpoint
+      ? previousCompleted ? "exited" : "no-endpoint"
+      : previousPidReused
+        ? "pid-reused"
+        : !previousIdentity?.alive
+          ? "exited"
+          : previousIdentity.verified === false
+            ? "pid-reused"
+            : previousIdentity.verified === true
+              ? "still-running"
+              : "unverifiable";
+    const previousExit = recordMatchesEndpoint && previousExitRecord &&
+      (previousExitRecord.status === "stopped" || previousExitRecord.status === "stopping")
+      ? {
+          reason: previousExitRecord.reason,
+          requestedAt: previousExitRecord.requestedAt,
+          stoppedAt: previousExitRecord.stoppedAt ?? null,
+          completed: previousExitRecord.status === "stopped",
+        }
+      : "unknown";
+    logger.info("Supervisor daemon previous instance", {
+      instanceId,
+      previousPid: previousEndpoint?.pid ?? (recordMatchesEndpoint ? previousExitRecord?.pid ?? null : null),
+      previousVersion: previousEndpoint?.version ?? null,
+      previousInstanceId: previousEndpoint?.instanceId ?? (recordMatchesEndpoint ? previousExitRecord?.instanceId ?? null : null),
+      previousStartedAt: previousEndpoint?.startedAt ?? null,
+      previousProcess,
+      previousProcessVerified: previousIdentity?.verified ?? null,
+      previousExit,
+    });
+    // The record is evidence for one restart only. Keeping it would let a much
+    // later crash inherit an older clean-stop reason when endpoint.json is gone.
+    await rm(exitRecordFile, { force: true }).catch(() => undefined);
+  }
+  let shutdownStartedAt: string | null = null;
+  const writeExitRecord = async (status: DaemonExitRecord["status"], reason: string): Promise<void> => {
+    const now = new Date().toISOString();
+    const record: DaemonExitRecord = {
+      instanceId,
+      pid: process.pid,
+      version: VERSION,
+      trigger,
+      reason,
+      requestedAt: shutdownStartedAt ?? now,
+      status,
+      ...(status === "stopped" ? { stoppedAt: now } : {}),
+    };
+    await atomicWriteJson(exitRecordFile, record).catch((error: unknown) => {
+      logger.warn("Failed to persist daemon exit record", { instanceId, error: errorMessage(error) });
+    });
+  };
+  const forceExit = (code: number): void => {
+    const timer = setTimeout(() => process.exit(code), 500);
+    timer.unref?.();
+    void logger.flush().catch(() => undefined).finally(() => {
+      clearTimeout(timer);
+      process.exit(code);
+    });
+  };
   const token = await ensureIpcToken(stateDir);
   const endpoint = ipcEndpoint(stateDir);
-  const supervisorId = randomUUID();
+  const supervisorId = instanceId;
   const store = new Store(stateDir, logger);
   // The harness adapters must agree with the supervisor on how long a cancel may
   // take, otherwise the adapter waits on a different budget than the caller.
@@ -156,7 +285,17 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       codexThreadId: process.env.HARNESS_SUPERVISOR_CODEX_WAKE_THREAD || undefined,
     },
   });
-  await supervisor.init();
+  try {
+    await supervisor.init();
+  } catch (error) {
+    logger.error("Supervisor daemon startup failed", {
+      instanceId,
+      stage: "supervisor_init",
+      error: errorMessage(error),
+    });
+    await logger.flush();
+    throw error;
+  }
 
   let server: IpcServer;
   const webUi = new WebUiServer({ supervisor, port: intEnv("HARNESS_SUPERVISOR_UI_PORT", 61114, 1, 65535) });
@@ -167,14 +306,18 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   const shutdown = async (reason: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    shutdownStartedAt ??= new Date().toISOString();
     stopHostWatch?.();
     updater?.close();
-    logger.info("Supervisor daemon shutting down", { reason });
+    logger.info("Supervisor daemon shutting down", { instanceId, reason });
+    // Install the deadline before touching disk: a blocked exit-record write
+    // must not leave shutdown without a time limit.
     hardExitTimer = setTimeout(() => {
-      logger.error("Graceful shutdown exceeded 30 seconds; forcing exit");
-      process.exit(1);
+      logger.error("Graceful shutdown exceeded 30 seconds; forcing exit", { instanceId, reason });
+      forceExit(1);
     }, 30_000);
     hardExitTimer.unref?.();
+    await writeExitRecord("stopping", reason);
     try {
       await webUi.stop();
     } catch (error) {
@@ -191,9 +334,17 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
       logger.warn("IPC server close failed", { error: errorMessage(error) });
     }
     await removeEndpointInfoIfOwned(stateDir);
-    await lock.release();
-    logger.info("Supervisor daemon stopped");
+    // Keep the lock until both the clean-stop record and its log line are on
+    // disk. Otherwise a replacement daemon can log a start before this stop.
+    await writeExitRecord("stopped", reason);
+    logger.info("Supervisor daemon stopped", {
+      instanceId,
+      reason,
+      durationMs: shutdownStartedAt ? Date.now() - Date.parse(shutdownStartedAt) : null,
+      version: VERSION,
+    });
     await logger.flush();
+    await lock.release();
     if (hardExitTimer) clearTimeout(hardExitTimer);
     done.resolve();
   };
@@ -202,6 +353,11 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   try {
     await updater.initialize();
   } catch (error) {
+    logger.error("Supervisor daemon startup failed", {
+      instanceId,
+      stage: "runtime_updater",
+      error: errorMessage(error),
+    });
     await shutdown("managed_startup_failed");
     throw error;
   }
@@ -235,6 +391,12 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   try {
     await server.listen();
   } catch (error) {
+    logger.error("Supervisor daemon startup failed", {
+      instanceId,
+      stage: "ipc_listen",
+      endpoint,
+      error: errorMessage(error),
+    });
     await lock.release();
     await logger.flush();
     const code = (error as NodeJS.ErrnoException).code;
@@ -253,7 +415,9 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     stateDir,
     startedAt: supervisor.startedAt,
     version: VERSION,
+    instanceId,
   });
+  logger.info("Supervisor daemon IPC ready", { instanceId, endpoint, pid: process.pid });
   try {
     await updater.ready();
   } catch (error) {
@@ -271,6 +435,8 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   logger.info("Supervisor daemon started", {
     name: TOOL_NAME,
     version: VERSION,
+    instanceId,
+    trigger,
     pid: process.pid,
     // The parent pid identifies the process tree that started the daemon; it is
     // the missing evidence when a daemon dies without a trace.
@@ -284,24 +450,26 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   const onSignal = (signal: string) => {
     signalCount += 1;
     if (signalCount > 1) {
-      process.exit(1);
+      logger.error("Supervisor daemon forced exit after repeated signal", { instanceId, signal });
+      forceExit(1);
       return;
     }
-    logger.info("Received signal", { signal });
+    logger.info("Received signal", { instanceId, signal });
     void shutdown(`signal:${signal}`);
   };
   process.on("SIGINT", () => onSignal("SIGINT"));
   process.on("SIGTERM", () => onSignal("SIGTERM"));
   process.on("SIGBREAK", () => onSignal("SIGBREAK"));
   process.on("uncaughtException", (error) => {
-    logger.error("Uncaught exception in supervisor daemon", { error: errorMessage(error) });
-    void shutdown("uncaught_exception").finally(() => process.exit(1));
+    logger.error("Uncaught exception in supervisor daemon", { instanceId, error: errorMessage(error) });
+    void shutdown("uncaught_exception").finally(() => forceExit(1));
   });
   process.on("unhandledRejection", (reason) => {
     logger.error("Unhandled rejection in supervisor daemon", {
+      instanceId,
       error: errorMessage(reason),
     });
-    void shutdown("unhandled_rejection").finally(() => process.exit(1));
+    void shutdown("unhandled_rejection").finally(() => forceExit(1));
   });
 
   await done.promise;

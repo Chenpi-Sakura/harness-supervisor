@@ -2,6 +2,7 @@
 import { harnessNames } from "./harness-catalog.js";
 import { retainCurrentRuntime } from "./runtime-cache.js";
 import { parseArgs } from "node:util";
+import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { runDaemon } from "./daemon.js";
 import { SupervisorError, errorMessage } from "./errors.js";
@@ -23,8 +24,9 @@ import type {
   WorkerEvent,
   WorkerStatus,
   WorkerSummary,
+  WorkerTurnResult,
 } from "./types.js";
-import type { ReadEventsResult, WorkerStatusResult } from "./types.js";
+import type { ReadEventsResult, WaitResult, WorkerStatusResult } from "./types.js";
 import {
   EVENTS_BUDGET_BYTES,
   compactStatus,
@@ -33,8 +35,10 @@ import {
   type CompactEvent,
   type CompactEventsResult,
 } from "./context-budget.js";
+import { presentJobObservation, presentStructuredResult } from "./mcp-presentation.js";
 import { VERSION } from "./version.js";
 import { silentLogger } from "./util/logger.js";
+import { compactTurnResult } from "./worker-result.js";
 
 const EXIT_CODES: Record<WorkerStatus, number> = {
   starting: 0,
@@ -94,6 +98,15 @@ Workers:
         Resume and continue inherit the previous limit if omitted.
         Without a previous limit, the default is 3600000 ms (1 hour).
         An explicit limit may be 1000–86400000 ms.
+  result-submit <workerId> --turn <n> --file <result.json> [--request-id <key>] [--json]
+        Record one structured result for the worker's settled current Turn.
+  result-get <workerId> [--turn <n>] [--json]
+        Read the latest structured result or a specific Turn.
+  job-attach <workerId> --job-id <id> --location <host> --evidence <path>
+        [--stage <s>] [--expected <a,b>] [--job-pid <pid>] [--json]
+        Link an existing long job; this never starts or retries it.
+  job-status <workerId> [--job-id <id>] [--json]
+        Read job state from execution-side evidence, separate from worker state.
   admin <workerId> --action pin|unpin|archive|unarchive|retire|unretire
   forget <workerId>       Remove the HS record and events; the native session file is kept.
   compact [workerId] [--keep-progress 200] [--dry-run] [--json]
@@ -360,6 +373,39 @@ function printEvents(events: WorkerEvent[]): void {
       `#${String(event.seq).padStart(4, "0")} ${event.ts} ${event.type} ${summarizeEvent(event)}\n`,
     );
   }
+}
+
+function printStructuredResult(entry: WorkerTurnResult): void {
+  const compact = compactTurnResult(entry) as {
+    turn: number;
+    summary: string;
+    execution: { source: string; exitCode: number | null; signal: string | null };
+    thresholds: Array<{ name: string; requested: string | null; adopted: string | null; unit: string | null; met: boolean | null }>;
+    items: Array<{ name: string; status: string; artifact: string | null }>;
+    counts: Record<string, number>;
+    anomalies: string[];
+    artifacts: Array<{ name?: string; path: string; note?: string }>;
+  };
+  const exit = compact.execution.exitCode === null ? "unknown" : String(compact.execution.exitCode);
+  process.stdout.write(
+    `\nturn ${compact.turn}: ${compact.summary}\n` +
+      `  execution: source=${compact.execution.source} exit=${exit}${compact.execution.signal ? ` signal=${compact.execution.signal}` : ""}\n`,
+  );
+  for (const threshold of compact.thresholds) {
+    process.stdout.write(
+      `  threshold ${threshold.name}: requested=${threshold.requested ?? "-"} adopted=${threshold.adopted ?? "-"}${threshold.unit ? ` ${threshold.unit}` : ""}${threshold.met === null ? "" : threshold.met ? " met" : " not-met"}\n`,
+    );
+  }
+  for (const item of compact.items) {
+    process.stdout.write(`  item [${item.status}] ${item.name}${item.artifact ? ` -> ${item.artifact}` : ""}\n`);
+  }
+  for (const anomaly of compact.anomalies) process.stdout.write(`  anomaly: ${anomaly}\n`);
+  for (const artifact of compact.artifacts) {
+    process.stdout.write(`  artifact: ${artifact.name ? `${artifact.name} ` : ""}${artifact.path}\n`);
+  }
+  process.stdout.write(
+    `  counts: inputs=${compact.counts.inputs} config=${compact.counts.config} items=${compact.counts.items} anomalies=${compact.counts.anomalies} artifacts=${compact.counts.artifacts}\n`,
+  );
 }
 
 /**
@@ -644,6 +690,14 @@ async function main(): Promise<void> {
         "include-tasks": { type: "boolean" },
         action: { type: "string" },
         "include-archived": { type: "boolean" },
+        file: { type: "string" },
+        turn: { type: "string" },
+        "job-id": { type: "string" },
+        location: { type: "string" },
+        stage: { type: "string" },
+        evidence: { type: "string" },
+        expected: { type: "string" },
+        "job-pid": { type: "string" },
       },
     });
   } catch (error) {
@@ -663,6 +717,7 @@ async function main(): Promise<void> {
   const json = boolArg(values.json);
 
   if (command === "daemon") {
+    process.env.HARNESS_SUPERVISOR_START_TRIGGER ??= "cli";
     await runDaemon({ stateDir, foreground: true });
     return;
   }
@@ -872,8 +927,42 @@ async function main(): Promise<void> {
             recentEvents: 100,
           });
           const compact = compactStatus(result);
-          if (json) printJsonCompact(compact);
-          else printCompactStatus(compact);
+          const structured = result.latestResult
+            ? presentStructuredResult(result.latestResult, "production", "status")
+            : undefined;
+          const jobs = result.jobs?.map((job) => presentJobObservation(job, "production"));
+          if (json) {
+            const output: Record<string, unknown> = {
+              ...compact,
+              currentTurn: result.currentTurn,
+              ...(structured ? { structuredResult: structured } : {}),
+              ...(jobs?.length ? { jobs } : {}),
+            };
+            // The compactStatus budget does not see nested projections. Shed
+            // them in reverse priority so the CLI keeps the same 2 KiB cap.
+            if (Buffer.byteLength(JSON.stringify(output), "utf8") > 2048 && output.jobs) {
+              delete output.jobs;
+            }
+            if (Buffer.byteLength(JSON.stringify(output), "utf8") > 2048 && output.structuredResult) {
+              delete output.structuredResult;
+            }
+            printJsonCompact(output);
+          } else {
+            printCompactStatus(compact);
+            if (structured) {
+              const view = structured as { turn?: number; summary?: string; execution?: { source?: string; exitCode?: number | null } };
+              process.stdout.write(
+                `  turn ${view.turn ?? "?"}: ${view.summary ?? ""}\n  execution: source=${view.execution?.source ?? "unknown"} exit=${view.execution?.exitCode === null || view.execution?.exitCode === undefined ? "unknown" : view.execution.exitCode}\n`,
+              );
+            }
+            if (jobs?.length) {
+              for (const job of jobs as Array<{ jobId: string; state: string; location: string; exitCodeKnown: boolean; exitCode: number | null; problem?: string }>) {
+                process.stdout.write(
+                  `  job ${job.jobId}: state=${job.state} location=${job.location}${job.exitCodeKnown ? ` exit=${job.exitCode}` : " exit=unknown"}${job.problem ? ` problem=${job.problem}` : ""}\n`,
+                );
+              }
+            }
+          }
           return;
         }
         const result = await client.request("status", { workerId, recentEvents: 20 });
@@ -952,14 +1041,7 @@ async function main(): Promise<void> {
           ?.split(",")
           .map((item) => item.trim())
           .filter(Boolean);
-        const result = await client.request<{
-          worker: WorkerSummary;
-          events: WorkerEvent[];
-          nextSeq: number;
-          timedOut: boolean;
-          terminal: boolean;
-          hasMore: boolean;
-        }>(
+        const result = await client.request<WaitResult>(
           "wait",
           {
             workerId,
@@ -975,10 +1057,19 @@ async function main(): Promise<void> {
           : result.events.filter(
               (event) => event.type !== "run.progress" || event.data?.kind === "queue_cleared",
             );
-        const output = boolArg(values["include-progress"])
-          ? result
-          : { ...result, events: visible, eventsOmitted: result.events.length - visible.length };
-        if (json) printJson(output);
+        if (json) {
+          const { latestResult, jobs: jobViews, ...base } = result;
+          const output: Record<string, unknown> = boolArg(values["include-progress"])
+            ? { ...base }
+            : { ...base, events: visible, eventsOmitted: result.events.length - visible.length };
+          if (latestResult) {
+            output.structuredResult = presentStructuredResult(latestResult, "production", "wait");
+          }
+          if (jobViews?.length) {
+            output.jobs = jobViews.map((job) => presentJobObservation(job, "production"));
+          }
+          printJson(output);
+        }
         else {
           printEvents(visible);
           process.stdout.write(
@@ -986,6 +1077,109 @@ async function main(): Promise<void> {
           );
         }
         if (result.terminal) exitForStatus(result.worker);
+        return;
+      }
+      case "result-submit": {
+        const workerId = positionals[1];
+        if (!workerId) throw new SupervisorError("BAD_REQUEST", "workerId is required");
+        const file = stringArg(values.file, "file");
+        if (!file) throw new SupervisorError("BAD_REQUEST", "--file <result.json> is required");
+        const turn = intArg(values.turn, "turn");
+        if (turn === undefined) {
+          throw new SupervisorError("BAD_REQUEST", "--turn <n> is required; read it from status or wait first");
+        }
+        let payload: unknown;
+        try {
+          payload = JSON.parse(await readFile(file, "utf8"));
+        } catch (error) {
+          throw new SupervisorError("BAD_REQUEST", `--file could not be read as JSON: ${errorMessage(error)}`);
+        }
+        const result = await client.request<{
+          accepted: true;
+          duplicate: boolean;
+          turn: number;
+          result: WorkerTurnResult;
+        }>("result_submit", {
+          workerId,
+          turn,
+          result: payload,
+          requestId: stringArg(values["request-id"], "request-id"),
+        });
+        if (json) printJson(result);
+        else {
+          process.stdout.write(
+            `${result.duplicate ? "Replayed" : "Recorded"} structured result for ${workerId} turn ${result.turn}; execution source=${result.result.execution.source}.\n`,
+          );
+          printStructuredResult(result.result);
+        }
+        return;
+      }
+      case "result-get": {
+        const workerId = positionals[1];
+        if (!workerId) throw new SupervisorError("BAD_REQUEST", "workerId is required");
+        const turn = intArg(values.turn, "turn");
+        const result = await client.request<{
+          workerId: string;
+          currentTurn: number;
+          results: WorkerTurnResult[];
+        }>("result_get", { workerId, turn });
+        const selected = turn === undefined ? result.results.slice(-1) : result.results;
+        if (json) printJson({ ...result, results: selected });
+        else if (selected.length === 0) {
+          process.stdout.write(`No structured result for ${workerId}${turn !== undefined ? ` turn ${turn}` : ""}.\n`);
+        } else {
+          for (const entry of selected) printStructuredResult(entry);
+        }
+        return;
+      }
+      case "job-attach": {
+        const workerId = positionals[1];
+        if (!workerId) throw new SupervisorError("BAD_REQUEST", "workerId is required");
+        const jobId = stringArg(values["job-id"], "job-id");
+        const location = stringArg(values.location, "location");
+        const evidencePath = stringArg(values.evidence, "evidence");
+        if (!jobId || !location || !evidencePath) {
+          throw new SupervisorError(
+            "BAD_REQUEST",
+            "--job-id, --location and --evidence are required",
+          );
+        }
+        const result = await client.request<unknown>("job_attach", {
+          workerId,
+          job: {
+            jobId,
+            location,
+            stage: stringArg(values.stage, "stage"),
+            expectedArtifacts: parseList(values.expected),
+            evidencePath,
+            pid: intArg(values["job-pid"], "job-pid"),
+          },
+          requestId: stringArg(values["request-id"], "request-id"),
+        });
+        if (json) printJson(result);
+        else process.stdout.write(`Attached job ${jobId} to ${workerId}.\n${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+      case "job-status": {
+        const workerId = positionals[1];
+        if (!workerId) throw new SupervisorError("BAD_REQUEST", "workerId is required");
+        const result = await client.request<{
+          workerId: string;
+          currentTurn: number;
+          jobs: Array<Record<string, unknown>>;
+        }>("job_status", {
+          workerId,
+          jobId: stringArg(values["job-id"], "job-id"),
+        });
+        if (json) printJson(result);
+        else if (result.jobs.length === 0) process.stdout.write(`No jobs attached to ${workerId}.\n`);
+        else {
+          for (const job of result.jobs) {
+            process.stdout.write(
+              `${job.jobId}: state=${job.state} location=${job.location} exit=${job.exitCodeKnown ? job.exitCode : "unknown"}${job.problem ? ` problem=${job.problem}` : ""}\n`,
+            );
+          }
+        }
         return;
       }
       case "send": {

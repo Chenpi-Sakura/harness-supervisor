@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SupervisorClient } from "../../src/ipc/client.js";
@@ -9,8 +11,9 @@ import { MCP_ENTRY, TestDaemon, makeWorkspace, spawnWorker, statusOf, waitTermin
 test("fixed IPC owner scope isolates operations, retries, inbox and ACK batches", async (t) => {
   const daemon = await TestDaemon.create("hs-owner-");
   t.after(() => daemon.stop());
-  const global = await daemon.start();
   const cwd = await makeWorkspace();
+  const evidenceDir = await makeWorkspace();
+  const global = await daemon.start({ env: { HARNESS_SUPERVISOR_JOB_EVIDENCE_DIRS: evidenceDir } });
   await global.request("notification_target", { channel: "codex-queue", codexThreadId: "shared-codex-thread" });
   const a = new SupervisorClient({ stateDir: daemon.stateDir, autoStart: false, scope: { ownerRef: "dsh:session-a", notifyNone: true } });
   const b = new SupervisorClient({ stateDir: daemon.stateDir, autoStart: false, scope: { ownerRef: "dsh:session-b", notifyNone: true } });
@@ -31,6 +34,42 @@ test("fixed IPC owner scope isolates operations, retries, inbox and ACK batches"
   assert.equal(replay.id, wa.id);
   const listed = await a.request<WorkerSummary[]>("list", { ownerRef: "dsh:session-b" });
   assert.deepEqual(listed.map((w) => w.id), [wa.id]);
+  const submitted = await a.request<{ accepted: boolean; turn: number }>("result_submit", {
+    workerId: wa.id,
+    turn: 1,
+    result: { v: 1, summary: "scoped result" },
+  });
+  assert.equal(submitted.accepted, true);
+  assert.equal(submitted.turn, 1);
+  const scopedResults = await a.request<{ results: Array<{ report: { summary: string } }> }>("result_get", {
+    workerId: wa.id,
+    turn: 1,
+  });
+  assert.equal(scopedResults.results[0]?.report.summary, "scoped result");
+  const untrustedEvidence = path.join(cwd, "scoped-job.json");
+  const trustedEvidence = path.join(evidenceDir, "trusted-job.json");
+  const exited = { v: 1, state: "exited", exitCode: 0, updatedAt: new Date().toISOString() };
+  await Promise.all([
+    writeFile(untrustedEvidence, JSON.stringify({ ...exited, jobId: "scoped-job" })),
+    writeFile(trustedEvidence, JSON.stringify({ ...exited, jobId: "trusted-job" })),
+  ]);
+  const attached = await a.request<{ accepted: boolean; job: { jobId: string } }>("job_attach", {
+    workerId: wa.id,
+    job: { jobId: "scoped-job", location: "local", evidencePath: untrustedEvidence },
+  });
+  assert.equal(attached.accepted, true);
+  const scopedJobs = await a.request<{ jobs: Array<{ jobId: string; state: string }> }>("job_status", {
+    workerId: wa.id,
+    jobId: "scoped-job",
+  });
+  assert.equal(scopedJobs.jobs[0]?.jobId, "scoped-job");
+  assert.equal(scopedJobs.jobs[0]?.state, "unknown");
+  const trusted = await a.request<{ observation: { state: string; exitCode: number } }>("job_attach", {
+    workerId: wa.id,
+    job: { jobId: "trusted-job", location: "local", evidencePath: trustedEvidence },
+  });
+  assert.equal(trusted.observation.state, "exited");
+  assert.equal(trusted.observation.exitCode, 0);
   for (const workerId of [wb.id, legacy.id]) {
     for (const method of ["status", "events", "wait", "cancel", "forget"] as const) {
       await assert.rejects(a.request(method, { workerId }), { code: "UNAUTHORIZED" });
@@ -38,6 +77,16 @@ test("fixed IPC owner scope isolates operations, retries, inbox and ACK batches"
     await assert.rejects(a.request("continue", { workerId, prompt: "cross session" }), { code: "UNAUTHORIZED" });
     await assert.rejects(a.request("resume", { workerId, prompt: "cross session" }), { code: "UNAUTHORIZED" });
     await assert.rejects(a.request("send", { workerId, message: "cross session" }), { code: "UNAUTHORIZED" });
+    await assert.rejects(a.request("result_get", { workerId, turn: 1 }), { code: "UNAUTHORIZED" });
+    await assert.rejects(a.request("job_status", { workerId, jobId: "scoped-job" }), { code: "UNAUTHORIZED" });
+    await assert.rejects(
+      a.request("result_submit", { workerId, turn: 1, result: { v: 1, summary: "cross session" } }),
+      { code: "UNAUTHORIZED" },
+    );
+    await assert.rejects(
+      a.request("job_attach", { workerId, job: { jobId: "cross", location: "local", evidencePath: "/tmp/cross.json" } }),
+      { code: "UNAUTHORIZED" },
+    );
   }
   for (const method of ["shutdown", "notification_target_get", "ui_start", "ui_stop", "runtime_update_status", "prune"] as const) {
     await assert.rejects(a.request(method, {}), { code: "UNAUTHORIZED" });

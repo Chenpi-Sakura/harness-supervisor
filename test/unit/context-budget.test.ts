@@ -106,6 +106,7 @@ test("a completed status does not repeat the final text in lastProgress", () => 
 
 test("compactStatus budgets lastProgress, timeline and inputState with the rest of the view", () => {
   const result: WorkerStatusResult = {
+    currentTurn: 1,
     worker: worker({
       status: "cancelled",
       statusReason: "max_duration_exceeded",
@@ -236,6 +237,7 @@ test("packCompactEvents can budget the whole envelope instead of the array", () 
 test("compactStatus stays inside 2 KiB and keeps status plus truncation markers", () => {
   const longText = "REPORT ".repeat(4000);
   const result: WorkerStatusResult = {
+    currentTurn: 1,
     worker: worker({
       status: "completed",
       startedAt: "2026-01-01T00:00:00.000Z",
@@ -272,6 +274,7 @@ test("compactStatus marks a clipped pending input and reports how many options e
   const message = "Please confirm the following operation. ".repeat(40);
   const options = Array.from({ length: 30 }, (_, index) => `option-${index + 1}`);
   const result: WorkerStatusResult = {
+    currentTurn: 1,
     worker: worker({
       status: "awaiting_input",
       pendingInput: {
@@ -306,6 +309,7 @@ test("compactStatus marks a clipped pending input and reports how many options e
 
 test("compactStatus keeps statusReason and event summaries when there is no result body", () => {
   const result: WorkerStatusResult = {
+    currentTurn: 1,
     worker: worker({
       status: "running",
       statusReason: "max_duration_exceeded",
@@ -325,6 +329,7 @@ test("compactStatus keeps statusReason and event summaries when there is no resu
 
 test("compactStatus keeps a failure error even when the budget is tight", () => {
   const result: WorkerStatusResult = {
+    currentTurn: 1,
     worker: worker({ status: "failed", result: undefined, error: "boom ".repeat(500), statusReason: "boom ".repeat(500) }),
     recentEvents: [],
     stderrTail: "",

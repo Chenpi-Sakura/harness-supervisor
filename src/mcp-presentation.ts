@@ -29,10 +29,13 @@ import type {
   SupervisorInfo,
   WaitResult,
   WorkerEvent,
+  JobObservation,
   WorkerResult,
   WorkerStatusResult,
   WorkerSummary,
+  WorkerTurnResult,
 } from "./types.js";
+import { compactTurnResult } from "./worker-result.js";
 import type {
   MetricsReport,
   TaskMetrics,
@@ -220,6 +223,95 @@ function workerBaseForProduction(worker: WorkerSummary) {
   };
 }
 
+/**
+ * Jobs are projections, not logs. Status/wait only need enough to decide the
+ * next action; the full observation stays behind worker_job_status.
+ */
+function boundedJobView(job: JobObservation, artifactLimit: number, missingLimit: number) {
+  return {
+    jobId: job.jobId,
+    location: job.location,
+    ...(job.stage !== undefined ? { stage: job.stage } : {}),
+    workerTurn: job.workerTurn,
+    state: job.state,
+    ...(job.evidenceState !== undefined ? { evidenceState: job.evidenceState } : {}),
+    exitCode: job.exitCode,
+    exitCodeKnown: job.exitCodeKnown,
+    artifactCount: job.artifacts.length,
+    artifacts: job.artifacts.slice(0, artifactLimit),
+    missingArtifacts: job.missingArtifacts.slice(0, missingLimit),
+    ...(job.updatedAt !== undefined ? { updatedAt: job.updatedAt } : {}),
+    evidencePath: job.evidencePath,
+    ...(job.problem !== undefined ? { problem: job.problem.slice(0, 300) } : {}),
+    ...(job.inspectStage !== undefined ? { inspectStage: job.inspectStage } : {}),
+    pidAlive: job.pidAlive,
+  };
+}
+
+/** Production job reads are projections; the evidence file itself stays on disk. */
+export function presentJobObservation(job: JobObservation, mode: McpPresentationMode): unknown {
+  if (mode === "development") return job;
+  return boundedJobView(job, 10, 20);
+}
+
+/** Compact result for status/wait. Full detail stays behind worker_result_get. */
+function structuredResultView(
+  result: WorkerTurnResult,
+  limits: {
+    summaryChars: number;
+    thresholds: number;
+    items: number;
+    artifacts: number;
+    anomalies: number;
+  },
+): Record<string, unknown> {
+  const compact = compactTurnResult(result) as {
+    summary: string;
+    thresholds: unknown[];
+    items: unknown[];
+    anomalies: string[];
+    artifacts: unknown[];
+    counts: Record<string, number>;
+    execution: unknown;
+    turn: number;
+    submittedAt: string;
+    v: number;
+  };
+  const summary = compact.summary.length > limits.summaryChars
+    ? `${compact.summary.slice(0, limits.summaryChars)}…`
+    : compact.summary;
+  return {
+    turn: compact.turn,
+    submittedAt: compact.submittedAt,
+    v: compact.v,
+    summary,
+    summaryTruncated: summary.length !== compact.summary.length,
+    execution: compact.execution,
+    thresholds: compact.thresholds.slice(0, limits.thresholds),
+    counts: compact.counts,
+    items: compact.items.slice(0, limits.items),
+    anomalies: compact.anomalies.slice(0, limits.anomalies),
+    artifacts: compact.artifacts.slice(0, limits.artifacts),
+    detailAvailable: true,
+  };
+}
+
+/** Compact result for status/wait. Full detail stays behind worker_result_get. */
+export function presentStructuredResult(
+  result: WorkerTurnResult,
+  mode: McpPresentationMode,
+  scope: "status" | "wait" = "status",
+): unknown {
+  if (mode === "development") return result;
+  return structuredResultView(result, {
+    summaryChars: scope === "status" ? 200 : 1200,
+    thresholds: scope === "status" ? 3 : 20,
+    items: scope === "status" ? 3 : 20,
+    artifacts: scope === "status" ? 3 : 10,
+    anomalies: scope === "status" ? 1 : 5,
+  });
+}
+
 /** Wait carries the outcome: full result/error and the full pending input. */
 function waitWorkerForProduction(worker: WorkerSummary) {
   return {
@@ -271,8 +363,11 @@ export function presentStatus(
       ...(result.lastProgress ? { lastProgress: result.lastProgress } : {}),
       ...(result.timeline ? { timeline: result.timeline } : {}),
       ...(result.inputState ? { inputState: result.inputState } : {}),
+      currentTurn: result.currentTurn,
       recentEvents: result.recentEvents,
       stderrTail: result.stderrTail,
+      ...(result.latestResult ? { latestResult: result.latestResult } : {}),
+      ...(result.jobs?.length ? { jobs: result.jobs } : {}),
     };
   }
   // Production status is a snapshot: no recentEvents, lastProgress, timeline
@@ -302,6 +397,13 @@ export function presentStatus(
     } else {
       worker.resultAvailable = false;
     }
+    if (result.latestResult) {
+      worker.structuredResult = presentStructuredResult(result.latestResult, mode, "status");
+    }
+    if (result.jobs?.length) {
+      worker.jobs = result.jobs.slice(0, 2).map((job) => boundedJobView(job, 0, 3));
+      if (result.jobs.length > 2) worker.jobsOmitted = result.jobs.length - 2;
+    }
     if (errorView) {
       worker.errorPreview = errorView;
       worker.errorAvailable = true;
@@ -312,8 +414,8 @@ export function presentStatus(
       .reverse()
       .find((event) => isProductionEventType(event.type));
     if (last) worker.lastEvent = { seq: last.seq, type: last.type };
-    if (compacted.budgetExceeded) return { worker, budgetExceeded: true };
-    return { worker };
+    if (compacted.budgetExceeded) return { worker, currentTurn: result.currentTurn, budgetExceeded: true };
+    return { worker, currentTurn: result.currentTurn };
   };
 
   let budget = STATUS_BUDGET_BYTES;
@@ -321,6 +423,57 @@ export function presentStatus(
   while (jsonBytes(view) > STATUS_BUDGET_BYTES && budget > 512) {
     budget = Math.max(512, budget - (jsonBytes(view) - STATUS_BUDGET_BYTES + 64));
     view = build(budget);
+  }
+  return pruneStatusView(view);
+}
+
+/**
+ * The compact status budget cannot see into nested result/job views. If a
+ * pathological report still overruns it, drop optional detail in a fixed
+ * order; the summary and availability flags remain truthful.
+ */
+function pruneStatusView(view: Record<string, unknown>): Record<string, unknown> {
+  const worker = view.worker as Record<string, unknown> | undefined;
+  if (!worker) return view;
+  const over = () => jsonBytes(view) > STATUS_BUDGET_BYTES;
+  const structured = worker.structuredResult as Record<string, unknown> | undefined;
+  if (over() && structured) {
+    structured.thresholds = Array.isArray(structured.thresholds) ? structured.thresholds.slice(0, 1) : [];
+    structured.items = Array.isArray(structured.items) ? structured.items.slice(0, 1) : [];
+    structured.artifacts = [];
+    structured.anomalies = [];
+  }
+  if (over() && structured) {
+    const summary = typeof structured.summary === "string" ? structured.summary : "";
+    structured.summary = summary.slice(0, 80);
+    structured.summaryTruncated = true;
+  }
+  if (over() && worker.jobs) {
+    worker.jobs = (worker.jobs as Array<Record<string, unknown>>).map((job) => ({
+      jobId: job.jobId,
+      state: job.state,
+      exitCode: job.exitCode,
+      exitCodeKnown: job.exitCodeKnown,
+      ...(job.problem !== undefined ? { problem: String(job.problem).slice(0, 120) } : {}),
+    }));
+  }
+  if (over() && worker.jobs) {
+    worker.jobsOmitted = Number(worker.jobsOmitted ?? 0) + (worker.jobs as unknown[]).length;
+    delete worker.jobs;
+  }
+  if (over() && structured) {
+    // Keep the facts needed to orient the next step even when every optional
+    // detail had to go; the full report remains behind worker_result_get.
+    worker.structuredResult = {
+      turn: structured.turn,
+      submittedAt: structured.submittedAt,
+      v: structured.v,
+      summary: typeof structured.summary === "string" ? structured.summary.slice(0, 120) : "",
+      summaryTruncated: true,
+      execution: structured.execution,
+      counts: structured.counts,
+      detailAvailable: true,
+    };
   }
   return view;
 }
@@ -334,6 +487,7 @@ export function presentWait(
   if (mode === "development") {
     return {
       worker: presentWorkerDevelopment(result.worker),
+      currentTurn: result.currentTurn,
       events: mergeOutputEvents(compacted.events, result.worker.runtime),
       eventsOmitted: compacted.eventsOmitted,
       nextSeq: result.nextSeq,
@@ -343,14 +497,19 @@ export function presentWait(
       ...(result.lastProgress ? { lastProgress: result.lastProgress } : {}),
       ...(result.timeline ? { timeline: result.timeline } : {}),
       ...(result.inputState ? { inputState: result.inputState } : {}),
+      ...(result.latestResult ? { latestResult: result.latestResult } : {}),
+      ...(result.jobs?.length ? { jobs: result.jobs } : {}),
     };
   }
   const out: Record<string, unknown> = {
     worker: waitWorkerForProduction(result.worker),
+    currentTurn: result.currentTurn,
     terminal: result.terminal,
     timedOut: result.timedOut,
     nextSeq: result.nextSeq,
     hasMore: result.hasMore,
+    ...(result.latestResult ? { structuredResult: presentStructuredResult(result.latestResult, mode, "wait") } : {}),
+    ...(result.jobs?.length ? { jobs: result.jobs.map((job) => boundedJobView(job, 5, 10)) } : {}),
   };
   // A timeout is a status check, not an event dump. Lifecycle events are only
   // an explicit `until=event` result; completion/failure/input are carried by

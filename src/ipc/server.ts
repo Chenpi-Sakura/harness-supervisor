@@ -193,7 +193,7 @@ export class IpcServer {
     if (!scope) return params;
     const input = { ...(params as Record<string, unknown>) };
     if (scope.ownerRef !== undefined) {
-      const allowed = new Set(["info", "ping", "spawn", "resume", "continue", "admin", "forget", "status", "list", "events", "wait", "send", "answer", "cancel", "notifications", "notification_ack"]);
+      const allowed = new Set(["info", "ping", "spawn", "resume", "continue", "admin", "forget", "status", "list", "events", "wait", "send", "answer", "cancel", "result_submit", "result_get", "job_attach", "job_status", "notifications", "notification_ack"]);
       if (!allowed.has(method)) throw new SupervisorError("UNAUTHORIZED", "Operation is unavailable to a scoped Master");
       if (typeof input.workerId === "string") this.options.supervisor.assertOwner(input.workerId, scope.ownerRef);
       if (method === "spawn") {
@@ -203,7 +203,7 @@ export class IpcServer {
       }
       if (method === "list" || method === "notifications") input.ownerRef = scope.ownerRef;
       // Keys are process-independent yet disjoint across Master sessions.
-      if (["spawn", "resume", "continue", "send"].includes(method) && typeof input.requestId === "string") {
+      if (["spawn", "resume", "continue", "send", "result_submit", "job_attach"].includes(method) && typeof input.requestId === "string") {
         input.requestId = `owner-${createHash("sha256").update(scope.ownerRef).update("\0").update(input.requestId).digest("hex")}`;
       }
     }
@@ -280,6 +280,31 @@ export class IpcServer {
           requestId?: string;
         };
         return supervisor.send(workerId, message, mode ?? "steer", { requestId });
+      }
+      case "result_submit": {
+        const { workerId, turn, result, requestId } = params as {
+          workerId: string;
+          turn: number;
+          result: unknown;
+          requestId?: string;
+        };
+        return supervisor.submitResult(workerId, result, { requestId, turn });
+      }
+      case "result_get": {
+        const { workerId, turn } = params as { workerId: string; turn?: number };
+        return supervisor.results(workerId, turn);
+      }
+      case "job_attach": {
+        const { workerId, job, requestId } = params as {
+          workerId: string;
+          job: unknown;
+          requestId?: string;
+        };
+        return supervisor.attachJob(workerId, job, { requestId });
+      }
+      case "job_status": {
+        const { workerId, jobId } = params as { workerId: string; jobId?: string };
+        return supervisor.jobStatus(workerId, jobId);
       }
       case "answer": {
         const { workerId, requestId, response } = params as AnswerParams;

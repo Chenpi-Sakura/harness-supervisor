@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { SupervisorError } from "../errors.js";
 import { MAX_RUN_DURATION_MS, MIN_RUN_DURATION_MS } from "../types.js";
+import { JobAttachSchema, StructuredResultSchema } from "../worker-result.js";
 
 export const IPC_VERSION = 1;
 export const DEFAULT_STATE_DIR = path.join(os.homedir(), ".harness-supervisor");
@@ -190,6 +191,33 @@ export const METHOD_SCHEMAS = {
       ...RequestIdField,
     })
     .strict(),
+  result_submit: z
+    .object({
+      workerId: WorkerIdSchema,
+      turn: z.number().int().min(1),
+      result: StructuredResultSchema,
+      ...RequestIdField,
+    })
+    .strict(),
+  result_get: z
+    .object({
+      workerId: WorkerIdSchema,
+      turn: z.number().int().min(1).optional(),
+    })
+    .strict(),
+  job_attach: z
+    .object({
+      workerId: WorkerIdSchema,
+      job: JobAttachSchema,
+      ...RequestIdField,
+    })
+    .strict(),
+  job_status: z
+    .object({
+      workerId: WorkerIdSchema,
+      jobId: z.string().min(1).max(200).optional(),
+    })
+    .strict(),
   answer: z
     .object({
       workerId: WorkerIdSchema,
@@ -342,6 +370,8 @@ export interface EndpointInfo {
   stateDir: string;
   startedAt: string;
   version: string;
+  /** Present from daemon instances that support lifecycle correlation. */
+  instanceId?: string;
 }
 
 const HelloSchema = z

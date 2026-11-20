@@ -19,6 +19,22 @@ import {
 import { Retention, type PruneOptions, type PruneResult } from "./retention.js";
 import { Store } from "./store.js";
 import { readConsumerCheckpoint, writeConsumerCheckpoint } from "./consumer-checkpoints.js";
+import {
+  isLocalJobLocation,
+  jobEvidenceRoots,
+  JOB_EVIDENCE_TIMEOUT_MS,
+  observeJob,
+  readJobEvidence,
+} from "./jobs.js";
+import {
+  currentTurn,
+  executionEvidence,
+  MAX_JOB_LINKS,
+  parseJobAttach,
+  parseStructuredResult,
+  sameReport,
+  trimResults,
+} from "./worker-result.js";
 import { withWorkerProtocol } from "./worker-protocol.js";
 import { isThreadUuid } from "./caller-thread.js";
 import {
@@ -49,6 +65,7 @@ import {
   type CompactResult,
   type CompactWorkerResult,
   type HarnessSpawnSpec,
+  type JobObservation,
   type NotificationsResult,
   type NotificationBinding,
   type NotificationBindingSource,
@@ -57,6 +74,7 @@ import {
   type PendingInput,
   type ReadEventsResult,
   type ResumeInput,
+  type ResultExecutionEvidence,
   type ForgetWorkerResult,
   type SendMode,
   type SpawnInput,
@@ -68,6 +86,7 @@ import {
   type WorkerConfig,
   type WorkerEvent,
   type WorkerEventType,
+  type WorkerJobLink,
   type WorkerInputState,
   type WorkerLastProgress,
   type WorkerLifecycle,
@@ -78,12 +97,14 @@ import {
   type WorkerStatusResult,
   type WorkerSummary,
   type WorkerTimeline,
+  type StructuredResultV1,
+  type WorkerTurnResult,
 } from "./types.js";
 import { DEFAULT_RUN_DURATION_MS, MAX_RUN_DURATION_MS, MIN_RUN_DURATION_MS, SCHEMA_VERSION } from "./types.js";
 import { clampInt, Deferred, isPidAlive, newWorkerId, sleep, withTimeout } from "./util/async.js";
 import { inspectProcess } from "./util/process.js";
 import type { Logger } from "./util/logger.js";
-import { redactText, safeText, truncateText } from "./util/redact.js";
+import { redactText, redactValue, safeText, truncateText } from "./util/redact.js";
 import { VERSION, TOOL_NAME } from "./version.js";
 import { validateExtraArgs } from "./worker-args.js";
 
@@ -381,6 +402,7 @@ export class Supervisor {
           record.updatedAt = now;
           record.endedAt ??= now;
           this.store.appendEvent(record.id, "worker.interrupted", {
+            daemonInstanceId: this.supervisorId,
             pid: record.pid,
             pidAlive,
             pidVerified: identity.verified,
@@ -425,6 +447,7 @@ export class Supervisor {
           record.id,
           orphaned ? "worker.orphaned" : "worker.interrupted",
           {
+            daemonInstanceId: this.supervisorId,
             pid: record.pid,
             pidAlive,
             pidVerified: identity.verified,
@@ -448,6 +471,7 @@ export class Supervisor {
     await this.reconcileNotifications();
     timings.reconcileNotificationsMs = Date.now() - phaseStartedAt;
     this.logger.info("Supervisor initialized", {
+      daemonInstanceId: this.supervisorId,
       workers: workers.length,
       warnings: warnings.length,
       store: storeStats,
@@ -944,6 +968,7 @@ export class Supervisor {
       updatedAt: now,
       lastSeq: 0,
       eventCount: 0,
+      turn: 1,
       stats: { turns: 0, toolCalls: 0, toolErrors: 0 },
       capabilities: { ...adapter.capabilities },
       config,
@@ -1333,6 +1358,7 @@ export class Supervisor {
       expectedSessionId = headerId;
     }
     const previous = {
+      turn: record.turn,
       config: record.config,
       status: record.status,
       statusReason: record.statusReason,
@@ -1354,6 +1380,7 @@ export class Supervisor {
     record.statusReason = "resuming persisted session";
     record.pendingInput = undefined;
     record.config = config;
+    record.turn = currentTurn(record) + 1;
     record.startedAt = undefined;
     record.endedAt = undefined;
     record.result = undefined;
@@ -1721,14 +1748,334 @@ export class Supervisor {
     const record = this.requireWorker(workerId);
     const evidence = await this.progressEvidence(record);
     const inputState = refreshInputStateTime(evidence.inputState);
+    const jobs = await this.jobObservations(record);
     return {
       worker: this.summary(record),
+      currentTurn: currentTurn(record),
       recentEvents: this.store.getRecentEvents(workerId, clampInt(recentEventLimit, 0, 100)),
       stderrTail: this.store.stderrTail(workerId),
       lastProgress: evidence.lastProgress,
       timeline: evidence.timeline,
       ...(inputState ? { inputState } : {}),
+      ...this.latestResultOf(record),
+      ...(jobs.length > 0 ? { jobs } : {}),
     };
+  }
+
+  /**
+   * Persisted Turn result for the Worker. `turn` selects a historical result;
+   * omitting it returns every retained result plus the current Turn number.
+   */
+  async results(
+    workerId: string,
+    turn?: number,
+  ): Promise<{ workerId: string; currentTurn: number; results: WorkerTurnResult[] }> {
+    this.assertInitialized();
+    const record = this.requireWorker(workerId);
+    const all = record.results ?? [];
+    if (turn !== undefined) {
+      if (!Number.isInteger(turn) || turn < 1) {
+        throw new SupervisorError("BAD_REQUEST", "turn must be a positive integer");
+      }
+      const found = all.filter((entry) => entry.turn === turn);
+      return { workerId, currentTurn: currentTurn(record), results: found };
+    }
+    return { workerId, currentTurn: currentTurn(record), results: all };
+  }
+
+  /**
+   * Record one structured result for the current Turn. Results are immutable
+   * per Turn: an identical resubmit is a replay, a different payload conflicts.
+   */
+  async submitResult(
+    workerId: string,
+    input: unknown,
+    options: { requestId?: string; turn?: number } = {},
+  ): Promise<{
+    accepted: true;
+    duplicate: boolean;
+    turn: number;
+    result: WorkerTurnResult;
+  }> {
+    return this.withDurableMutation(() =>
+      this.withWorkerMutation(workerId, "submit a result", () =>
+        this.submitResultOnce(workerId, input, options)));
+  }
+
+  private async submitResultOnce(
+    workerId: string,
+    input: unknown,
+    options: { requestId?: string; turn?: number } = {},
+  ): Promise<{
+    accepted: true;
+    duplicate: boolean;
+    turn: number;
+    result: WorkerTurnResult;
+  }> {
+    this.assertInitialized();
+    const record = this.requireWorker(workerId);
+    const current = currentTurn(record);
+    const turn = options.turn ?? current;
+    if (!Number.isInteger(turn) || turn < 1) {
+      throw new SupervisorError("BAD_REQUEST", "turn must be a positive integer", { workerId, turn });
+    }
+    if (ACTIVE_STATUSES.has(record.status)) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        "The current Turn has not settled yet; submit its structured result after the run ends.",
+        { workerId, status: record.status, turn: current },
+      );
+    }
+    if (turn !== current) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        `Turn ${turn} is not the current Turn (${current}); a stale result cannot replace the current Turn.`,
+        { workerId, turn, currentTurn: current },
+      );
+    }
+    const report = redactValue(parseStructuredResult(input)) as StructuredResultV1;
+    const results = record.results ?? [];
+    const existing = results.find((entry) => entry.turn === turn);
+    if (existing) {
+      if (sameReport(existing.report, report)) {
+        // The previous attempt may have updated memory but failed to persist.
+        // A replay repairs that write instead of acknowledging unbacked state.
+        await this.store.saveWorker(record);
+        await this.store.flush(workerId);
+        return { accepted: true, duplicate: true, turn, result: existing };
+      }
+      throw new SupervisorError(
+        "CONFLICT",
+        `Turn ${turn} already has a different structured result; results are immutable per Turn.`,
+        { workerId, turn, submittedAt: existing.submittedAt },
+      );
+    }
+    const execution: ResultExecutionEvidence = this.turnExecutionEvidence(
+      record,
+      await this.jobExecutionEvidence(record, turn),
+    );
+    const entry: WorkerTurnResult = {
+      turn,
+      submittedAt: new Date().toISOString(),
+      report,
+      execution,
+    };
+    record.results = trimResults([...results, entry]);
+    this.store.appendEvent(workerId, "run.result_submitted", {
+      turn,
+      summary: safeText(report.summary, 500),
+      executionSource: execution.source,
+      exitCode: execution.exitCode,
+      ...(options.requestId ? { requestId: options.requestId } : {}),
+    });
+    await this.store.saveWorker(record);
+    await this.store.flush(workerId);
+    this.logger.info(`Structured result recorded for ${workerId}`, {
+      turn,
+      executionSource: execution.source,
+      thresholds: report.thresholds?.length ?? 0,
+      items: report.items?.length ?? 0,
+    });
+    return { accepted: true, duplicate: false, turn, result: entry };
+  }
+
+  /**
+   * Attach an explicit long-job identity. This never starts or retries a job;
+   * it only links the Worker to execution-side evidence for later observation.
+   */
+  async attachJob(
+    workerId: string,
+    input: unknown,
+    options: { requestId?: string } = {},
+  ): Promise<{
+    accepted: true;
+    duplicate: boolean;
+    job: WorkerJobLink;
+    observation: JobObservation | null;
+  }> {
+    return this.withDurableMutation(() =>
+      this.withWorkerMutation(workerId, "attach a job", () =>
+        this.attachJobOnce(workerId, input, options)));
+  }
+
+  private async attachJobOnce(
+    workerId: string,
+    input: unknown,
+    _options: { requestId?: string } = {},
+  ): Promise<{
+    accepted: true;
+    duplicate: boolean;
+    job: WorkerJobLink;
+    observation: JobObservation | null;
+  }> {
+    this.assertInitialized();
+    const record = this.requireWorker(workerId);
+    const parsed = parseJobAttach(input);
+    const jobs = record.jobs ?? [];
+    const existing = jobs.find((job) => job.jobId === parsed.jobId);
+    if (existing) {
+      if (existing.evidencePath !== parsed.evidencePath || existing.location !== parsed.location) {
+        throw new SupervisorError(
+          "CONFLICT",
+          `Job ${parsed.jobId} is already attached with different identity; refusing to relink it to another job.`,
+          { workerId, jobId: parsed.jobId, evidencePath: existing.evidencePath },
+        );
+      }
+      await this.store.saveWorker(record);
+      await this.store.flush(workerId);
+      const observation = await this.observeJobLink(record, existing);
+      return { accepted: true, duplicate: true, job: existing, observation };
+    }
+    if (jobs.length >= MAX_JOB_LINKS) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        `This worker already has ${MAX_JOB_LINKS} job links; detach or use a new worker.`,
+        { workerId, limit: MAX_JOB_LINKS },
+      );
+    }
+    if (parsed.pid !== undefined) {
+      if (!isLocalJobLocation(parsed.location)) {
+        throw new SupervisorError(
+          "BAD_REQUEST",
+          "pid is only accepted for a job on this host; omit it for remote jobs.",
+          { location: parsed.location },
+        );
+      }
+      if (isPidAlive(parsed.pid)) {
+        const identity = await withTimeout(
+          inspectProcess(parsed.pid, [parsed.jobId, parsed.evidencePath]),
+          JOB_EVIDENCE_TIMEOUT_MS,
+          "job pid verification timed out",
+        ).catch(() => null);
+        if (!identity || identity.verified !== true) {
+          throw new SupervisorError(
+            "BAD_REQUEST",
+            "pid does not verifiably belong to this job; refusing to record it.",
+            { pid: parsed.pid, verified: identity?.verified ?? null },
+          );
+        }
+      }
+    }
+    const latestJobs = record.jobs ?? [];
+    const raced = latestJobs.find((job) => job.jobId === parsed.jobId);
+    if (raced) {
+      if (raced.evidencePath !== parsed.evidencePath || raced.location !== parsed.location) {
+        throw new SupervisorError(
+          "CONFLICT",
+          `Job ${parsed.jobId} is already attached with different identity; refusing to relink it to another job.`,
+          { workerId, jobId: parsed.jobId, evidencePath: raced.evidencePath },
+        );
+      }
+      await this.store.saveWorker(record);
+      await this.store.flush(workerId);
+      const observation = await this.observeJobLink(record, raced);
+      return { accepted: true, duplicate: true, job: raced, observation };
+    }
+    if (latestJobs.length >= MAX_JOB_LINKS) {
+      throw new SupervisorError(
+        "INVALID_STATE",
+        `This worker already has ${MAX_JOB_LINKS} job links; detach or use a new worker.`,
+        { workerId, limit: MAX_JOB_LINKS },
+      );
+    }
+    const now = new Date().toISOString();
+    const job: WorkerJobLink = {
+      jobId: parsed.jobId,
+      location: parsed.location,
+      ...(parsed.stage ? { stage: parsed.stage } : {}),
+      turn: currentTurn(record),
+      ...(parsed.expectedArtifacts?.length ? { expectedArtifacts: parsed.expectedArtifacts } : {}),
+      evidencePath: parsed.evidencePath,
+      ...(parsed.pid !== undefined ? { pid: parsed.pid } : {}),
+      attachedAt: now,
+    };
+    record.jobs = [...latestJobs, job];
+    this.store.appendEvent(workerId, "worker.job_attached", {
+      jobId: job.jobId,
+      location: job.location,
+      stage: job.stage,
+      turn: job.turn,
+      evidencePath: job.evidencePath,
+      pid: job.pid,
+    });
+    await this.store.saveWorker(record);
+    await this.store.flush(workerId);
+    return { accepted: true, duplicate: false, job, observation: await this.observeJobLink(record, job) };
+  }
+
+  /** Current job projections, optionally filtered to one jobId. */
+  async jobStatus(
+    workerId: string,
+    jobId?: string,
+  ): Promise<{ workerId: string; currentTurn: number; jobs: JobObservation[] }> {
+    this.assertInitialized();
+    const record = this.requireWorker(workerId);
+    const links = jobId ? (record.jobs ?? []).filter((job) => job.jobId === jobId) : record.jobs ?? [];
+    if (jobId && links.length === 0) {
+      throw new SupervisorError("NOT_FOUND", `No job ${jobId} is attached to worker ${workerId}`, {
+        workerId,
+        jobId,
+      });
+    }
+    const jobs = await Promise.all(links.map((link) => this.observeJobLink(record, link)));
+    return { workerId, currentTurn: currentTurn(record), jobs };
+  }
+
+  private latestResultOf(record: WorkerRecord): { latestResult?: WorkerTurnResult } {
+    const results = record.results ?? [];
+    const latest = results.length > 0 ? results[results.length - 1] : undefined;
+    return latest ? { latestResult: latest } : {};
+  }
+
+  private async jobObservations(record: WorkerRecord): Promise<JobObservation[]> {
+    return Promise.all((record.jobs ?? []).map((link) => this.observeJobLink(record, link)));
+  }
+
+  private async jobExecutionEvidence(
+    record: WorkerRecord,
+    turn: number,
+  ): Promise<ResultExecutionEvidence["jobs"]> {
+    const links = (record.jobs ?? []).filter((job) => job.turn === turn);
+    if (links.length === 0) return undefined;
+    const observations = await Promise.all(links.map((link) => this.observeJobLink(record, link)));
+    const observedAt = new Date().toISOString();
+    return observations.map((job) => ({
+      jobId: job.jobId,
+      state: job.state,
+      exitCode: job.exitCode,
+      exitCodeKnown: job.exitCodeKnown,
+      observedAt,
+      source: "job_evidence" as const,
+    }));
+  }
+
+  private turnExecutionEvidence(
+    record: WorkerRecord,
+    jobs: ResultExecutionEvidence["jobs"],
+  ): ResultExecutionEvidence {
+    const execution: ResultExecutionEvidence = executionEvidence(record);
+    return jobs && jobs.length > 0 ? { ...execution, jobs } : execution;
+  }
+
+  private async observeJobLink(record: WorkerRecord, link: WorkerJobLink): Promise<JobObservation> {
+    const read = await readJobEvidence(link, record.cwd, {
+      allowedRoots: jobEvidenceRoots(record.ownerRef === undefined ? record.cwd : undefined),
+      timeoutMs: JOB_EVIDENCE_TIMEOUT_MS,
+    });
+    let pidAlive: boolean | null = null;
+    if (link.pid !== undefined && isLocalJobLocation(link.location) && read.evidence?.state === "running") {
+      if (!isPidAlive(link.pid)) {
+        pidAlive = false;
+      } else {
+        const identity = await withTimeout(
+          inspectProcess(link.pid, [link.jobId, link.evidencePath]),
+          JOB_EVIDENCE_TIMEOUT_MS,
+          "job pid verification timed out",
+        ).catch(() => null);
+        pidAlive = identity?.verified === true ? true : identity?.verified === false ? false : null;
+      }
+    }
+    return observeJob(link, read, pidAlive);
   }
 
   /**
@@ -1815,14 +2162,15 @@ export class Supervisor {
       const finish = async (timedOut: boolean) => {
         if (finished) return;
         finished = true;
-        if (timer) clearTimeout(timer);
         unsubscribe?.();
         const data = await this.store.readEvents(workerId, sinceSeq, 500);
         const current = this.requireWorker(workerId);
         const evidence = await this.progressEvidence(current);
         const inputState = refreshInputStateTime(evidence.inputState);
+        const jobs = await this.jobObservations(current);
         resolve({
           worker: this.summary(current),
+          currentTurn: currentTurn(current),
           events: data.events,
           nextSeq: data.nextSeq,
           hasMore: data.hasMore,
@@ -1831,7 +2179,10 @@ export class Supervisor {
           lastProgress: evidence.lastProgress,
           timeline: evidence.timeline,
           ...(inputState ? { inputState } : {}),
+          ...this.latestResultOf(current),
+          ...(jobs.length > 0 ? { jobs } : {}),
         });
+        if (timer) clearTimeout(timer);
       };
 
       const evaluate = async (): Promise<void> => {
@@ -1938,6 +2289,17 @@ export class Supervisor {
       // requested mode. That is a capability fact, not a harness malfunction,
       // so it must not be flattened into HARNESS_ERROR.
       const code = classifyErrorCode(error);
+      if (code === "UNSUPPORTED" && mode === "steer" && (record.persistence ?? "oneshot") === "persistent") {
+        throw new SupervisorError(
+          "UNSUPPORTED",
+          `${safeText(errorMessage(error), 1500)} Steer is unavailable for this runtime. Cancel the current turn with worker_cancel, then call worker_continue on this persistent worker with the corrected instruction.`,
+          {
+            workerId,
+            mode,
+            fallback: { action: "cancel_then_continue", workerId },
+          },
+        );
+      }
       throw new SupervisorError(code === "UNSUPPORTED" ? "UNSUPPORTED" : "HARNESS_ERROR", safeText(errorMessage(error), 2000), {
         workerId,
         mode,
@@ -2667,6 +3029,7 @@ export class Supervisor {
       }
     }
     record.status = previous.status ?? "interrupted";
+    record.turn = previous.turn;
     if (previous.config) record.config = previous.config;
     record.statusReason = previous.statusReason;
     record.result = previous.result;
@@ -3142,6 +3505,7 @@ export class Supervisor {
     run: () => Promise<T>,
   ): Promise<T> {
     this.assertNewAdmission();
+    this.assertAcceptingWork();
     if (this.resuming.has(workerId) || this.admittedWorkers.has(workerId)) {
       throw new SupervisorError(
         "INVALID_STATE",

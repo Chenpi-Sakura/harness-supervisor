@@ -25,11 +25,13 @@ import {
   presentEventsDevelopment,
   presentForgetResult,
   presentInfo,
+  presentJobObservation,
   presentMetricsReport,
   presentNotificationAck,
   presentNotifications,
   presentNotifyTarget,
   presentStatus,
+  presentStructuredResult,
   presentTaskCreated,
   presentTaskMetrics,
   presentUsageRecord,
@@ -58,6 +60,7 @@ import {
   type WorkerStatusResult,
   type WorkerSummary,
 } from "./types.js";
+import { JobAttachSchema, StructuredResultSchema } from "./worker-result.js";
 import type {
   MetricsReport,
   TaskCreateInput,
@@ -334,6 +337,10 @@ const descriptions = {
   cancel: "Cancel the Worker’s active run, clear queued messages, and stop its Harness process.",
   resume: "Run a new instruction on a terminal Worker’s persisted native session. Omit notifyTarget to keep its notification binding.",
   continue: "Give an idle persistent Worker its next instruction on the same native session.",
+  resultSubmit: "Record one structured result for a settled Turn. Pass the exact Turn from worker_status or worker_wait; a stale Turn is rejected. Large detail belongs in artifact files; an identical resubmit replays and a different payload for the same Turn conflicts.",
+  resultGet: "Read the full persisted structured report for the latest Turn or a specific Turn, including inputs, thresholds, items and execution evidence. Status and wait only show a compact summary.",
+  jobAttach: "Link this Worker to an already-running long job by stable jobId and execution-side evidence path. This never starts or retries the job.",
+  jobStatus: "Read job state from execution-side evidence. Job state is reported separately from the Worker lifecycle; artifacts are capped and the evidence file remains on disk.",
   admin: "Pin a Worker, archive it from the default list, or retire it to stop future runs. Each action is reversible.",
   forget: "Delete a terminal Worker’s HS record and events while preserving its native session. Requires an unpinned Worker with no unacknowledged notifications.",
   info: mode === "production"
@@ -733,6 +740,7 @@ server.registerTool(
             presentWait(
               {
                 worker: current,
+                currentTurn: snapshot.currentTurn,
                 events: recent,
                 nextSeq: current.lastSeq,
                 hasMore: false,
@@ -741,6 +749,8 @@ server.registerTool(
                 ...(snapshot.lastProgress ? { lastProgress: snapshot.lastProgress } : {}),
                 ...(snapshot.timeline ? { timeline: snapshot.timeline } : {}),
                 ...(snapshot.inputState ? { inputState: snapshot.inputState } : {}),
+                ...(snapshot.latestResult ? { latestResult: snapshot.latestResult } : {}),
+                ...(snapshot.jobs?.length ? { jobs: snapshot.jobs } : {}),
               },
               compacted,
               mode,
@@ -790,6 +800,141 @@ server.registerTool(
         requestId: args.requestId,
       });
       return ok(presentWorkerAction(result, mode));
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "worker_result_submit",
+  {
+    title: "Record a structured result for the current Turn",
+    description: descriptions.resultSubmit,
+    inputSchema: {
+      workerId: z.string().min(1),
+      turn: z.number().int().min(1).describe("The Turn this result belongs to; get it from worker_status or worker_wait."),
+      result: StructuredResultSchema,
+      ...RequestIdShape,
+    },
+  },
+  async (args) => {
+    try {
+      const response = await client.request<{
+        accepted: true;
+        duplicate: boolean;
+        turn: number;
+        result: Parameters<typeof presentStructuredResult>[0];
+      }>("result_submit", {
+        workerId: args.workerId,
+        turn: args.turn,
+        result: args.result,
+        requestId: args.requestId,
+      });
+      return ok({
+        accepted: response.accepted,
+        duplicate: response.duplicate,
+        turn: response.turn,
+        submittedAt: response.result.submittedAt,
+        execution: response.result.execution,
+      });
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "worker_result_get",
+  {
+    title: "Read persisted structured Turn results",
+    description: descriptions.resultGet,
+    inputSchema: {
+      workerId: z.string().min(1),
+      turn: z.number().int().min(1).optional().describe("Omit for the latest Turn."),
+    },
+  },
+  async (args) => {
+    try {
+      const response = await client.request<{
+        workerId: string;
+        currentTurn: number;
+        results: Array<Parameters<typeof presentStructuredResult>[0]>;
+      }>("result_get", { workerId: args.workerId, turn: args.turn });
+      const selected = args.turn === undefined ? response.results.slice(-1) : response.results;
+      return ok({
+        workerId: response.workerId,
+        currentTurn: response.currentTurn,
+        availableTurns: response.results.map((entry) => entry.turn),
+        // Explicit result reads return the whole 8 KB-capped report. Compact
+        // views belong to status/wait, where context is at a premium.
+        results: selected,
+      });
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "worker_job_attach",
+  {
+    title: "Link a long-running job to this Worker",
+    description: descriptions.jobAttach,
+    inputSchema: {
+      workerId: z.string().min(1),
+      job: JobAttachSchema,
+      ...RequestIdShape,
+    },
+  },
+  async (args) => {
+    try {
+      const response = await client.request<{
+        accepted: true;
+        duplicate: boolean;
+        job: unknown;
+        observation: unknown;
+      }>("job_attach", {
+        workerId: args.workerId,
+        job: args.job,
+        requestId: args.requestId,
+      });
+      return ok({
+        ...response,
+        observation: response.observation
+          ? presentJobObservation(response.observation as Parameters<typeof presentJobObservation>[0], mode)
+          : null,
+      });
+    } catch (error) {
+      return fail(error);
+    }
+  },
+);
+
+server.registerTool(
+  "worker_job_status",
+  {
+    title: "Read long-job state from execution-side evidence",
+    description: descriptions.jobStatus,
+    inputSchema: {
+      workerId: z.string().min(1),
+      jobId: z.string().min(1).optional(),
+    },
+  },
+  async (args) => {
+    try {
+      const response = await client.request<{
+        workerId: string;
+        currentTurn: number;
+        jobs: Array<Parameters<typeof presentJobObservation>[0]>;
+      }>("job_status", {
+        workerId: args.workerId,
+        jobId: args.jobId,
+      });
+      return ok({
+        ...response,
+        jobs: response.jobs.map((job) => presentJobObservation(job, mode)),
+      });
     } catch (error) {
       return fail(error);
     }

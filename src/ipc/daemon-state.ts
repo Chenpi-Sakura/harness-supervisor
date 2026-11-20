@@ -12,7 +12,7 @@ export interface DaemonLock {
   release(): Promise<void>;
 }
 
-interface LockInfo {
+export interface LockInfo {
   pid: number;
   /** ISO 8601 timestamp of the moment the lock was written; missing in very old locks. */
   startedAt?: string;
@@ -127,7 +127,16 @@ export function releaseDaemonLockSync(lockPath: string, pid: number): void {
   }
 }
 
-export async function acquireDaemonLock(stateDir: string): Promise<DaemonLock> {
+export interface LockAttemptEvent {
+  existing: LockInfo;
+  identity: ProcessIdentity;
+  decision: LockHolderDecision;
+}
+
+export async function acquireDaemonLock(
+  stateDir: string,
+  options: { onConflict?: (event: LockAttemptEvent) => void } = {},
+): Promise<DaemonLock> {
   await ensureDir(stateDir);
   const lockPath = path.join(stateDir, "daemon.lock");
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -171,6 +180,7 @@ export async function acquireDaemonLock(stateDir: string): Promise<DaemonLock> {
           "daemon-entry",
         ]);
         const decision = evaluateLockHolder(existing, identity);
+        options.onConflict?.({ existing, identity, decision });
         if (decision.outcome === "refuse") {
           throw new SupervisorError(
             "INVALID_STATE",

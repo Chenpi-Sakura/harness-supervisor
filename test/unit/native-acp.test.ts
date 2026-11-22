@@ -180,6 +180,17 @@ test("Codex and Claude adapters stay optional peer dependencies and are never bu
     assert.ok(manifest.peerDependencies?.[name], `${name} must stay declared as a peer dependency`);
     assert.equal(manifest.peerDependenciesMeta?.[name]?.optional, true, `${name} must be an optional peer`);
   }
+  for (const [runtime, pkg, envKey] of [
+    ["codex", "@agentclientprotocol/codex-acp", "HARNESS_SUPERVISOR_CODEX_ACP_ENTRY"],
+    ["claude", "@agentclientprotocol/claude-agent-acp", "HARNESS_SUPERVISOR_CLAUDE_ACP_ENTRY"],
+  ] as const) {
+    const notes = new NativeAcpAdapter(runtime).capabilities.notes ?? "";
+    assert.doesNotMatch(notes, /\bbundled\b/i, `${runtime} runtime notes must not claim the optional adapter is bundled`);
+    assert.match(notes, /optional/i);
+    assert.match(notes, /neither bundles nor downloads/i);
+    assert.ok(notes.includes(pkg), `${runtime} runtime notes should name ${pkg}`);
+    assert.ok(notes.includes(envKey), `${runtime} runtime notes should name ${envKey}`);
+  }
 });
 
 test("ACP rejects absent model choices and an unconfirmed model selection", async t => {

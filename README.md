@@ -2,7 +2,7 @@
 
 # Harness Supervisor
 
-![version](https://img.shields.io/badge/version-0.14.6-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.14.7-blue) ![node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933) ![protocol](https://img.shields.io/badge/protocol-RPC%20%7C%20ACP-orange) ![platform](https://img.shields.io/badge/platform-Windows%20verified-green) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <p>
   <img src="https://raw.githubusercontent.com/Chenpi-Sakura/harness-supervisor/main/docs/assets/harness-badges/pi.svg" alt="Pi" height="28">

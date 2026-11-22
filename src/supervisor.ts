@@ -2293,16 +2293,29 @@ export class Supervisor {
       // requested mode. That is a capability fact, not a harness malfunction,
       // so it must not be flattened into HARNESS_ERROR.
       const code = classifyErrorCode(error);
-      if (code === "UNSUPPORTED" && mode === "steer" && (record.persistence ?? "oneshot") === "persistent") {
-        throw new SupervisorError(
-          "UNSUPPORTED",
-          `${safeText(errorMessage(error), 1500)} Steer is unavailable for this runtime. Cancel the current turn with worker_cancel, then call worker_continue on this persistent worker with the corrected instruction.`,
-          {
-            workerId,
-            mode,
-            fallback: { action: "cancel_then_continue", workerId },
-          },
-        );
+      if (code === "UNSUPPORTED" && mode === "steer") {
+        if ((record.persistence ?? "oneshot") === "persistent") {
+          throw new SupervisorError(
+            "UNSUPPORTED",
+            `${safeText(errorMessage(error), 1500)} Steer is unavailable for this runtime. Cancel the current turn with worker_cancel, then call worker_continue on this persistent worker with the corrected instruction.`,
+            {
+              workerId,
+              mode,
+              fallback: { action: "cancel_then_continue", workerId },
+            },
+          );
+        }
+        if (runtime.adapter.capabilities.resume) {
+          throw new SupervisorError(
+            "UNSUPPORTED",
+            `${safeText(errorMessage(error), 1500)} Steer is unavailable for this runtime. Cancel the current turn with worker_cancel, then call worker_resume on this worker with the corrected instruction.`,
+            {
+              workerId,
+              mode,
+              fallback: { action: "cancel_then_resume", workerId },
+            },
+          );
+        }
       }
       throw new SupervisorError(code === "UNSUPPORTED" ? "UNSUPPORTED" : "HARNESS_ERROR", safeText(errorMessage(error), 2000), {
         workerId,

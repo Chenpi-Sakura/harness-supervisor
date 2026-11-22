@@ -30,3 +30,39 @@ for (const runtime of ["codex", "claude", "opencode"] as const) test(`${runtime}
   await client.request("cancel", { workerId: worker.id });
   assert.equal((await waitTerminal(client, worker.id)).worker.status, "cancelled");
 });
+
+test("unsupported steer guides persistent workers to cancel_then_continue and oneshot workers to cancel_then_resume", async t => {
+  const daemon = await TestDaemon.create("hs-steer-fallback-");
+  t.after(() => daemon.stop());
+  const entry = fileURLToPath(new URL("../fixtures/fake-native-acp.js", import.meta.url));
+  const client = await daemon.start({ env: { HARNESS_SUPERVISOR_CODEX_ACP_ENTRY: entry, FAKE_ACP_RUNTIME: "codex", HARNESS_SUPERVISOR_WORKER_PROTOCOL: "0", HARNESS_SUPERVISOR_UI: "0" } });
+  const cwd = await makeWorkspace();
+
+  const persistent = await client.request<WorkerSummary>("spawn", { runtime: "codex", cwd, prompt: "slow", persistence: "persistent" });
+  await waitForStatus(client, persistent.id, ["running"]);
+  await assert.rejects(
+    client.request("send", { workerId: persistent.id, message: "adjust", mode: "steer" }),
+    (err: unknown) => {
+      const e = err as { code?: string; message?: string; details?: { fallback?: { action?: string; workerId?: string } } };
+      assert.equal(e.code, "UNSUPPORTED");
+      assert.match(e.message ?? "", /worker_cancel.*worker_continue/);
+      assert.deepEqual(e.details?.fallback, { action: "cancel_then_continue", workerId: persistent.id });
+      return true;
+    },
+  );
+  await client.request("cancel", { workerId: persistent.id });
+
+  const oneshot = await client.request<WorkerSummary>("spawn", { runtime: "codex", cwd, prompt: "slow" });
+  await waitForStatus(client, oneshot.id, ["running"]);
+  await assert.rejects(
+    client.request("send", { workerId: oneshot.id, message: "adjust", mode: "steer" }),
+    (err: unknown) => {
+      const e = err as { code?: string; message?: string; details?: { fallback?: { action?: string; workerId?: string } } };
+      assert.equal(e.code, "UNSUPPORTED");
+      assert.match(e.message ?? "", /worker_cancel.*worker_resume/);
+      assert.deepEqual(e.details?.fallback, { action: "cancel_then_resume", workerId: oneshot.id });
+      return true;
+    },
+  );
+  await client.request("cancel", { workerId: oneshot.id });
+});

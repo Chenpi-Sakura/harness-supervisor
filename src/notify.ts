@@ -312,6 +312,7 @@ export class Notifier {
    * Safe to call repeatedly; used both live and while reconciling after restart.
    */
   ingest(worker: { id: string; runtime: string; status: WorkerStatus; notifyTarget?: NotifyTarget }, event: WorkerEvent): NotificationRecord | null {
+    if (event.data?.notify === false) return null;
     const kind = notificationKindFor(event.type);
     if (!kind) return null;
     const id = notificationId(worker.id, event.seq);

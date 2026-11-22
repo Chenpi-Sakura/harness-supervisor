@@ -659,6 +659,24 @@ test("freshness gate: needs_input must match the live pending request, not the p
   );
 });
 
+test("events marked notify=false are not ingested into the notification inbox", async () => {
+  const { notifier } = await makeNotifier();
+  const suppressed = notifier.ingest(
+    worker,
+    makeEvent(30, "run.cancelled", { reason: "user_cancel", notify: false }),
+  );
+  assert.equal(suppressed, null);
+  assert.equal(notifier.list({ state: "all" }).length, 0);
+
+  const delivered = notifier.ingest(
+    worker,
+    makeEvent(31, "run.cancelled", { reason: "max_duration_exceeded" }),
+  );
+  assert.ok(delivered);
+  assert.equal(delivered.kind, "cancelled");
+  assert.equal(notifier.list({ state: "all" }).length, 1);
+});
+
 test("only cancellations are suppressed by a later run, and never a new turn's own cancel", async () => {
   const { notifier } = await makeNotifier();
   const cancelled = notifier.ingest(worker, makeEvent(20, "run.cancelled", { reason: "maintenance" }))!;

@@ -449,7 +449,7 @@ export class WebUiServer {
     } else if (action === "cancel" && req.method === "POST") {
       parse(z.object({}).strict(), await jsonBody(req));
       await this.worker(workerId, credential);
-      this.json(res, await supervisor.cancel(workerId));
+      this.json(res, await supervisor.cancel(workerId, { reason: "webui_cancel", notify: true }));
     } else {
       throw new SupervisorError("NOT_FOUND", "Route not found");
     }

@@ -171,6 +171,7 @@ interface Runtime {
   eventChain: Promise<void>;
   cancelRequested: boolean;
   cancelReason?: string;
+  cancelSuppressNotification?: boolean;
   cancelPromise?: Promise<void>;
   finalizing: boolean;
   settled?: Extract<HarnessEvent, { type: "settled" }>;
@@ -190,6 +191,8 @@ type SettledEvent = Extract<HarnessEvent, { type: "settled" }>;
 export interface CancelOptions {
   timeoutMs?: number;
   reason?: string;
+  /** Whether cancellation should emit a notification. Defaults to false for Master-initiated cancels. */
+  notify?: boolean;
 }
 
 export interface WaitOptions {
@@ -508,10 +511,11 @@ export class Supervisor {
       try {
         for await (const event of this.store.scanEvents(record.id, { sinceSeq: checkpoint })) {
           lastSeq = Math.max(lastSeq, event.seq);
-          if (notificationKindFor(event.type) && !this.notifier.has(notificationId(record.id, event.seq))) {
+          const existed = this.notifier.has(notificationId(record.id, event.seq));
+          const ingested = this.notifier.ingest({ ...record, notifyTarget: { channel: "none" } }, event);
+          if (!existed && ingested) {
             created += 1;
           }
-          this.notifier.ingest({ ...record, notifyTarget: { channel: "none" } }, event);
         }
         if (lastSeq > checkpoint) advanced.set(record.id, lastSeq);
       } catch (error) {
@@ -2558,6 +2562,10 @@ export class Supervisor {
       }
       return this.summary(record);
     }
+    const suppressNotification =
+      options.notify !== undefined
+        ? !options.notify
+        : options.reason === undefined || options.reason === "user_cancel";
     const runtime = existingRuntime;
     if (!runtime) {
       record.status = "cancelled";
@@ -2566,6 +2574,7 @@ export class Supervisor {
       this.store.appendEvent(workerId, "run.cancelled", {
         reason: record.statusReason,
         note: "No active control channel existed for this worker",
+        ...(suppressNotification ? { notify: false } : {}),
       });
       await this.store.saveWorker(record);
       await this.store.flush(workerId).catch(() => undefined);
@@ -2578,6 +2587,7 @@ export class Supervisor {
       }
       runtime.cancelRequested = true;
       runtime.cancelReason = options.reason ?? "user_cancel";
+      runtime.cancelSuppressNotification = suppressNotification;
       this.store.appendEvent(workerId, "worker.cancel_requested", {
         reason: runtime.cancelReason,
       });
@@ -2680,6 +2690,7 @@ export class Supervisor {
         this.cancel(record.id, {
           timeoutMs: Math.min(this.limits.abortTimeoutMs, 8000),
           reason: "supervisor_shutdown",
+          notify: true,
         }),
       ),
     );
@@ -2806,6 +2817,7 @@ export class Supervisor {
       forced: true,
       stage: runtime.runAccepted ? "run" : "startup",
       processExit: exit,
+      ...(runtime.cancelSuppressNotification ? { notify: false } : {}),
     });
     if (exit) {
       this.store.appendEvent(record.id, "worker.exited", {
@@ -2920,6 +2932,9 @@ export class Supervisor {
     } else {
       eventData.reason = errorText;
       eventData.error = record.error;
+      if (outcome === "cancelled" && runtime.cancelSuppressNotification) {
+        eventData.notify = false;
+      }
       const partial = storedText(finalText, MAX_STORED_PARTIAL_TEXT_CHARS);
       eventData.partialText = partial.text;
       if (partial.truncated) {
@@ -3228,6 +3243,7 @@ export class Supervisor {
         reason: record.statusReason,
         stage: runtime.runAccepted ? "run" : "startup",
         processExit: exit,
+        ...(runtime.cancelSuppressNotification ? { notify: false } : {}),
       });
       if (exit) {
         this.store.appendEvent(record.id, "worker.exited", {

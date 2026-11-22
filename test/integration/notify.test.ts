@@ -590,25 +590,24 @@ test("a maintenance cancel followed by a resume does not wake the host for the i
     (record) => record.kind === "completed" && record.delivery.state === "delivered",
   );
 
-  const cancelledRecord = await waitForNotification(
-    client,
-    worker.id,
-    (record) => record.kind === "cancelled" && record.delivery.state === "superseded",
+  const notifications = await inbox(client, { workerId: worker.id });
+  assert.equal(
+    notifications.notifications.some((record) => record.kind === "cancelled"),
+    false,
+    "a Master-initiated cancel must not create a cancelled notification",
   );
-  assert.match(cancelledRecord.delivery.supersededReason ?? "", /new run started|resumed/);
-  assert.equal(cancelledRecord.ackAt, undefined);
 
   const calls = await queueCalls(logFile);
   const messages = calls.map((call) => call.argv[4] ?? "");
   assert.equal(
     messages.some((message) => message.includes(" cancelled ")),
     false,
-    "the maintenance cancel must not wake the host",
+    "the Master-initiated cancel must not wake the host",
   );
   assert.equal(
     messages.some((message) => message.includes(`needs_input seq=${firstAsk.seq}`)),
     false,
-    "the answered request must not wake the host",
+    "the cancelled input request must not wake the host",
   );
   assert.equal(
     messages.some((message) => message.includes(`needs_input seq=${secondAsk.seq}`)),
@@ -619,6 +618,53 @@ test("a maintenance cancel followed by a resume does not wake the host for the i
     messages.some((message) => message.includes(" completed ")),
     true,
     "the final result must still be delivered",
+  );
+});
+
+test("Master-initiated cancel creates no notification, while max_duration_exceeded still notifies", async (t) => {
+  const logDir = await mkdtemp(path.join(os.tmpdir(), "hs-codex-calls-"));
+  const logFile = path.join(logDir, "calls.jsonl");
+  const daemon = await TestDaemon.create();
+  const cwd = await makeWorkspace();
+  const client = await daemon.start({ env: notifyEnv(logFile, 0) });
+  t.after(async () => {
+    await daemon.stop().catch(() => undefined);
+  });
+
+  // 1. Master-initiated cancel (without resume): must neither enqueue nor deliver.
+  const manual = await spawnWorker(client, cwd, "[scenario:slow] cancel me manually");
+  await waitForStatus(client, manual.id, ["running"], 15_000);
+  await client.request("cancel", { workerId: manual.id });
+  await waitForStatus(client, manual.id, ["cancelled"], 20_000);
+  const manualInbox = await inbox(client, { workerId: manual.id });
+  assert.equal(manualInbox.notifications.length, 0, "Master-initiated cancel must not create any notification");
+
+  // 2. System timeout cancel (maxDurationMs): Master did not initiate it, so it must notify.
+  const timedOut = await client.request<{ id: string }>("spawn", {
+    runtime: "pi",
+    cwd,
+    prompt: "[scenario:slow] hit max duration",
+    maxDurationMs: 1_000,
+  });
+  await waitForStatus(client, timedOut.id, ["cancelled"], 20_000);
+  const timeoutNotification = await waitForNotification(
+    client,
+    timedOut.id,
+    (record) => record.kind === "cancelled" && record.delivery.state === "delivered",
+  );
+  assert.equal(timeoutNotification.kind, "cancelled");
+
+  const calls = await queueCalls(logFile);
+  const messages = calls.map((call) => call.argv[4] ?? "");
+  assert.equal(
+    messages.some((message) => message.includes(manual.id)),
+    false,
+    "Master-initiated cancel must never be delivered to the host",
+  );
+  assert.equal(
+    messages.some((message) => message.includes(timedOut.id) && message.includes(" cancelled ")),
+    true,
+    "max_duration_exceeded cancel must still be delivered to the host",
   );
 });
 
